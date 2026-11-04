@@ -31,7 +31,7 @@ const BF_EXE = path.join(BF_DIR, 'BLOCKFALL3001.exe');
 const BF_DATA = path.join(app.getPath('appData'), '.terravolt');
 function gameDir(id, m) { return m && m.type === 'bf-launcher' ? BF_DIR : path.join(GAMES_DIR, id); }
 // Every owned edition installs as its own game. Install key = "<game>--<edition>" (older installs keep the plain game id).
-const ED_LABEL = { demo: 'Demo', std: '', gold: 'Gold' };
+const ED_LABEL = { demo: 'Demo', std: 'Standard', gold: 'Gold' };
 const edTitle = (name, ed) => name + (ED_LABEL[ed] ? ' ' + ED_LABEL[ed] : '');
 function keyInfo(key) {
   const r = readReg()[key];
@@ -81,9 +81,10 @@ function isTrusted(frameUrl) {
   try { return new URL(frameUrl).origin === SITE_ORIGIN; } catch (e) { return false; }
 }
 
-function createMain(hash) {
+function createMain(hash, query) {
+  const q = query ? '?' + query : '';
   if (mainWin && !mainWin.isDestroyed()) {
-    if (hash) mainWin.loadURL(SITE + '#' + hash);
+    if (hash) mainWin.loadURL(SITE + q + '#' + hash);
     if (mainWin.isMinimized()) mainWin.restore();
     mainWin.show(); mainWin.focus(); return mainWin;
   }
@@ -101,7 +102,7 @@ function createMain(hash) {
   mainWin.webContents.on('did-fail-load', (e, code, desc, url, isMain) => {
     if (isMain && code !== -3) mainWin.loadFile(path.join(__dirname, 'offline.html'));
   });
-  mainWin.loadURL(SITE + (hash ? '#' + hash : ''));
+  mainWin.loadURL(SITE + q + (hash ? '#' + hash : ''));
   mainWin.on('closed', () => { mainWin = null; });
   return mainWin;
 }
@@ -160,9 +161,11 @@ function migrateReg() {
   try {
     const reg = readReg(); let changed = false;
     for (const [k, v] of Object.entries(reg)) {
-      if (v.game) continue;
-      const base = v.name; removeShortcuts(v);
-      v.game = k.split('--')[0]; v.name = edTitle(base, v.edition); changed = true;
+      const base = v.base || (v.game ? String(v.name).replace(/ (Demo|Standard|Gold)$/, '') : v.name);
+      const want = edTitle(base, v.edition);
+      if (v.game && v.base && v.name === want) continue;
+      removeShortcuts(v);
+      v.game = v.game || k.split('--')[0]; v.base = base; v.name = want; changed = true;
       makeShortcuts(k, v);
     }
     if (changed) writeReg(reg).catch(() => {});
@@ -171,7 +174,7 @@ function migrateReg() {
 function fixBfShortcuts() {
   const own = Object.entries(installedNow()).filter(([, v]) => v.type === 'bf-launcher');
   try { fs.rmSync(path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'BLOCKFALL 3001.lnk'), { force: true }); } catch (e) {}
-  if (!own.some(([, v]) => v.edition === 'std')) { try { fs.rmSync(path.join(app.getPath('desktop'), 'BLOCKFALL 3001.lnk'), { force: true }); } catch (e) {} }
+  try { fs.rmSync(path.join(app.getPath('desktop'), 'BLOCKFALL 3001.lnk'), { force: true }); } catch (e) {}
   for (const [k, v] of own) makeShortcuts(k, v);
 }
 
@@ -289,7 +292,7 @@ async function install(id, opts) {
 
     const reg = readReg();
     if (m.type === 'bf-launcher') for (const v of Object.values(reg)) if (v.type === 'bf-launcher') v.version = version;
-    reg[id] = { type: m.type, game: info.game, name: edTitle(m.name, edition), version, entry, demoPatch: Array.isArray(m.demoPatch) ? m.demoPatch : undefined, account: m.account || undefined, icon: m.type === 'bf-launcher' ? 'resources/app/icon.ico' : 'icon.ico', edition,
+    reg[id] = { type: m.type, game: info.game, base: m.name, name: edTitle(m.name, edition), version, entry, demoPatch: Array.isArray(m.demoPatch) ? m.demoPatch : undefined, account: m.account || undefined, icon: m.type === 'bf-launcher' ? 'resources/app/icon.ico' : 'icon.ico', edition,
       unlock: m.type === 'bf-launcher' ? (m.editionUnlock || {}) : undefined, size: await dirSize(gameDir(id, m)), installedAt: Date.now() };
     await writeReg(reg);
     makeShortcuts(id, reg[id]);
@@ -429,6 +432,7 @@ function handleDeepLink(url) {
   try {
     const u = new URL(url), kind = u.hostname, id = u.pathname.replace(/^\/+/, '').split('/')[0];
     if (kind === 'launch' && validId(id) && installedNow()[id]) return launchWithUpdate(id).catch(() => createMain());
+    if (kind === 'install' && validId(id)) return createMain(id.split('--')[0], 'install=' + encodeURIComponent(id));
     createMain(validId(id) ? id : (kind === 'library' ? 'library' : ''));
   } catch (e) { createMain(); }
 }

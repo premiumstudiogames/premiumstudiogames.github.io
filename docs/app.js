@@ -151,7 +151,17 @@ function ent(gid){
 }
 
 /* ---------------- desktop bridge ---------------- */
-async function refreshInstalled(){ if (!PS) return; try { INSTALLED = await PS.getInstalled() || {}; } catch(e) { INSTALLED = {}; } render(); }
+async function refreshInstalled(){ if (!PS) return; try { INSTALLED = await PS.getInstalled() || {}; } catch(e) { INSTALLED = {}; } render(); autoInstall(); }
+let AUTO = (() => { try { return new URLSearchParams(location.search).get("install") || ""; } catch(e) { return ""; } })();
+function autoInstall(){
+  if (!AUTO || !PS || !user) return;
+  const [gid, ed] = AUTO.split("--"), it = LIB[`${gid}__${ed}`];
+  if (!it) return;   // library not loaded yet
+  AUTO = ""; try { history.replaceState(null, "", location.pathname + location.hash); } catch(e) {}
+  if (it.status === "pending") return toast("هذا الإصدار بانتظار الدفع");
+  if (instOf(gid, ed)[1]) return toast("هذي النسخة مثبتة من قبل");
+  const b = document.querySelector(`[data-act="install"][data-gid="${gid}"][data-ed="${ed}"]`); if (b) b.click();
+}
 if (PS) {
   $("#tabDl").hidden = true;
   PS.onProgress(p => { PROGRESS[p.id] = p; if (p.phase === "done" || p.phase === "error") { delete PROGRESS[p.id]; if (p.phase === "error") toast("ما تم التثبيت: " + (p.error || "خطأ")); else toast("تم التثبيت ✓ أيقونتها على سطح المكتب"); refreshInstalled(); } updateProgressUI(); });
@@ -168,7 +178,7 @@ const pct = p => p.total ? Math.min(100, Math.round(p.received / p.total * 100))
 const progText = p => p.phase === "extract" ? "جاري فك الملفات…" : `${mb(p.received||0)} / ${mb(p.total||0)}`;
 
 /* the install / play block, Steam style. Every owned edition installs and plays as its own game. */
-const ED_TAG = {demo:"Demo", std:"", gold:"Gold"};
+const ED_TAG = {demo:"Demo", std:"Standard", gold:"Gold"};
 const ownedEds = gid => Object.values(LIB).filter(v => v.game === gid && v.status !== "pending").map(v => v.edition).sort((a, b) => RANK[a] - RANK[b]);
 const instOf = (gid, ed) => { for (const [k, v] of Object.entries(INSTALLED)) if (v.game === gid && v.edition === ed) return [k, v]; return [`${gid}--${ed}`, null]; };
 const anyInstalled = gid => Object.values(INSTALLED).some(v => v.game === gid);
@@ -176,16 +186,14 @@ const keyGame = k => byId(INSTALLED[k] ? INSTALLED[k].game : String(k).split("--
 function installBlock(g){
   const eds = ownedEds(g.id);
   if (!eds.length) return "";
-  if (!PS) {
-    if (isMobile) return `<div class="inststate"><span>اللعبة للكمبيوتر. افتح الموقع من الكمبيوتر عشان تثبّتها.</span></div>`;
-    return `<button class="btn inst big" data-act="getapp" data-gid="${g.id}">تثبيت</button><span class="muted" style="font-size:13px">التثبيت يتم من تطبيق Premium Studio</span>`;
-  }
+  if (!PS && isMobile) return `<div class="inststate"><span>اللعبة للكمبيوتر. افتح الموقع من الكمبيوتر عشان تثبّتها.</span></div>`;
   return `<div class="edinsts">${eds.map(ed => edInstall(g, ed)).join("")}</div>`;
 }
 function edInstall(g, ed){
   const m = MANIFEST.games[g.id], [key, inst] = instOf(g.id, ed), prog = PROGRESS[key];
   const a = `data-g="${key}" data-gid="${g.id}" data-ed="${ed}"`;
   const head = `<div class="edinst-h"><b>${esc(g.en || g.title)}${ED_TAG[ed] ? ` <span class="tag">${ED_TAG[ed]}</span>` : ""}</b>`;
+  if (!PS) return `<div class="edinst">${head}</div><button class="btn inst" data-act="getapp" ${a}>تثبيت</button></div>`;
   if (!PS.multiEdition) return `<div class="edinst">${head}</div><span class="muted" style="font-size:13px">حدّث تطبيق Premium Studio: اقفله وافتحه.</span></div>`;
   if (prog) return `<div class="edinst">${head}<span class="num" data-progt>${progText(prog)}</span></div><div class="bar" data-prog="${key}"><i style="width:${pct(prog)}%"></i></div></div>`;
   if (inst) {
@@ -201,7 +209,7 @@ function edInstall(g, ed){
 document.addEventListener("click", async e => {
   const b = e.target.closest("[data-act]"); if (!b) return;
   const key = b.dataset.g, gid = b.dataset.gid, ed = b.dataset.ed, g = byId(gid), act = b.dataset.act;
-  if (act === "getapp") return getAppModal(g);
+  if (act === "getapp") return getAppModal(g, ed, key);
   if (!PS) return;
   const owns = LIB[`${gid}__${ed}`] && LIB[`${gid}__${ed}`].status !== "pending";
   if (act === "install") { if (!owns) return; b.disabled = true;
@@ -216,11 +224,11 @@ document.addEventListener("click", async e => {
   else if (act === "uninstall") { const nm = (g.en || g.title) + (ED_TAG[ed] ? " " + ED_TAG[ed] : "");
     confirmModal(`حذف ${nm}؟`, "تنحذف اللعبة وأيقونتها من سطح المكتب. تقدر تثبّتها مرة ثانية من مكتبتك أي وقت.", "حذف", async () => { try { await PS.uninstall(key); toast("انحذفت " + nm); } catch(err) { toast("ما انحذفت: " + (err && err.message || err)); } refreshInstalled(); }); }
 });
-function getAppModal(g){
-  openModal(`<div class="eyebrow">INSTALL</div><h1 class="mbox-t">ثبّت ${esc(g.en || g.title)}</h1>
+function getAppModal(g, ed, key){
+  openModal(`<div class="eyebrow">INSTALL</div><h1 class="mbox-t">ثبّت ${esc(g.en || g.title)}${ED_TAG[ed] ? " " + ED_TAG[ed] : ""}</h1>
     <p class="mbox-t">الألعاب تنثبت من تطبيق Premium Studio على الكمبيوتر، مثل ستيم. التطبيق يحط أيقونة اللعبة على سطح المكتب.</p>
     <a class="btn buy" href="${APP_DL}" download>تحميل تطبيق Premium Studio</a>
-    <a class="btn" href="premiumstudio://game/${g.id}">عندي التطبيق، افتح فيه</a>
+    <a class="btn" href="premiumstudio://${key ? "install/" + key : "game/" + g.id}">عندي التطبيق، ثبّتها فيه</a>
     <button class="btn ghost" data-close>إغلاق</button>`);
 }
 
@@ -637,7 +645,7 @@ onAuthStateChanged(auth, async u => {
     try { await ensureProfile(u, pendingName, pendingUname); } catch(e) { toast("ما قدرت أفتح حسابك في قاعدة البيانات: " + (e.code || e.message)); }
     unsubs.push(onSnapshot(doc(fs, "users", u.uid), s => { PROFILE = s.exists() ? s.data() : null; applyChrome(); sendUserToApp();
       if (PROFILE && PROFILE.pid && !PROFILE.username && !$("#uf")) askUsername(u); if (curView === "account") renderAccount(); if (curView === "coins") renderCoins(); }));
-    unsubs.push(onSnapshot(collection(fs, "users", u.uid, "library"), s => { LIB = {}; s.forEach(d => LIB[d.id] = d.data()); render(); }, e => toast("ما قدرت أقرأ مكتبتك: " + e.code)));
+    unsubs.push(onSnapshot(collection(fs, "users", u.uid, "library"), s => { LIB = {}; s.forEach(d => LIB[d.id] = d.data()); render(); autoInstall(); }, e => toast("ما قدرت أقرأ مكتبتك: " + e.code)));
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "friends"), s => { FRIENDS = {}; s.forEach(d => FRIENDS[d.id] = d.data()); frBadge(); if (curView === "friends") renderFriends(); }, () => {}));
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "coinOrders"), s => { MYCO = s.docs.map(d => ({id:d.id, ...d.data()})); if (curView === "coins") renderCoins(); }, () => {}));
     if (isAdmin) startAdmin();
