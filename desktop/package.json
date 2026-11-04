@@ -1,0 +1,45 @@
+{
+  "name": "premium-studio",
+  "productName": "Premium Studio",
+  "version": "0.0.1",
+  "description": "Premium Studio — game library and launcher",
+  "author": "Premium Studio",
+  "license": "UNLICENSED",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win --x64 --publish never",
+    "release": "electron-builder --win --x64 --publish always"
+  },
+  "dependencies": {
+    "electron-updater": "6.3.9",
+    "extract-zip": "2.0.1"
+  },
+  "devDependencies": {
+    "electron": "33.4.11",
+    "electron-builder": "25.1.8"
+  },
+  "build": {
+    "appId": "com.premiumstudio.client",
+    "productName": "Premium Studio",
+    "copyright": "© 2026 Premium Studio",
+    "directories": { "buildResources": "build", "output": "dist" },
+    "files": ["main.js", "preload.js", "game-preload.js", "offline.html", "build/icon.png", "build/icon.ico"],
+    "protocols": [{ "name": "Premium Studio", "schemes": ["premiumstudio"] }],
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "icon": "build/icon.ico",
+      "artifactName": "PremiumStudioSetup.exe"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "Premium Studio",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": [{ "provider": "github", "owner": "abdullra7manx-cmyk", "repo": "premium-studio", "releaseType": "release" }]
+  }
+}

@@ -1,0 +1,61 @@
+rules_version = '2';
+// Premium Studio — Firestore security rules.
+// Paste into: Firebase console → Firestore Database → Rules → Publish.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isMe(uid) { return signedIn() && request.auth.uid == uid; }
+    function isAdmin() {
+      return signedIn()
+        && request.auth.token.email == 'abdullra7manx@gmail.com'
+        && request.auth.token.email_verified == true;
+    }
+    // Official prices. A player can only add an item at its real price.
+    function prices() {
+      return {
+        'blockfall__demo': 0, 'blockfall__std': 39.99, 'blockfall__gold': 99.99,
+        'last-recording__demo': 0, 'last-recording__std': 69.99, 'last-recording__gold': 999999.99
+      };
+    }
+
+    // Player profile
+    match /users/{uid} {
+      allow read: if isMe(uid) || isAdmin();
+      allow create: if isMe(uid)
+        && request.resource.data.keys().hasOnly(['name', 'email', 'joined'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() >= 1 && request.resource.data.name.size() <= 32
+        && request.resource.data.email == request.auth.token.email.lower()
+        && request.resource.data.joined == request.time;
+      allow update: if (isMe(uid)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name'])
+          && request.resource.data.name is string
+          && request.resource.data.name.size() >= 1 && request.resource.data.name.size() <= 32)
+        || isAdmin();
+      allow delete: if isAdmin();
+
+      // Library: one document per game edition, id = "<game>__<edition>"
+      match /library/{itemId} {
+        allow read: if isMe(uid) || isAdmin();
+        allow create: if isMe(uid)
+          && itemId in prices()
+          && request.resource.data.keys().hasOnly(['game', 'edition', 'price', 'status', 'at'])
+          && request.resource.data.game + '__' + request.resource.data.edition == itemId
+          && request.resource.data.price == prices()[itemId]
+          && ((prices()[itemId] == 0 && request.resource.data.status == 'free')
+              || (prices()[itemId] > 0 && request.resource.data.status == 'pending'))
+          && request.resource.data.at == request.time;
+        allow update: if isAdmin()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'paidAt'])
+          && request.resource.data.status in ['paid', 'pending', 'free'];
+        allow delete: if isAdmin();
+      }
+    }
+
+    // Studio dashboard reads every library across players
+    match /{path=**}/library/{itemId} {
+      allow read: if isAdmin();
+    }
+  }
+}

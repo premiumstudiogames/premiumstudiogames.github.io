@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline'; img-src 'self' data:">
+<title>Premium Studio · بدون اتصال</title>
+<style>
+:root{--ink:#0a0d14;--deck:#121725;--deck2:#1a2133;--line:#283149;--text:#e9ecf4;--muted:#8e97ad;--gold:#d9b25f;--goldHi:#f3d58e;--goldDeep:#8a6a2a;--ok:#5ccf8f;--bad:#ef6a5e;color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ink);color:var(--text);font:15px/1.6 'Segoe UI',Tahoma,system-ui,sans-serif;padding:32px max(16px,env(safe-area-inset-left,0px))}
+.wrap{max-width:900px;margin:0 auto;display:flex;flex-direction:column;gap:22px}
+.brand{display:flex;align-items:center;gap:10px;direction:ltr;justify-content:flex-end}
+.mark{width:30px;height:30px;display:grid;place-items:center;background:linear-gradient(145deg,var(--goldHi),var(--goldDeep));color:#1a1306;font-weight:700;clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)}
+.brand b{letter-spacing:.18em}.brand b span{color:var(--gold)}
+.note{background:var(--deck);border:1px solid var(--line);padding:16px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+h1{font-size:20px;margin:0}
+.muted{color:var(--muted)}
+.list{display:flex;flex-direction:column;gap:10px}
+.it{background:var(--deck);border:1px solid var(--line);padding:14px 16px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.it b{font-size:17px}
+.btn{font:inherit;color:inherit;cursor:pointer;padding:9px 16px;border:1px solid var(--line);background:var(--deck2);border-radius:3px}
+.btn.play{background:var(--ok);color:#06190e;border-color:#2f8a5a;font-weight:600}
+.btn.buy{background:linear-gradient(180deg,var(--goldHi),var(--gold));color:#1a1306;border-color:var(--goldDeep);font-weight:600}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand"><span class="mark">P</span><b>PREMIUM <span>STUDIO</span></b></div>
+  <div class="note"><div><h1>بدون اتصال</h1><div class="muted">المتجر يحتاج إنترنت. ألعابك المثبتة تقدر تلعبها من هنا.</div></div><button class="btn buy" id="retry" type="button">إعادة الاتصال</button></div>
+  <div class="list" id="list"></div>
+</div>
+<script>
+(async () => {
+  const PS = window.premiumStudio, list = document.getElementById('list');
+  document.getElementById('retry').onclick = () => PS && PS.retryOnline();
+  const inst = PS ? await PS.getInstalled() : {};
+  const ids = Object.keys(inst);
+  if (!ids.length) { list.innerHTML = '<div class="it"><span class="muted">ما عندك ألعاب مثبتة.</span></div>'; return; }
+  for (const id of ids) {
+    const g = inst[id], d = document.createElement('div'); d.className = 'it';
+    const t = document.createElement('div'); const b = document.createElement('b'); b.textContent = g.name; const s = document.createElement('div'); s.className = 'muted'; s.textContent = 'الإصدار ' + g.version;
+    t.append(b, s);
+    const r = document.createElement('div'); r.className = 'row';
+    const p = document.createElement('button'); p.className = 'btn play'; p.type = 'button'; p.textContent = 'تشغيل'; p.onclick = () => PS.launch(id);
+    const f = document.createElement('button'); f.className = 'btn'; f.type = 'button'; f.textContent = 'مجلد اللعبة'; f.onclick = () => PS.showFolder(id);
+    r.append(p, f); d.append(t, r); list.appendChild(d);
+  }
+})();
+</script>
+</body>
+</html>
