@@ -7,7 +7,7 @@ const fsp = fs.promises;
 const crypto = require('crypto');
 const { pathToFileURL } = require('url');
 
-const SITE = 'https://abdullra7manx-cmyk.github.io/premium-studio/';
+const SITE = 'https://premiumstudiogames.github.io/';
 const SITE_ORIGIN = new URL(SITE).origin;
 const VERSION_LABEL = app.getVersion().split('.').map(n => n.padStart(2, '0')).join('.');
 const ICON = path.join(__dirname, 'build', 'icon.ico');

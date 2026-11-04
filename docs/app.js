@@ -160,7 +160,7 @@ function installBlock(g){
     if (inst) {
       const upd = m && inst.version !== m.version;
       return `<div class="inststate"><span class="st inst">مثبتة</span><span class="num">${esc(inst.version)} · ${mb(inst.size||0)}</span></div>
-        <div class="row">${upd ? `<button class="btn inst" data-act="install" data-g="${g.id}">تحديث إلى ${esc(m.version)}</button>` : `<button class="btn play big" data-act="launch" data-g="${g.id}">تشغيل</button>`}
+        <div class="row">${upd ? `<button class="btn inst" data-act="install" data-g="${g.id}">تحديث إلى ${esc(m.version)}</button>` : `<button class="btn play big" data-act="launch" data-g="${g.id}">${m && m.launcher ? "فتح اللانشر" : "تشغيل"}</button>`}
         <button class="btn ghost" data-act="folder" data-g="${g.id}">مجلد اللعبة</button><button class="btn danger" data-act="uninstall" data-g="${g.id}">حذف</button></div>`;
     }
     return `<div class="inststate"><span>غير مثبتة</span>${m ? `<span class="num">${mb(m.installSize)}</span>` : ""}</div><button class="btn inst big" data-act="install" data-g="${g.id}">تثبيت</button>`;

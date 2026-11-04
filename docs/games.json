@@ -4,12 +4,13 @@
     "blockfall": {
       "name": "BLOCKFALL 3001",
       "version": "00.01.02",
-      "entry": "game.html",
+      "entry": "index.html",
       "icon": "icon.ico",
-      "zip": "downloads/blockfall-00.01.02.zip",
-      "zipSize": 4227686,
-      "installSize": 6676671,
-      "sha256": "7d64b9ff2203d92f328422cbccd4de30d807e72dacf884431f11aa2bc3857266"
+      "zip": "downloads/blockfall-launcher-00.01.02.zip",
+      "zipSize": 7643005,
+      "installSize": 17093892,
+      "sha256": "7bfa9f1d833932fb255f948716b5bb40dc7505924392596a96eb83aec6efe2eb",
+      "launcher": true
     },
     "last-recording": {
       "name": "التسجيل الأخير",
