@@ -31,7 +31,8 @@ jobs:
           cp desktop/dist/PremiumStudioSetup.exe docs/downloads/PremiumStudioSetup.exe
           git config user.name "Premium Studio Bot"
           git config user.email "actions@users.noreply.github.com"
+          git checkout -- desktop 2>/dev/null || true
           git add docs/downloads/PremiumStudioSetup.exe
           git commit -m "Update Windows installer" || exit 0
-          git pull --rebase origin main
+          git pull --rebase --autostash origin main
           git push origin HEAD:main
