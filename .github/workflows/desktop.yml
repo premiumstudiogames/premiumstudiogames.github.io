@@ -28,11 +28,14 @@ jobs:
       - name: Put the installer on the store site
         shell: bash
         run: |
-          cp desktop/dist/PremiumStudioSetup.exe docs/downloads/PremiumStudioSetup.exe
           git config user.name "Premium Studio Bot"
           git config user.email "actions@users.noreply.github.com"
-          git checkout -- desktop 2>/dev/null || true
-          git add docs/downloads/PremiumStudioSetup.exe
-          git commit -m "Update Windows installer" || exit 0
-          git pull --rebase --autostash origin main
-          git push origin HEAD:main
+          for i in 1 2 3 4 5; do
+            git fetch origin main && git reset --hard origin/main
+            cp desktop/dist/PremiumStudioSetup.exe docs/downloads/PremiumStudioSetup.exe
+            git add docs/downloads/PremiumStudioSetup.exe
+            git commit -m "Update Windows installer" || exit 0
+            git push origin HEAD:main && exit 0
+            sleep 5
+          done
+          exit 1
