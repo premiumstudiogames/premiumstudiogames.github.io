@@ -12,7 +12,8 @@
       "editionUnlock": {
         "std": "a931ea3e8683d0afeb62099a32d7fe3af48bc4200c8eb7d505167f5bf5411477",
         "gold": "e0c2023896d5e7bf2854aa648e21fe1f58c5775ba6fb0f0e5f6d1f597906f204"
-      }
+      },
+      "site": "https://abdullra7manx-cmyk.github.io/terravolt/"
     },
     "last-recording": {
       "type": "manifest",
@@ -20,7 +21,11 @@
       "base": "https://raw.githubusercontent.com/abdullra7manx-cmyk/last-recording/main/docs/play/",
       "entry": "index.html",
       "icon": "icons/last-recording.ico",
-      "installSize": 9000000
+      "installSize": 9000000,
+      "demoPatch": [
+        "const DEMO=false;const TAPE_GOAL=5;",
+        "const DEMO=true;const TAPE_GOAL=2;"
+      ]
     }
   }
 }

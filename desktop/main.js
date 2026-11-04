@@ -194,7 +194,7 @@ async function install(id, opts) {
       const P = await fetchJSON(m.parts);
       if (P.enc && !opts.code) throw new Error('تحميل اللانشر يحتاج كود، تواصل مع الاستوديو'); total = P.zipSize || P.size; version = P.version;
       send('ps:progress', { id, phase: 'download', received: 0, total });
-      const base = new URL('.', m.parts).toString();
+      const base = m.site || new URL('..', m.parts).toString();   // part URLs are relative to the game's site root
       const chunks = [];
       for (const part of P.parts) chunks.push(await download(new URL(part.url, base).toString(), tick));
       send('ps:progress', { id, phase: 'extract', received, total: received });
@@ -231,7 +231,7 @@ async function install(id, opts) {
     }
 
     const reg = readReg();
-    reg[id] = { type: m.type, name: m.name, version, entry, icon: m.type === 'bf-launcher' ? 'resources/app/icon.ico' : 'icon.ico', edition,
+    reg[id] = { type: m.type, name: m.name, version, entry, demoPatch: Array.isArray(m.demoPatch) ? m.demoPatch : undefined, icon: m.type === 'bf-launcher' ? 'resources/app/icon.ico' : 'icon.ico', edition,
       unlock: m.type === 'bf-launcher' ? (m.editionUnlock || {}) : undefined, size: await dirSize(gameDir(id, m)), installedAt: Date.now() };
     await writeReg(reg);
     if (m.type === 'bf-launcher') writeBfLicense(edition, m.editionUnlock);
@@ -321,6 +321,12 @@ function registerGameProtocol() {
     const rel = decodeURIComponent(u.pathname).replace(/^\/+/, '') || 'index.html';
     const file = path.normalize(path.join(root, rel));
     if (!file.startsWith(root + path.sep)) return new Response('forbidden', { status: 403 });
+    // Demo owners: the game's own demo switch, applied to the entry page as it's served
+    const g = readReg()[id];
+    if (u.searchParams.get('demo') === '1' && g && g.demoPatch && rel === g.entry) {
+      const html = fs.readFileSync(file, 'utf8').split(g.demoPatch[0]).join(g.demoPatch[1]);
+      return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } });
+    }
     return net.fetch(pathToFileURL(file).toString());
   });
 }
