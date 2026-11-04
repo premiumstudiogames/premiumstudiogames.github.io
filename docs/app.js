@@ -2,7 +2,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/fireba
 import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut,
   sendPasswordResetEmail, sendEmailVerification, updateProfile, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, collectionGroup, onSnapshot,
-  serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  serverTimestamp, writeBatch, Timestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 /* ---------------- config ---------------- */
 const firebaseConfig = {
@@ -16,7 +16,8 @@ const firebaseConfig = {
 };
 const ADMIN_EMAIL = "abdullra7manx@gmail.com";
 const SITE_VERSION = "00.00.01";
-const APP_DL = "https://github.com/abdullra7manx-cmyk/premium-studio/releases/latest/download/PremiumStudioSetup.exe";
+const REPO = "premiumstudiogames/premiumstudiogames.github.io";
+const APP_DL = `https://github.com/${REPO}/releases/latest/download/PremiumStudioSetup.exe`;
 
 const fb = initializeApp(firebaseConfig);
 const auth = getAuth(fb);
@@ -31,6 +32,8 @@ const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
 const money = p => p === 0 ? "مجاني" : "$" + p.toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2});
+const fmtPid = p => p ? String(p).replace(/(\d{3})(?=\d)/g, "$1 ") : "—";
+const finalPrice = (base, pct) => base * (100 - pct) / 100;   // same arithmetic as the security rules
 const tsMs = t => !t ? 0 : (typeof t === "number" ? t : (t.toMillis ? t.toMillis() : 0));
 const fdate = t => { const ms = tsMs(t); if (!ms) return "—"; try { return new Date(ms).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn", {year:"numeric", month:"short", day:"numeric"}); } catch(e) { return ""; } };
 const mb = b => (b/1048576).toFixed(b > 10485760 ? 0 : 1) + " MB";
@@ -57,7 +60,7 @@ const GAMES = [
 const RANK = {demo:0, std:1, gold:2};
 const byId = id => GAMES.find(g => g.id === id);
 const edName = (g, id) => (g.editions.find(e => e.id === id) || {name:id}).name;
-GAMES.forEach(g => { const o = document.createElement("option"); o.value = g.id; o.textContent = g.en || g.title; $("#fGame").appendChild(o); });
+GAMES.forEach(g => { for (const sel of ["#fGame", "#cGame"]) { const o = document.createElement("option"); o.value = g.id; o.textContent = g.en || g.title; $(sel).appendChild(o); } });
 let MANIFEST = {games:{}};
 fetch("games.json", {cache:"no-store"}).then(r => r.json()).then(j => { MANIFEST = j; render(); }).catch(()=>{});
 
@@ -201,7 +204,7 @@ function renderGrid(){
     box.appendChild(a); cover(a.querySelector(".art"), g.id); });
   const s = document.createElement("div"); s.className = "card soon"; s.innerHTML = "<b>COMING SOON</b><span>ألعاب جديدة من بريميوم ستوديو قريبًا</span>"; box.appendChild(s);
 }
-const ST = {free:["free","ديمو مجاني"], pending:["pending","بانتظار الدفع"], paid:["paid","مدفوع"]};
+const ST = {free:["free","ديمو مجاني"], pending:["pending","بانتظار الدفع"], paid:["paid","مدفوع"], granted:["granted","مجاني من الاستوديو"]};
 const stPill = s => { const [c, n] = ST[s] || ST.free; return `<span class="st ${c}">${n}</span>`; };
 function renderGame(g){
   const v = $("#gameView"), {best, pending} = ent(g.id), m = MANIFEST.games[g.id];
@@ -239,7 +242,7 @@ function renderLib(){
 function renderAccount(){
   const a = $("#acct");
   if (!user) { a.innerHTML = '<div class="empty" style="grid-column:1/-1"><b style="color:var(--text)">ما سجّلت دخول</b><button class="btn buy" type="button" data-login>تسجيل الدخول</button></div>'; return; }
-  a.innerHTML = `<div class="panel"><h3>معلوماتك</h3><dl class="kv"><dt>الاسم</dt><dd id="aName"></dd><dt>الإيميل</dt><dd class="ltr" id="aMail"></dd><dt>التحقق</dt><dd>${user.emailVerified ? '<span class="st paid">الإيميل مؤكد</span>' : '<span class="st pending">غير مؤكد</span>'}</dd><dt>عضو من</dt><dd>${fdate(PROFILE && PROFILE.joined)}</dd></dl>
+  a.innerHTML = `<div class="panel"><h3>معلوماتك</h3><dl class="kv"><dt>رقم الحساب</dt><dd class="num ltr">${fmtPid(PROFILE && PROFILE.pid)}</dd><dt>الاسم</dt><dd id="aName"></dd><dt>الإيميل</dt><dd class="ltr" id="aMail"></dd><dt>التحقق</dt><dd>${user.emailVerified ? '<span class="st paid">الإيميل مؤكد</span>' : '<span class="st pending">غير مؤكد</span>'}</dd><dt>عضو من</dt><dd>${fdate(PROFILE && PROFILE.joined)}</dd></dl>
     ${user.emailVerified ? "" : '<div class="row"><button class="btn mini" id="aVerify" type="button">أرسل رابط التأكيد مرة ثانية</button><button class="btn mini ghost" id="aReload" type="button">أكدت، حدّث</button></div>'}</div>
     <div class="panel"><h3>الحساب</h3><p class="muted" style="font-size:14px">نفس الحساب يشتغل في الموقع وفي تطبيق Premium Studio.</p><div class="row"><button class="btn mini" id="aReset" type="button">تغيير كلمة السر</button><button class="btn mini danger" id="aOut" type="button">تسجيل الخروج</button></div></div>`;
   $("#aName").textContent = (PROFILE && PROFILE.name) || user.displayName || "—"; $("#aMail").textContent = user.email;
@@ -253,41 +256,89 @@ function renderAccount(){
 let USERS = {}, ORDERS = [];
 function startAdmin(){
   unsubs.push(onSnapshot(collection(fs, "users"), s => { USERS = {}; s.forEach(d => USERS[d.id] = d.data()); if (curView === "studio") renderStudio(); }, e => { $("#studioNote").textContent = "ما قدرت أقرأ قائمة اللاعبين: " + e.code; }));
+  unsubs.push(onSnapshot(collection(fs, "codes"), s => { CODES = {}; s.forEach(d => CODES[d.id] = d.data()); if (curView === "studio") renderCodes(); }, () => {}));
   unsubs.push(onSnapshot(collectionGroup(fs, "library"), s => { ORDERS = s.docs.map(d => ({ref:d.ref, uid:d.ref.parent.parent.id, ...d.data()})); if (curView === "studio") renderStudio(); }, e => { $("#studioNote").textContent = "ما قدرت أقرأ الطلبات: " + e.code; }));
 }
 function renderStudio(){
   const byUser = {}; ORDERS.forEach(o => (byUser[o.uid] = byUser[o.uid] || []).push(o));
   const paid = ORDERS.filter(o => o.status === "paid").reduce((a, o) => a + (o.price || 0), 0), pend = ORDERS.filter(o => o.status === "pending").length;
   $("#kpis").innerHTML = `<div class="kpi"><b>${Object.keys(USERS).length}</b><span>لاعب مسجّل</span></div><div class="kpi"><b>${ORDERS.length}</b><span>طلب ولعبة في المكتبات</span></div><div class="kpi"><b>${pend}</b><span>بانتظار الدفع</span></div><div class="kpi"><b>${money(paid)}</b><span>إيرادات مؤكدة</span></div>`;
-  const q = $("#q").value.trim().toLowerCase(), fg = $("#fGame").value, fst = $("#fSt").value;
+  const q = $("#q").value.trim().toLowerCase().replace(/\s+/g, " "), qd = q.replace(/[\s#]/g, ""), fg = $("#fGame").value, fst = $("#fSt").value;
   const list = Object.entries(USERS).map(([id, u]) => ({id, ...u, orders: byUser[id] || []})).filter(p => {
-    if (q && !((p.name || "") + " " + (p.email || "")).toLowerCase().includes(q)) return false;
+    if (q && !((p.name || "") + " " + (p.email || "")).toLowerCase().includes(q) && !(qd && String(p.pid || "").includes(qd))) return false;
     if (fg && !p.orders.some(o => o.game === fg)) return false;
     if (fst && !p.orders.some(o => (!fg || o.game === fg) && o.status === fst)) return false; return true;
   }).sort((a, b) => tsMs(b.joined) - tsMs(a.joined));
   const tb = $("#rows"); tb.innerHTML = "";
-  if (!list.length) tb.innerHTML = `<tr><td colspan="4" class="muted" style="text-align:center;padding:24px">${Object.keys(USERS).length ? "ما فيه نتائج تطابق البحث" : "ما سجّل أحد للحين."}</td></tr>`;
+  if (!list.length) tb.innerHTML = `<tr><td colspan="5" class="muted" style="text-align:center;padding:24px">${Object.keys(USERS).length ? "ما فيه نتائج تطابق البحث" : "ما سجّل أحد للحين."}</td></tr>`;
   list.forEach(p => { const tr = document.createElement("tr");
-    tr.innerHTML = `<td><b></b></td><td class="ltr"></td><td>${fdate(p.joined)}</td><td><div class="gl">${p.orders.length ? p.orders.map((o, i) => { const g = byId(o.game);
-      return `<div class="gi"><span>${esc(g ? (g.en || g.title) : o.game)} · ${esc(g ? edName(g, o.edition) : o.edition)}</span><span class="num muted">${money(o.price || 0)}</span>${stPill(o.status)}${o.status === "pending" ? `<button class="btn mini" data-pay="${i}">تأكيد الدفع</button><button class="btn mini danger" data-rej="${i}">رفض</button>` : ""}</div>`; }).join("") : '<span class="muted">ما عنده ألعاب</span>'}</div></td>`;
-    tr.children[0].firstChild.textContent = p.name || "—"; tr.children[1].textContent = p.email || "—";
-    tr.querySelectorAll("[data-pay]").forEach(b => b.onclick = async () => { b.disabled = true; try { await updateDoc(p.orders[+b.dataset.pay].ref, {status:"paid", paidAt:serverTimestamp()}); toast("تم تأكيد الدفع ✓"); } catch(e) { b.disabled = false; toast("ما تحدّث الطلب: " + e.code); } });
+    tr.innerHTML = `<td class="pidtag">${fmtPid(p.pid)}</td><td><b></b></td><td class="ltr"></td><td>${fdate(p.joined)}</td><td><div class="gl">${p.orders.length ? p.orders.map((o, i) => { const g = byId(o.game);
+      return `<div class="gi"><span>${esc(g ? (g.en || g.title) : o.game)} · ${esc(g ? edName(g, o.edition) : o.edition)}</span><span class="num muted">${money(o.price || 0)}</span>${o.code ? `<span class="tag ltr">${esc(o.code)}</span>` : ""}${stPill(o.status)}${o.status === "pending" ? `<button class="btn mini" data-pay="${i}">تأكيد الدفع</button><button class="btn mini" data-gift="${i}">منح مجاني</button><button class="btn mini danger" data-rej="${i}">رفض</button>` : ""}</div>`; }).join("") : '<span class="muted">ما عنده ألعاب</span>'}</div></td>`;
+    tr.children[1].firstChild.textContent = p.name || "—"; tr.children[2].textContent = p.email || "—";
+    const setSt = async (b, i, status, msg) => { b.disabled = true; try { await updateDoc(p.orders[i].ref, {status, paidAt:serverTimestamp()}); toast(msg); } catch(e) { b.disabled = false; toast("ما تحدّث الطلب: " + e.code); } };
+    tr.querySelectorAll("[data-pay]").forEach(b => b.onclick = () => setSt(b, +b.dataset.pay, "paid", "تم تأكيد الدفع ✓"));
+    tr.querySelectorAll("[data-gift]").forEach(b => b.onclick = () => setSt(b, +b.dataset.gift, "granted", "انمنحت اللعبة مجانًا ✓"));
     tr.querySelectorAll("[data-rej]").forEach(b => b.onclick = () => confirmModal("رفض الطلب؟", "ينحذف الطلب من مكتبة اللاعب.", "رفض", async () => { try { await deleteDoc(p.orders[+b.dataset.rej].ref); toast("انرفض الطلب"); } catch(e) { toast("ما انحذف: " + e.code); } }));
     tb.appendChild(tr); });
+  renderCodes();
 }
 ["#q", "#fGame", "#fSt"].forEach(s => $(s).addEventListener("input", renderStudio));
+
+/* ---------------- discount codes (admin) ---------------- */
+let CODES = {};
+const normCode = c => String(c || "").trim().toUpperCase().replace(/[^A-Z0-9_-]/g, "");
+function renderCodes(){
+  const tb = $("#codeRows"); if (!tb) return; tb.innerHTML = "";
+  const ids = Object.keys(CODES).sort();
+  if (!ids.length) { tb.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;padding:20px">ما فيه أكواد للحين. أضف أول كود من فوق.</td></tr>'; return; }
+  for (const id of ids) { const c = CODES[id], g = c.game ? byId(c.game) : null, used = ORDERS.filter(o => o.code === id).length, expired = c.expires && tsMs(c.expires) < Date.now();
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td class="ltr num"><b>${esc(id)}</b></td><td class="num">${c.pct}%</td><td>${g ? esc(g.en || g.title) : "كل الألعاب"}</td><td>${c.expires ? fdate(c.expires) : "بدون"}</td><td class="num">${used}</td><td>${expired ? '<span class="st free">منتهي</span>' : c.active ? '<span class="st paid">شغّال</span>' : '<span class="st pending">موقوف</span>'}</td>
+      <td><div class="row" style="gap:6px"><button class="btn mini" data-tog>${c.active ? "إيقاف" : "تشغيل"}</button><button class="btn mini danger" data-del>حذف</button></div></td>`;
+    tr.querySelector("[data-tog]").onclick = async () => { try { await updateDoc(doc(fs, "codes", id), {active:!c.active}); } catch(e) { toast("ما تحدّث الكود: " + e.code); } };
+    tr.querySelector("[data-del]").onclick = () => confirmModal(`حذف الكود ${id}؟`, "ما يقدر أحد يستخدمه بعدها. الطلبات القديمة اللي استخدمته تبقى.", "حذف", async () => { try { await deleteDoc(doc(fs, "codes", id)); toast("انحذف الكود"); } catch(e) { toast("ما انحذف: " + e.code); } });
+    tb.appendChild(tr); }
+}
+$("#codeForm").addEventListener("submit", async ev => { ev.preventDefault();
+  const err = $("#cErr"); err.textContent = "";
+  const code = normCode($("#cCode").value), pct = Math.round(+$("#cPct").value), game = $("#cGame").value, exp = $("#cExp").value;
+  if (code.length < 3) { err.textContent = "الكود لازم يكون 3 أحرف أو أكثر (إنجليزي وأرقام)"; return; }
+  if (!(pct >= 1 && pct <= 100)) { err.textContent = "نسبة الخصم من 1 إلى 100"; return; }
+  if (CODES[code]) { err.textContent = "هذا الكود موجود"; return; }
+  const data = {pct, game, active:true, created:serverTimestamp(), expires: exp ? Timestamp.fromDate(new Date(exp + "T23:59:59")) : null};
+  try { await setDoc(doc(fs, "codes", code), data); $("#cCode").value = ""; toast(`انضاف الكود ${code} ✓`); } catch(e) { err.textContent = "ما انحفظ الكود: " + e.code; }
+});
 
 /* ---------------- buy flow ---------------- */
 function buy(g, e){
   if (!user) return showAuth("login", "سجّل دخولك عشان تضيف ألعاب لمكتبتك.");
+  let applied = null;   // {id, pct}
   openModal(`<div class="eyebrow">${e.price ? "CHECKOUT" : "FREE DEMO"}</div><h1 class="mbox-t">${esc(e.name)}</h1>
-    <div class="row" style="justify-content:space-between"><span class="muted">${esc(g.en || g.title)}</span><span class="price">${money(e.price)}</span></div>
-    <p class="mbox-t">${e.price ? "الدفع الإلكتروني ما تفعّل للحين. لما تأكد الطلب يوصل للاستوديو بحالة «بانتظار الدفع»، وتقدر تلعب أول ما يتأكد الدفع." : "الديمو مجاني ويتضاف لمكتبتك على طول."}</p>
+    <div class="row" style="justify-content:space-between"><span class="muted">${esc(g.en || g.title)}</span><span class="price" id="bPrice">${money(e.price)}</span></div>
+    ${e.price ? `<label class="fld">كود الخصم<div class="coderow"><input id="bCode" dir="ltr" maxlength="20" placeholder="اكتب الكود" autocomplete="off"><button class="btn" id="bApply" type="button">تطبيق</button></div></label><div class="okmsg" id="bCodeMsg"></div>` : ""}
+    <p class="mbox-t" id="bNote">${e.price ? "الدفع الإلكتروني ما تفعّل للحين. لما تأكد الطلب يوصل للاستوديو بحالة «بانتظار الدفع»، وتقدر تلعب أول ما يتأكد الدفع." : "الديمو مجاني ويتضاف لمكتبتك على طول."}</p>
     <div class="err" id="bErr"></div>
     <div class="row"><button class="btn buy" id="bOk" type="button">${e.price ? "تأكيد الطلب" : "أضف للمكتبة"}</button><button class="btn ghost" data-close type="button">إلغاء</button></div>`);
+  const showPrice = () => { const fp = applied ? finalPrice(e.price, applied.pct) : e.price;
+    $("#bPrice").innerHTML = applied ? `<span class="strike">${money(e.price)}</span>${money(Math.round(fp * 100) / 100)}` : money(e.price);
+    if (applied && fp === 0) { $("#bNote").textContent = "الكود يخلي اللعبة مجانية. تنضاف لمكتبتك وتقدر تلعبها على طول."; $("#bOk").textContent = "أضف للمكتبة"; } };
+  const ap = $("#bApply"); if (ap) ap.onclick = async () => {
+    const id = normCode($("#bCode").value), msg = $("#bCodeMsg"); msg.className = "okmsg"; msg.textContent = ""; applied = null; showPrice();
+    if (!id) return;
+    ap.disabled = true;
+    try { const s = await getDoc(doc(fs, "codes", id)); const c = s.exists() ? s.data() : null;
+      if (!c || !c.active) throw "الكود غلط أو موقوف";
+      if (c.expires && tsMs(c.expires) < Date.now()) throw "الكود منتهي";
+      if (c.game && c.game !== g.id) throw "الكود ما يشتغل على هذي اللعبة";
+      applied = {id, pct:c.pct}; msg.textContent = `تم تطبيق خصم ${c.pct}% ✓`; showPrice(); }
+    catch(x) { msg.className = "err"; msg.textContent = typeof x === "string" ? x : "ما قدرت أتحقق من الكود"; }
+    ap.disabled = false; };
   $("#bOk").onclick = async () => { const btn = $("#bOk"); btn.disabled = true;
-    try { await setDoc(doc(fs, "users", user.uid, "library", g.id + "__" + e.id), {game:g.id, edition:e.id, price:e.price, status:e.price ? "pending" : "free", at:serverTimestamp()});
-      closeModal(); toast(e.price ? "وصل طلبك ✓ تلقاه في مكتبتك" : "انضاف الديمو لمكتبتك ✓"); }
+    const price = applied ? finalPrice(e.price, applied.pct) : e.price;
+    const status = e.price === 0 ? "free" : price === 0 ? "granted" : "pending";
+    const data = {game:g.id, edition:e.id, price, status, at:serverTimestamp()}; if (applied) data.code = applied.id;
+    try { await setDoc(doc(fs, "users", user.uid, "library", g.id + "__" + e.id), data);
+      closeModal(); toast(status === "pending" ? "وصل طلبك ✓ تلقاه في مكتبتك" : "انضافت لمكتبتك ✓"); }
     catch(err) { btn.disabled = false; $("#bErr").textContent = "ما انحفظ الطلب (" + (err.code || "خطأ") + "). جرّب مرة ثانية."; } };
 }
 
@@ -383,18 +434,27 @@ function showAuth(mode, note){
   });
 }
 let pendingName = "";
+/* every account gets a random 9-digit account number, reserved in playerIds/<pid> so no two accounts share one; it never changes */
+const newPid = () => String(100000000 + Math.floor(Math.random() * 900000000));
 async function ensureProfile(u, name){
   const r = doc(fs, "users", u.uid);
   const s = await getDoc(r);
-  if (!s.exists()) await setDoc(r, {name:(name || u.displayName || u.email.split("@")[0]).slice(0, 32), email:u.email.toLowerCase(), joined:serverTimestamp()});
+  if (s.exists() && s.data().pid) return;
+  for (let i = 0; i < 5; i++) {
+    const pid = newPid(), b = writeBatch(fs);
+    b.set(doc(fs, "playerIds", pid), {uid:u.uid, at:serverTimestamp()});
+    if (s.exists()) b.update(r, {pid});
+    else b.set(r, {pid, name:(name || u.displayName || u.email.split("@")[0]).slice(0, 32), email:u.email.toLowerCase(), joined:serverTimestamp()});
+    try { await b.commit(); return; } catch(e) { if (i === 4) throw e; }   // a taken number fails the batch, so try another
+  }
 }
 function setAdmin(){ isAdmin = !!(user && user.email && user.email.toLowerCase() === ADMIN_EMAIL && user.emailVerified); $("#tabStudio").hidden = !isAdmin; }
 function applyChrome(){
   $("#me").hidden = !user; $("#guestBar").hidden = !!user || !authReady;
-  if (user) { const n = (PROFILE && PROFILE.name) || user.displayName || user.email; $("#meName").textContent = n; $("#meAv").textContent = (n || "?").trim().charAt(0).toUpperCase(); }
+  if (user) { const n = (PROFILE && PROFILE.name) || user.displayName || user.email; $("#meName").textContent = n; $("#meAv").textContent = (n || "?").trim().charAt(0).toUpperCase(); $("#mePid").textContent = PROFILE && PROFILE.pid ? "#" + PROFILE.pid : ""; }
 }
 onAuthStateChanged(auth, async u => {
-  unsubs.forEach(f => { try { f(); } catch(e) {} }); unsubs = []; LIB = {}; PROFILE = null; USERS = {}; ORDERS = [];
+  unsubs.forEach(f => { try { f(); } catch(e) {} }); unsubs = []; LIB = {}; PROFILE = null; USERS = {}; ORDERS = []; CODES = {};
   user = u; authReady = true; setAdmin();
   if (u) {
     $("#gate").hidden = true; guest = false;

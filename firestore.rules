@@ -1,6 +1,5 @@
 rules_version = '2';
 // Premium Studio — Firestore security rules.
-// Paste into: Firebase console → Firestore Database → Rules → Publish.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -18,21 +17,52 @@ service cloud.firestore {
         'last-recording__demo': 0, 'last-recording__std': 69.99, 'last-recording__gold': 999999.99
       };
     }
+    function codeOf(code) { return get(/databases/$(database)/documents/codes/$(code)).data; }
+    function validCode(code, game) {
+      return code is string
+        && exists(/databases/$(database)/documents/codes/$(code))
+        && codeOf(code).active == true
+        && (codeOf(code).game == '' || codeOf(code).game == game)
+        && (codeOf(code).expires == null || codeOf(code).expires > request.time);
+    }
+    function validPid(pid) { return pid is string && pid.matches('^[1-9][0-9]{8}$'); }
+    // The pid is reserved for this player in the same write
+    function pidReserved(pid) {
+      return existsAfter(/databases/$(database)/documents/playerIds/$(pid))
+        && getAfter(/databases/$(database)/documents/playerIds/$(pid)).data.uid == request.auth.uid;
+    }
+
+    // Account numbers: one document per number, so no two accounts share one. Never changes.
+    match /playerIds/{pid} {
+      allow get: if signedIn();
+      allow list: if isAdmin();
+      allow create: if signedIn() && validPid(pid)
+        && request.resource.data.keys().hasOnly(['uid', 'at'])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.at == request.time;
+      allow update, delete: if false;
+    }
 
     // Player profile
     match /users/{uid} {
       allow read: if isMe(uid) || isAdmin();
       allow create: if isMe(uid)
-        && request.resource.data.keys().hasOnly(['name', 'email', 'joined'])
+        && request.resource.data.keys().hasOnly(['pid', 'name', 'email', 'joined'])
+        && validPid(request.resource.data.pid) && pidReserved(request.resource.data.pid)
         && request.resource.data.name is string
         && request.resource.data.name.size() >= 1 && request.resource.data.name.size() <= 32
         && request.resource.data.email == request.auth.token.email.lower()
         && request.resource.data.joined == request.time;
-      allow update: if (isMe(uid)
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name'])
-          && request.resource.data.name is string
-          && request.resource.data.name.size() >= 1 && request.resource.data.name.size() <= 32)
-        || isAdmin();
+      allow update: if isMe(uid) && (
+          // add an account number once, to an older account that has none
+          (!('pid' in resource.data)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['pid'])
+            && validPid(request.resource.data.pid) && pidReserved(request.resource.data.pid))
+          // change the display name only; the account number stays
+          || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name'])
+            && request.resource.data.name is string
+            && request.resource.data.name.size() >= 1 && request.resource.data.name.size() <= 32)
+        );
       allow delete: if isAdmin();
 
       // Library: one document per game edition, id = "<game>__<edition>"
@@ -40,17 +70,33 @@ service cloud.firestore {
         allow read: if isMe(uid) || isAdmin();
         allow create: if isMe(uid)
           && itemId in prices()
-          && request.resource.data.keys().hasOnly(['game', 'edition', 'price', 'status', 'at'])
           && request.resource.data.game + '__' + request.resource.data.edition == itemId
-          && request.resource.data.price == prices()[itemId]
-          && ((prices()[itemId] == 0 && request.resource.data.status == 'free')
-              || (prices()[itemId] > 0 && request.resource.data.status == 'pending'))
-          && request.resource.data.at == request.time;
+          && request.resource.data.at == request.time
+          && (
+            // no code: full price
+            (request.resource.data.keys().hasOnly(['game', 'edition', 'price', 'status', 'at'])
+              && request.resource.data.price == prices()[itemId]
+              && ((prices()[itemId] == 0 && request.resource.data.status == 'free')
+                  || (prices()[itemId] > 0 && request.resource.data.status == 'pending')))
+            // with a discount code
+            || (request.resource.data.keys().hasOnly(['game', 'edition', 'price', 'status', 'at', 'code'])
+              && prices()[itemId] > 0
+              && validCode(request.resource.data.code, request.resource.data.game)
+              && request.resource.data.price == prices()[itemId] * (100 - codeOf(request.resource.data.code).pct) / 100
+              && ((request.resource.data.price == 0 && request.resource.data.status == 'granted')
+                  || (request.resource.data.price > 0 && request.resource.data.status == 'pending')))
+          );
         allow update: if isAdmin()
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'paidAt'])
-          && request.resource.data.status in ['paid', 'pending', 'free'];
+          && request.resource.data.status in ['paid', 'pending', 'free', 'granted'];
         allow delete: if isAdmin();
       }
+    }
+
+    // Discount codes: players can check one code by name; only the studio can list or change them
+    match /codes/{code} {
+      allow get: if signedIn();
+      allow list, create, update, delete: if isAdmin();
     }
 
     // Studio dashboard reads every library across players

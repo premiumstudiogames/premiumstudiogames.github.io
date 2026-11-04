@@ -7,5 +7,5 @@ Game store and desktop launcher for Premium Studio games.
 - `desktop/` — the Premium Studio app for Windows (Electron): installs, launches and removes games, creates desktop shortcuts.
 - `firestore.rules` — database security rules (paste into Firebase → Firestore → Rules).
 
-Store: https://abdullra7manx-cmyk.github.io/premium-studio/
-Windows app: https://github.com/abdullra7manx-cmyk/premium-studio/releases/latest/download/PremiumStudioSetup.exe
+Store: https://premiumstudiogames.github.io/
+Windows app: https://github.com/premiumstudiogames/premiumstudiogames.github.io/releases/latest/download/PremiumStudioSetup.exe

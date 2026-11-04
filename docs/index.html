@@ -22,7 +22,7 @@
     <a href="#studio" data-v="studio" id="tabStudio" hidden>لوحة الاستوديو</a>
   </nav>
   <div class="dlchip" id="dlChip" hidden><span class="spin"></span><span id="dlChipT"></span></div>
-  <a class="me" id="me" href="#account" hidden><span class="av" id="meAv"></span><b id="meName"></b></a>
+  <a class="me" id="me" href="#account" hidden><span class="av" id="meAv"></span><span class="mewho"><b id="meName"></b><small class="num ltr" id="mePid"></small></span></a>
   <div class="me" id="guestBar" hidden><span class="tag">ضيف</span><button class="btn buy mini" id="signIn" type="button">تسجيل الدخول</button></div>
 </div></header>
 
@@ -48,7 +48,7 @@
         <div class="eyebrow">PREMIUM STUDIO FOR WINDOWS</div>
         <h1 class="gtitle">تطبيق Premium Studio</h1>
         <p class="muted">التطبيق هو المكان اللي تثبّت منه ألعابك وتشغّلها، مثل ستيم. يحط أيقونة كل لعبة على سطح المكتب، ويوريك وش المثبت، وتقدر تحذف أي لعبة منه.</p>
-        <div class="row"><a class="btn buy big" id="dlBtn" href="https://github.com/abdullra7manx-cmyk/premium-studio/releases/latest/download/PremiumStudioSetup.exe">تحميل لويندوز</a><span class="muted num" style="font-size:13px">Windows 10 / 11 · 64-bit</span></div>
+        <div class="row"><a class="btn buy big" id="dlBtn" href="https://github.com/premiumstudiogames/premiumstudiogames.github.io/releases/latest/download/PremiumStudioSetup.exe">تحميل لويندوز</a><span class="muted num" style="font-size:13px">Windows 10 / 11 · 64-bit</span></div>
         <p class="muted" id="dlInApp" hidden>أنت فاتح المتجر من داخل التطبيق ✓</p>
       </div>
     </div>
@@ -68,8 +68,18 @@
     <div class="sec-h"><h2>لوحة الاستوديو</h2><small>STUDIO DASHBOARD</small></div>
     <div class="kpis" id="kpis"></div>
     <div class="filter"><input id="q" type="search" placeholder="ابحث بالاسم أو الإيميل"><select id="fGame"><option value="">كل الألعاب</option></select><select id="fSt"><option value="">كل الحالات</option><option value="paid">مدفوع</option><option value="pending">بانتظار الدفع</option><option value="free">ديمو مجاني</option></select></div>
-    <div class="tbl"><table><thead><tr><th>اللاعب</th><th>الإيميل</th><th>تاريخ التسجيل</th><th>الألعاب</th></tr></thead><tbody id="rows"></tbody></table></div>
+    <div class="tbl"><table><thead><tr><th>رقم الحساب</th><th>اللاعب</th><th>الإيميل</th><th>تاريخ التسجيل</th><th>الألعاب</th></tr></thead><tbody id="rows"></tbody></table></div>
     <p class="muted" id="studioNote" style="margin:0;font-size:13px"></p>
+    <div class="sec-h"><h2>أكواد الخصم</h2><small>DISCOUNT CODES</small></div>
+    <form class="codeform" id="codeForm" novalidate>
+      <label class="fld">الكود<input id="cCode" dir="ltr" maxlength="20" placeholder="EID2026" autocomplete="off"></label>
+      <label class="fld">نسبة الخصم %<input id="cPct" type="number" min="1" max="100" step="1" value="20" dir="ltr"></label>
+      <label class="fld">اللعبة<select id="cGame"><option value="">كل الألعاب</option></select></label>
+      <label class="fld">ينتهي (اختياري)<input id="cExp" type="date" dir="ltr"></label>
+      <button class="btn buy" type="submit">إضافة الكود</button>
+      <div class="err" id="cErr" style="grid-column:1/-1"></div>
+    </form>
+    <div class="tbl"><table><thead><tr><th>الكود</th><th>الخصم</th><th>اللعبة</th><th>ينتهي</th><th>الاستخدام</th><th>الحالة</th><th></th></tr></thead><tbody id="codeRows"></tbody></table></div>
   </section>
 </main>
 
