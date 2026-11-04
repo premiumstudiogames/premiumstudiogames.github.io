@@ -253,10 +253,10 @@ function renderLib(){
 function renderAccount(){
   const a = $("#acct");
   if (!user) { a.innerHTML = '<div class="empty" style="grid-column:1/-1"><b style="color:var(--text)">ما سجّلت دخول</b><button class="btn buy" type="button" data-login>تسجيل الدخول</button></div>'; return; }
-  a.innerHTML = `<div class="panel"><h3>معلوماتك</h3><dl class="kv"><dt>PS ID</dt><dd class="num ltr">${fmtPid(PROFILE && PROFILE.pid)}</dd><dt>PS COIN</dt><dd class="num ltr">${coins(PROFILE && PROFILE.coins)}</dd><dt>الاسم</dt><dd id="aName"></dd><dt>الإيميل</dt><dd class="ltr" id="aMail"></dd><dt>التحقق</dt><dd>${user.emailVerified ? '<span class="st paid">الإيميل مؤكد</span>' : '<span class="st pending">غير مؤكد</span>'}</dd><dt>عضو من</dt><dd>${fdate(PROFILE && PROFILE.joined)}</dd></dl>
+  a.innerHTML = `<div class="panel"><h3>معلوماتك</h3><dl class="kv"><dt>PS ID</dt><dd class="num ltr">${fmtPid(PROFILE && PROFILE.pid)}</dd><dt>PS COIN</dt><dd class="num ltr">${coins(PROFILE && PROFILE.coins)}</dd><dt>اسم المستخدم</dt><dd class="ltr" id="aUser"></dd><dt>الاسم</dt><dd id="aName"></dd><dt>الإيميل</dt><dd class="ltr" id="aMail"></dd><dt>التحقق</dt><dd>${user.emailVerified ? '<span class="st paid">الإيميل مؤكد</span>' : '<span class="st pending">غير مؤكد</span>'}</dd><dt>عضو من</dt><dd>${fdate(PROFILE && PROFILE.joined)}</dd></dl>
     ${user.emailVerified ? "" : '<div class="row"><button class="btn mini" id="aVerify" type="button">أرسل رابط التأكيد مرة ثانية</button><button class="btn mini ghost" id="aReload" type="button">أكدت، حدّث</button></div>'}</div>
     <div class="panel"><h3>الحساب</h3><p class="muted" style="font-size:14px">نفس الحساب يشتغل في الموقع وفي تطبيق Premium Studio.</p><div class="row"><button class="btn mini" id="aReset" type="button">تغيير كلمة السر</button><button class="btn mini danger" id="aOut" type="button">تسجيل الخروج</button></div></div>`;
-  $("#aName").textContent = (PROFILE && PROFILE.name) || user.displayName || "—"; $("#aMail").textContent = user.email;
+  $("#aUser").textContent = PROFILE && PROFILE.username ? "@" + PROFILE.username : "—"; $("#aName").textContent = (PROFILE && PROFILE.name) || user.displayName || "—"; $("#aMail").textContent = user.email;
   $("#aOut").onclick = async () => { await signOut(auth); toast("سجّلت خروج"); location.hash = "#store"; };
   $("#aReset").onclick = async () => { try { await sendPasswordResetEmail(auth, user.email); toast("أرسلنا رابط تغيير كلمة السر لإيميلك"); } catch(e) { toast(authErr(e)); } };
   const v = $("#aVerify"); if (v) v.onclick = async () => { try { await sendEmailVerification(user); toast("أرسلنا رابط التأكيد لإيميلك"); } catch(e) { toast(authErr(e)); } };
@@ -278,7 +278,7 @@ function renderStudio(){
   $("#kpis").innerHTML = `<div class="kpi"><b>${Object.keys(USERS).length}</b><span>لاعب مسجّل</span></div><div class="kpi"><b>${ORDERS.length}</b><span>طلب ولعبة في المكتبات</span></div><div class="kpi"><b>${pend + coPend}</b><span>بانتظار الدفع</span></div><div class="kpi"><b>${money(paid + coPaid)}</b><span>إيرادات مؤكدة</span></div>`;
   const q = $("#q").value.trim().toLowerCase().replace(/\s+/g, " "), qd = q.replace(/[\s#]/g, ""), fg = $("#fGame").value, fst = $("#fSt").value;
   const list = Object.entries(USERS).map(([id, u]) => ({id, ...u, orders: byUser[id] || []})).filter(p => {
-    if (q && !((p.name || "") + " " + (p.email || "")).toLowerCase().includes(q) && !(qd && String(p.pid || "").includes(qd))) return false;
+    if (q && !((p.name || "") + " " + (p.email || "") + " @" + (p.username || "")).toLowerCase().includes(q) && !(qd && String(p.pid || "").includes(qd))) return false;
     if (fg && !p.orders.some(o => o.game === fg)) return false;
     if (fst && !p.orders.some(o => (!fg || o.game === fg) && o.status === fst)) return false; return true;
   }).sort((a, b) => tsMs(b.joined) - tsMs(a.joined));
@@ -288,7 +288,7 @@ function renderStudio(){
   list.forEach(p => { const tr = document.createElement("tr");
     tr.innerHTML = `<td class="pidtag">${fmtPid(p.pid)}</td><td><b></b></td><td class="ltr"></td><td><div class="row" style="gap:6px;flex-wrap:nowrap"><span class="coin" aria-hidden="true"></span><b class="num">${coins(p.coins)}</b><button class="btn mini" data-coins>تعديل</button></div></td><td>${fdate(p.joined)}</td><td><div class="gl">${(coBy[p.id] || []).filter(o => o.status === "pending").map(o => `<div class="gi"><span class="num">${coins(o.coins)} PS COIN</span><span class="num muted">${money(o.price)}</span>${stPill("pending")}<button class="btn mini" data-copay="${esc(o.ref.id)}">تأكيد الدفع</button><button class="btn mini danger" data-corej="${esc(o.ref.id)}">رفض</button></div>`).join("")}${p.orders.length ? p.orders.map((o, i) => { const g = byId(o.game);
       return `<div class="gi"><span>${esc(g ? (g.en || g.title) : o.game)} · ${esc(g ? edName(g, o.edition) : o.edition)}</span><span class="num muted">${money(o.price || 0)}</span>${o.code ? `<span class="tag ltr">${esc(o.code)}</span>` : ""}${stPill(o.status)}${o.status === "pending" ? `<button class="btn mini" data-pay="${i}">تأكيد الدفع</button><button class="btn mini" data-gift="${i}">منح مجاني</button><button class="btn mini danger" data-rej="${i}">رفض</button>` : ""}</div>`; }).join("") : '<span class="muted">ما عنده ألعاب</span>'}</div></td>`;
-    tr.children[1].firstChild.textContent = p.name || "—"; tr.children[2].textContent = p.email || "—";
+    tr.children[1].firstChild.textContent = p.name || "—"; if (p.username) { const sm = document.createElement("div"); sm.className = "muted ltr"; sm.style.fontSize = "12px"; sm.textContent = "@" + p.username; tr.children[1].appendChild(sm); } tr.children[2].textContent = p.email || "—";
     tr.querySelector("[data-coins]").onclick = () => coinAdjust(p);
     tr.querySelectorAll("[data-copay]").forEach(b => b.onclick = async () => { const o = (coBy[p.id] || []).find(x => x.ref.id === b.dataset.copay); if (!o) return; b.disabled = true;
       try { const bt = writeBatch(fs); bt.update(o.ref, {status:"paid", paidAt:serverTimestamp()}); bt.update(doc(fs, "users", p.id), {coins:increment(o.coins)}); await bt.commit(); toast(`انضاف ${coins(o.coins)} PS COIN لـ ${p.name || "اللاعب"} ✓`); }
@@ -454,7 +454,7 @@ function showAuth(mode, note){
   $("#gbox").innerHTML = `${brandHTML}<h1>${login ? "تسجيل الدخول" : "أنشئ حسابك"}</h1>${note ? `<p>${esc(note)}</p>` : '<p>حسابك يحفظ مكتبتك ومشترياتك، ويشتغل في الموقع والتطبيق.</p>'}
     <div class="seg"><button type="button" data-m="login" aria-pressed="${login}">تسجيل الدخول</button><button type="button" data-m="signup" aria-pressed="${!login}">حساب جديد</button></div>
     <form class="f" id="af" novalidate>
-      ${login ? "" : '<label class="fld">اسم اللاعب<input id="aN" autocomplete="nickname" maxlength="32" required></label>'}
+      ${login ? "" : '<label class="fld">اسم المستخدم (ما يتكرر، إنجليزي وأرقام و _ و .)<input id="aU" dir="ltr" autocomplete="username" maxlength="20" required placeholder="xox_gamer"></label><div class="muted" id="aUmsg" style="font-size:12px;min-height:1em"></div><label class="fld">اسم اللاعب<input id="aN" autocomplete="nickname" maxlength="32" required></label>'}
       <label class="fld">الإيميل<input id="aE" type="email" dir="ltr" autocomplete="email" maxlength="120" required placeholder="name@example.com"></label>
       <label class="fld">كلمة السر<input id="aP" type="password" dir="ltr" autocomplete="${login ? "current-password" : "new-password"}" minlength="6" required></label>
       ${login ? '<button class="link" type="button" id="aForgot">نسيت كلمة السر؟</button>' : '<label class="fld">أعد كلمة السر<input id="aP2" type="password" dir="ltr" autocomplete="new-password" required></label><label class="chk"><input type="checkbox" id="aAgree">أوافق إن بريميوم ستوديو يحفظ اسمي وإيميلي ومشترياتي</label>'}
@@ -466,6 +466,7 @@ function showAuth(mode, note){
   $("#aGuest").onclick = () => { guest = true; try { sessionStorage.setItem("ps-guest", "1"); } catch(e) {} $("#gate").hidden = true; applyChrome(); render(); };
   const fg = $("#aForgot"); if (fg) fg.onclick = async () => { const m = $("#aE").value.trim(); if (!m) { $("#aErr").textContent = "اكتب إيميلك أول، بعدين اضغط نسيت كلمة السر."; return; }
     try { await sendPasswordResetEmail(auth, m); $("#aErr").className = "okmsg"; $("#aErr").textContent = "إذا الإيميل مسجّل، بيوصلك رابط تغيير كلمة السر."; } catch(e) { $("#aErr").textContent = authErr(e); } };
+  if (!login) wireUnameCheck($("#aU"), $("#aUmsg"));
   setTimeout(() => { const f = $("#gbox input"); if (f && !isMobile) f.focus(); }, 30);
   $("#af").addEventListener("submit", async ev => { ev.preventDefault();
     const err = $("#aErr"); err.className = "err"; err.textContent = "";
@@ -473,21 +474,55 @@ function showAuth(mode, note){
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(m)) { err.textContent = "اكتب إيميل صحيح، مثل name@example.com"; return; }
     if (p.length < 6) { err.textContent = "كلمة السر لازم تكون 6 أحرف أو أكثر"; return; }
     let n = "";
-    if (!login) { n = $("#aN").value.trim();
+    let un = "";
+    if (!login) { un = normUname($("#aU").value);
+      if (!UNAME_RE.test(un)) { err.textContent = "اسم المستخدم من 3 إلى 20 حرف: إنجليزي صغير وأرقام و _ و ."; return; }
+      $("#aGo").disabled = true;
+      const free = await unameFree(un); $("#aGo").disabled = false;
+      if (!free) { err.textContent = "اسم المستخدم هذا مأخوذ، اختر غيره"; return; }
+      n = $("#aN").value.trim();
       if (n.length < 2) { err.textContent = "اكتب اسم لاعب من حرفين أو أكثر"; return; }
       if (p !== $("#aP2").value) { err.textContent = "كلمتين السر مو متطابقة"; return; }
       if (!$("#aAgree").checked) { err.textContent = "لازم توافق عشان نكمل التسجيل"; return; } }
     $("#aGo").disabled = true;
     try {
       if (login) await signInWithEmailAndPassword(auth, m, p);
-      else { pendingName = n; const c = await createUserWithEmailAndPassword(auth, m, p); await updateProfile(c.user, {displayName:n}); await ensureProfile(c.user, n); sendEmailVerification(c.user).catch(()=>{}); toast("تم إنشاء حسابك ✓ أرسلنا رابط تأكيد لإيميلك"); }
+      else { pendingName = n; pendingUname = un; const c = await createUserWithEmailAndPassword(auth, m, p); await updateProfile(c.user, {displayName:n}); await ensureProfile(c.user, n, un); sendEmailVerification(c.user).catch(()=>{}); toast("تم إنشاء حسابك ✓ أرسلنا رابط تأكيد لإيميلك"); }
     } catch(e) { $("#aGo").disabled = false; err.textContent = authErr(e); }
   });
 }
-let pendingName = "";
+let pendingName = "", pendingUname = "";
+/* usernames: unique, reserved in usernames/<name> so no two accounts share one */
+const UNAME_RE = /^[a-z0-9_.]{3,20}$/;
+const normUname = v => String(v || "").trim().toLowerCase().replace(/^@/, "");
+async function unameFree(un){ try { return !(await getDoc(doc(fs, "usernames", un))).exists(); } catch(e) { return false; } }
+function wireUnameCheck(inp, msg){
+  let t = 0; inp.addEventListener("input", () => { clearTimeout(t); const un = normUname(inp.value); msg.className = "muted"; msg.textContent = "";
+    if (!un) return; if (!UNAME_RE.test(un)) { msg.className = "err"; msg.textContent = "3 إلى 20 حرف: a-z و 0-9 و _ و ."; return; }
+    t = setTimeout(async () => { const ok = await unameFree(un); if (normUname(inp.value) !== un) return; msg.className = ok ? "okmsg" : "err"; msg.textContent = ok ? `@${un} متاح ✓` : `@${un} مأخوذ`; }, 350); });
+}
+async function claimUname(u, un){
+  const b = writeBatch(fs);
+  b.set(doc(fs, "usernames", un), {uid:u.uid, at:serverTimestamp()});
+  b.update(doc(fs, "users", u.uid), {username:un});
+  await b.commit();
+}
+function askUsername(u){
+  closeModal();
+  $("#gbox").innerHTML = `${brandHTML}<h1>اختر اسم المستخدم</h1><p>كل حساب لازم يكون له اسم مستخدم ما يتكرر. ما تقدر تغيّره بعدين.</p>
+    <form class="f" id="uf" novalidate><label class="fld">اسم المستخدم<input id="uU" dir="ltr" autocomplete="username" maxlength="20" required placeholder="xox_gamer"></label><div class="muted" id="uUmsg" style="font-size:12px;min-height:1em"></div><div class="err" id="uErr"></div><button class="btn buy" id="uGo" type="submit">حفظ</button></form>`;
+  $("#gate").hidden = false; wireUnameCheck($("#uU"), $("#uUmsg"));
+  $("#uf").addEventListener("submit", async ev => { ev.preventDefault(); const un = normUname($("#uU").value), err = $("#uErr"); err.textContent = "";
+    if (!UNAME_RE.test(un)) { err.textContent = "3 إلى 20 حرف: إنجليزي صغير وأرقام و _ و ."; return; }
+    $("#uGo").disabled = true;
+    try { if (!(await unameFree(un))) throw {code:"taken"}; await claimUname(u, un); $("#gate").hidden = true; toast(`صار اسمك @${un} ✓`); }
+    catch(e) { $("#uGo").disabled = false; err.textContent = e.code === "taken" || e.code === "permission-denied" ? "اسم المستخدم هذا مأخوذ، اختر غيره" : "ما انحفظ: " + (e.code || e.message); } });
+}
 /* every account gets a random 10-digit PS ID (leading zeros allowed), reserved in playerIds/<pid> so no two accounts share one; it never changes */
 const newPid = () => { const a = new Uint32Array(2); crypto.getRandomValues(a); return String((a[0] * 4294967296 + a[1]) % 10000000000).padStart(10, "0"); };
-async function ensureProfile(u, name){
+const profileJobs = {};
+function ensureProfile(u, name, un){ return profileJobs[u.uid] || (profileJobs[u.uid] = ensureProfileOnce(u, name, un).finally(() => { delete profileJobs[u.uid]; })); }
+async function ensureProfileOnce(u, name, un){
   const r = doc(fs, "users", u.uid);
   const s = await getDoc(r);
   const cur = s.exists() ? s.data() : null;
@@ -497,14 +532,16 @@ async function ensureProfile(u, name){
     const pid = newPid(), b = writeBatch(fs);
     b.set(doc(fs, "playerIds", pid), {uid:u.uid, at:serverTimestamp()});
     if (cur) b.update(r, "coins" in cur ? {pid} : {pid, coins:SIGNUP_BONUS});
-    else b.set(r, {pid, coins:SIGNUP_BONUS, name:(name || u.displayName || u.email.split("@")[0]).slice(0, 32), email:u.email.toLowerCase(), joined:serverTimestamp()});
+    else { const d = {pid, coins:SIGNUP_BONUS, name:(name || u.displayName || u.email.split("@")[0]).slice(0, 32), email:u.email.toLowerCase(), joined:serverTimestamp()};
+      if (un && UNAME_RE.test(un)) { b.set(doc(fs, "usernames", un), {uid:u.uid, at:serverTimestamp()}); d.username = un; }
+      b.set(r, d); }
     try { await b.commit(); return; } catch(e) { if (i === 4) throw e; }   // a taken number fails the batch, so try another
   }
 }
 function setAdmin(){ isAdmin = !!(user && user.email && user.email.toLowerCase() === ADMIN_EMAIL && user.emailVerified); $("#tabStudio").hidden = !isAdmin; }
 function applyChrome(){
   $("#me").hidden = !user; $("#guestBar").hidden = !!user || !authReady;
-  if (user) { const n = (PROFILE && PROFILE.name) || user.displayName || user.email; $("#meName").textContent = n; $("#meAv").textContent = (n || "?").trim().charAt(0).toUpperCase(); $("#mePid").textContent = PROFILE && PROFILE.pid ? "PS ID " + PROFILE.pid : ""; }
+  if (user) { const n = (PROFILE && PROFILE.name) || user.displayName || user.email; $("#meName").textContent = n; $("#meAv").textContent = (n || "?").trim().charAt(0).toUpperCase(); $("#mePid").textContent = PROFILE && PROFILE.username ? "@" + PROFILE.username : (PROFILE && PROFILE.pid ? "PS ID " + PROFILE.pid : ""); }
   $("#coinChip").hidden = !user; if (user) $("#coinBal").textContent = coins(PROFILE && PROFILE.coins);
 }
 onAuthStateChanged(auth, async u => {
@@ -512,8 +549,9 @@ onAuthStateChanged(auth, async u => {
   user = u; authReady = true; setAdmin();
   if (u) {
     $("#gate").hidden = true; guest = false;
-    try { await ensureProfile(u, pendingName); } catch(e) { toast("ما قدرت أفتح حسابك في قاعدة البيانات: " + (e.code || e.message)); }
-    unsubs.push(onSnapshot(doc(fs, "users", u.uid), s => { PROFILE = s.exists() ? s.data() : null; applyChrome(); if (curView === "account") renderAccount(); if (curView === "coins") renderCoins(); }));
+    try { await ensureProfile(u, pendingName, pendingUname); } catch(e) { toast("ما قدرت أفتح حسابك في قاعدة البيانات: " + (e.code || e.message)); }
+    unsubs.push(onSnapshot(doc(fs, "users", u.uid), s => { PROFILE = s.exists() ? s.data() : null; applyChrome();
+      if (PROFILE && PROFILE.pid && !PROFILE.username && !$("#uf")) askUsername(u); if (curView === "account") renderAccount(); if (curView === "coins") renderCoins(); }));
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "library"), s => { LIB = {}; s.forEach(d => LIB[d.id] = d.data()); render(); }, e => toast("ما قدرت أقرأ مكتبتك: " + e.code)));
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "coinOrders"), s => { MYCO = s.docs.map(d => ({id:d.id, ...d.data()})); if (curView === "coins") renderCoins(); }, () => {}));
     if (isAdmin) startAdmin();

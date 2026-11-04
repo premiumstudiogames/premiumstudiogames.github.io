@@ -41,6 +41,22 @@ service cloud.firestore {
         && getAfter(/databases/$(database)/documents/playerIds/$(pid)).data.uid == request.auth.uid;
     }
 
+    // Usernames: one document per name, so no two accounts share one. Never changes.
+    function validUname(un) { return un is string && un.matches('^[a-z0-9_.]{3,20}$'); }
+    function unameReserved(un) {
+      return existsAfter(/databases/$(database)/documents/usernames/$(un))
+        && getAfter(/databases/$(database)/documents/usernames/$(un)).data.uid == request.auth.uid;
+    }
+    match /usernames/{un} {
+      allow get: if true;
+      allow list: if isAdmin();
+      allow create: if signedIn() && validUname(un)
+        && request.resource.data.keys().hasOnly(['uid', 'at'])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.at == request.time;
+      allow update, delete: if false;
+    }
+
     // Account numbers: one document per number, so no two accounts share one. Never changes.
     match /playerIds/{pid} {
       allow get: if signedIn();
@@ -56,7 +72,8 @@ service cloud.firestore {
     match /users/{uid} {
       allow read: if isMe(uid) || isAdmin();
       allow create: if isMe(uid)
-        && request.resource.data.keys().hasOnly(['pid', 'name', 'email', 'joined', 'coins'])
+        && request.resource.data.keys().hasOnly(['pid', 'name', 'email', 'joined', 'coins', 'username'])
+        && (!('username' in request.resource.data) || (validUname(request.resource.data.username) && unameReserved(request.resource.data.username)))
         && request.resource.data.coins == 1
         && validPid(request.resource.data.pid) && pidReserved(request.resource.data.pid)
         && request.resource.data.name is string
@@ -68,6 +85,9 @@ service cloud.firestore {
           (changed().hasOnly(['pid', 'coins']) && changed().size() > 0
             && (!changed().hasAny(['pid']) || (!('pid' in resource.data) && validPid(request.resource.data.pid) && pidReserved(request.resource.data.pid)))
             && (!changed().hasAny(['coins']) || (!('coins' in resource.data) && request.resource.data.coins == 1)))
+          // pick a username once
+          || (changed().hasOnly(['username']) && !('username' in resource.data)
+            && validUname(request.resource.data.username) && unameReserved(request.resource.data.username))
           // change the display name only; PS ID and coins stay
           || (changed().hasOnly(['name'])
             && request.resource.data.name is string
