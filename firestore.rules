@@ -25,11 +25,12 @@ service cloud.firestore {
         && (codeOf(code).game == '' || codeOf(code).game == game)
         && (codeOf(code).expires == null || codeOf(code).expires > request.time);
     }
-    // PS COIN packs (coins in thousandths: 1000 = 1 PS COIN = $100,000)
+    // PS COIN packs (coins in ten-thousandths: 10000 = 1 PS COIN = $100,000)
     function coinPacks() {
       return {
-        'c0010': {'coins': 10, 'price': 1000}, 'c0100': {'coins': 100, 'price': 10000},
-        'c1000': {'coins': 1000, 'price': 100000}, 'c10000': {'coins': 10000, 'price': 1000000}
+        'u1': {'coins': 1, 'price': 10}, 'u100': {'coins': 100, 'price': 1000},
+        'u1000': {'coins': 1000, 'price': 10000}, 'u10000': {'coins': 10000, 'price': 100000},
+        'u100000': {'coins': 100000, 'price': 1000000}
       };
     }
     function changed() { return request.resource.data.diff(resource.data).affectedKeys(); }

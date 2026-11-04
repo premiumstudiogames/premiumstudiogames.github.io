@@ -219,7 +219,7 @@ form.f{display:flex;flex-direction:column;gap:14px}
 .wallet{display:flex;align-items:center;gap:18px;background:linear-gradient(135deg,#231d0a,var(--deck) 60%);border:1px solid var(--goldDeep);padding:24px;flex-wrap:wrap}
 .wallet .bal{font:700 clamp(30px,5vw,46px)/1 var(--mono);font-variant-numeric:tabular-nums;direction:ltr}
 .wallet .lbl{font:600 12px var(--mono);letter-spacing:.16em;color:var(--yellow)}
-.packs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.packs{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,180px),1fr));gap:14px}
 @media (max-width:860px){.packs{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .pack{background:var(--deck);border:1px solid var(--line);padding:18px;display:flex;flex-direction:column;gap:10px;align-items:flex-start}
 .pack .amt{font:700 26px var(--mono);font-variant-numeric:tabular-nums;direction:ltr;display:flex;align-items:center;gap:8px}

@@ -15,16 +15,18 @@ const firebaseConfig = {
   measurementId: "G-MXDZK8WSVN"
 };
 const ADMIN_EMAIL = "abdullra7manx@gmail.com";
-/* PS COIN balances are stored as whole thousandths (1 = 0.001 PS COIN) so sums stay exact. 1 PS COIN = $100,000. */
+/* PS COIN balances are stored as whole ten-thousandths (1 = 0.0001 PS COIN) so sums stay exact. 1 PS COIN = $100,000. */
+const COIN_UNIT = 10000;
 const COIN_USD = 100000;
-const SIGNUP_BONUS = 1;     // 0.001 PS COIN for every new account
-const PACKS = [             // must match coinPacks() in firestore.rules (coins in thousandths)
-  {id:"c0010", coins:10,    price:1000},
-  {id:"c0100", coins:100,   price:10000},
-  {id:"c1000", coins:1000,  price:100000},
-  {id:"c10000", coins:10000, price:1000000}
+const SIGNUP_BONUS = 1;     // 0.0001 PS COIN for every new account
+const PACKS = [             // must match coinPacks() in firestore.rules (coins in ten-thousandths)
+  {id:"u1",     coins:1,      price:10},
+  {id:"u100",   coins:100,    price:1000},
+  {id:"u1000",  coins:1000,   price:10000},
+  {id:"u10000", coins:10000,  price:100000},
+  {id:"u100000",coins:100000, price:1000000}
 ];
-const coins = n => ((n || 0) / 1000).toLocaleString("en-US", {minimumFractionDigits:0, maximumFractionDigits:3});
+const coins = n => ((n || 0) / COIN_UNIT).toLocaleString("en-US", {minimumFractionDigits:0, maximumFractionDigits:4});
 const SITE_VERSION = "00.00.01";
 const APP_DL = "downloads/PremiumStudioSetup.exe";
 
@@ -303,9 +305,9 @@ function renderStudio(){
 
 function coinAdjust(p){
   openModal(`<div class="eyebrow">PS COIN</div><h1 class="mbox-t">عملات ${esc(p.name || "")}</h1><p class="mbox-t">الرصيد الحالي: <b class="num">${coins(p.coins)}</b> · PS ID <span class="num">${fmtPid(p.pid)}</span></p>
-    <label class="fld">كم PS COIN تضيف؟ (بالسالب للخصم، مثل -0.5)<input id="caN" type="number" step="0.001" dir="ltr" value="1"></label><div class="err" id="caErr"></div>
+    <label class="fld">كم PS COIN تضيف؟ (بالسالب للخصم، مثل -0.0001)<input id="caN" type="number" step="0.0001" dir="ltr" value="0.0001"></label><div class="err" id="caErr"></div>
     <div class="row"><button class="btn buy" id="caOk" type="button">تطبيق</button><button class="btn ghost" data-close type="button">إلغاء</button></div>`);
-  $("#caOk").onclick = async () => { const n = Math.round(+$("#caN").value * 1000);
+  $("#caOk").onclick = async () => { const n = Math.round(+$("#caN").value * COIN_UNIT);
     if (!n) { $("#caErr").textContent = "اكتب رقم غير صفر"; return; }
     if ((p.coins || 0) + n < 0) { $("#caErr").textContent = "الرصيد ما يصير أقل من صفر"; return; }
     $("#caOk").disabled = true;
