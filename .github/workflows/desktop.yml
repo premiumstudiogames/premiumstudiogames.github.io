@@ -12,21 +12,26 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
-    defaults:
-      run:
-        working-directory: desktop
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
       - name: Install
+        working-directory: desktop
         run: npm install --no-audit --no-fund
       - name: Build and publish installer
+        working-directory: desktop
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --win --x64 --publish always
-      - uses: actions/upload-artifact@v4
-        with:
-          name: PremiumStudioSetup
-          path: desktop/dist/PremiumStudioSetup.exe
+      - name: Put the installer on the store site
+        shell: bash
+        run: |
+          cp desktop/dist/PremiumStudioSetup.exe docs/downloads/PremiumStudioSetup.exe
+          git config user.name "Premium Studio Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add docs/downloads/PremiumStudioSetup.exe
+          git commit -m "Update Windows installer" || exit 0
+          git pull --rebase origin main
+          git push origin HEAD:main

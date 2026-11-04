@@ -16,8 +16,7 @@ const firebaseConfig = {
 };
 const ADMIN_EMAIL = "abdullra7manx@gmail.com";
 const SITE_VERSION = "00.00.01";
-const REPO = "premiumstudiogames/premiumstudiogames.github.io";
-const APP_DL = `https://github.com/${REPO}/releases/latest/download/PremiumStudioSetup.exe`;
+const APP_DL = "downloads/PremiumStudioSetup.exe";
 
 const fb = initializeApp(firebaseConfig);
 const auth = getAuth(fb);
@@ -172,7 +171,7 @@ document.addEventListener("click", async e => {
 function getAppModal(g){
   openModal(`<div class="eyebrow">INSTALL</div><h1 class="mbox-t">ثبّت ${esc(g.en || g.title)}</h1>
     <p class="mbox-t">الألعاب تنثبت من تطبيق Premium Studio على الكمبيوتر، مثل ستيم. التطبيق يحط أيقونة اللعبة على سطح المكتب.</p>
-    <a class="btn buy" href="${APP_DL}">تحميل تطبيق Premium Studio</a>
+    <a class="btn buy" href="${APP_DL}" download>تحميل تطبيق Premium Studio</a>
     <a class="btn" href="premiumstudio://game/${g.id}">عندي التطبيق، افتح فيه</a>
     <button class="btn ghost" data-close>إغلاق</button>`);
 }

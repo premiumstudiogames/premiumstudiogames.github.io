@@ -3,7 +3,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 const ok = (() => {
-  try { const u = new URL(location.href); return u.origin === 'https://premiumstudiogames.github.io' || (u.protocol === 'file:' && u.pathname.endsWith('offline.html')); }
+  try { const u = new URL(location.href); return u.origin === 'https://abdullra7manx-cmyk.github.io' || (u.protocol === 'file:' && u.pathname.endsWith('offline.html')); }
   catch (e) { return false; }
 })();
 

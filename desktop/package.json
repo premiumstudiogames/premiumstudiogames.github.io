@@ -40,6 +40,6 @@
       "runAfterFinish": true,
       "deleteAppDataOnUninstall": false
     },
-    "publish": [{ "provider": "github", "owner": "premiumstudiogames", "repo": "premiumstudiogames.github.io", "releaseType": "release" }]
+    "publish": [{ "provider": "github", "owner": "abdullra7manx-cmyk", "repo": "premium-studio", "releaseType": "release" }]
   }
 }
