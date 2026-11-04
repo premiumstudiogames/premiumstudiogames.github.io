@@ -32,7 +32,7 @@ const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
 const money = p => p === 0 ? "مجاني" : "$" + p.toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2});
-const fmtPid = p => p ? String(p).replace(/(\d{3})(?=\d)/g, "$1 ") : "—";
+const fmtPid = p => p ? String(p) : "—";
 const finalPrice = (base, pct) => base * (100 - pct) / 100;   // same arithmetic as the security rules
 const tsMs = t => !t ? 0 : (typeof t === "number" ? t : (t.toMillis ? t.toMillis() : 0));
 const fdate = t => { const ms = tsMs(t); if (!ms) return "—"; try { return new Date(ms).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn", {year:"numeric", month:"short", day:"numeric"}); } catch(e) { return ""; } };
@@ -434,8 +434,8 @@ function showAuth(mode, note){
   });
 }
 let pendingName = "";
-/* every account gets a random 9-digit account number, reserved in playerIds/<pid> so no two accounts share one; it never changes */
-const newPid = () => String(100000000 + Math.floor(Math.random() * 900000000));
+/* every account gets a random 10-digit account number (leading zeros allowed), reserved in playerIds/<pid> so no two accounts share one; it never changes */
+const newPid = () => { const a = new Uint32Array(2); crypto.getRandomValues(a); return String((a[0] * 4294967296 + a[1]) % 10000000000).padStart(10, "0"); };
 async function ensureProfile(u, name){
   const r = doc(fs, "users", u.uid);
   const s = await getDoc(r);

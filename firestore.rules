@@ -25,7 +25,7 @@ service cloud.firestore {
         && (codeOf(code).game == '' || codeOf(code).game == game)
         && (codeOf(code).expires == null || codeOf(code).expires > request.time);
     }
-    function validPid(pid) { return pid is string && pid.matches('^[1-9][0-9]{8}$'); }
+    function validPid(pid) { return pid is string && pid.matches('^[0-9]{10}$'); }
     // The pid is reserved for this player in the same write
     function pidReserved(pid) {
       return existsAfter(/databases/$(database)/documents/playerIds/$(pid))
