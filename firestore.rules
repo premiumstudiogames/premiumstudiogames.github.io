@@ -25,6 +25,14 @@ service cloud.firestore {
         && (codeOf(code).game == '' || codeOf(code).game == game)
         && (codeOf(code).expires == null || codeOf(code).expires > request.time);
     }
+    // PS COIN packs (coins in thousandths: 1000 = 1 PS COIN = $100,000)
+    function coinPacks() {
+      return {
+        'c0010': {'coins': 10, 'price': 1000}, 'c0100': {'coins': 100, 'price': 10000},
+        'c1000': {'coins': 1000, 'price': 100000}, 'c10000': {'coins': 10000, 'price': 1000000}
+      };
+    }
+    function changed() { return request.resource.data.diff(resource.data).affectedKeys(); }
     function validPid(pid) { return pid is string && pid.matches('^[0-9]{10}$'); }
     // The pid is reserved for this player in the same write
     function pidReserved(pid) {
@@ -47,23 +55,38 @@ service cloud.firestore {
     match /users/{uid} {
       allow read: if isMe(uid) || isAdmin();
       allow create: if isMe(uid)
-        && request.resource.data.keys().hasOnly(['pid', 'name', 'email', 'joined'])
+        && request.resource.data.keys().hasOnly(['pid', 'name', 'email', 'joined', 'coins'])
+        && request.resource.data.coins == 1
         && validPid(request.resource.data.pid) && pidReserved(request.resource.data.pid)
         && request.resource.data.name is string
         && request.resource.data.name.size() >= 1 && request.resource.data.name.size() <= 32
         && request.resource.data.email == request.auth.token.email.lower()
         && request.resource.data.joined == request.time;
-      allow update: if isMe(uid) && (
-          // add an account number once, to an older account that has none
-          (!('pid' in resource.data)
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['pid'])
-            && validPid(request.resource.data.pid) && pidReserved(request.resource.data.pid))
-          // change the display name only; the account number stays
-          || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name'])
+      allow update: if isAdmin() || (isMe(uid) && (
+          // add a PS ID and/or the signup bonus once, to an older account that has none
+          (changed().hasOnly(['pid', 'coins']) && changed().size() > 0
+            && (!changed().hasAny(['pid']) || (!('pid' in resource.data) && validPid(request.resource.data.pid) && pidReserved(request.resource.data.pid)))
+            && (!changed().hasAny(['coins']) || (!('coins' in resource.data) && request.resource.data.coins == 1)))
+          // change the display name only; PS ID and coins stay
+          || (changed().hasOnly(['name'])
             && request.resource.data.name is string
             && request.resource.data.name.size() >= 1 && request.resource.data.name.size() <= 32)
-        );
+        ));
       allow delete: if isAdmin();
+
+      // PS COIN purchase requests; the studio confirms payment and adds the coins
+      match /coinOrders/{oid} {
+        allow read: if isMe(uid) || isAdmin();
+        allow create: if isMe(uid)
+          && request.resource.data.keys().hasOnly(['pack', 'coins', 'price', 'status', 'at'])
+          && request.resource.data.pack in coinPacks()
+          && request.resource.data.coins == coinPacks()[request.resource.data.pack].coins
+          && request.resource.data.price == coinPacks()[request.resource.data.pack].price
+          && request.resource.data.status == 'pending'
+          && request.resource.data.at == request.time;
+        allow update: if isAdmin() && changed().hasOnly(['status', 'paidAt']);
+        allow delete: if isAdmin();
+      }
 
       // Library: one document per game edition, id = "<game>__<edition>"
       match /library/{itemId} {
@@ -97,6 +120,10 @@ service cloud.firestore {
     match /codes/{code} {
       allow get: if signedIn();
       allow list, create, update, delete: if isAdmin();
+    }
+
+    match /{path=**}/coinOrders/{oid} {
+      allow read: if isAdmin();
     }
 
     // Studio dashboard reads every library across players

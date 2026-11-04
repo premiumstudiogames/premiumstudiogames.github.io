@@ -2,7 +2,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/fireba
 import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut,
   sendPasswordResetEmail, sendEmailVerification, updateProfile, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, collectionGroup, onSnapshot,
-  serverTimestamp, writeBatch, Timestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  serverTimestamp, writeBatch, Timestamp, increment } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 /* ---------------- config ---------------- */
 const firebaseConfig = {
@@ -15,6 +15,16 @@ const firebaseConfig = {
   measurementId: "G-MXDZK8WSVN"
 };
 const ADMIN_EMAIL = "abdullra7manx@gmail.com";
+/* PS COIN balances are stored as whole thousandths (1 = 0.001 PS COIN) so sums stay exact. 1 PS COIN = $100,000. */
+const COIN_USD = 100000;
+const SIGNUP_BONUS = 1;     // 0.001 PS COIN for every new account
+const PACKS = [             // must match coinPacks() in firestore.rules (coins in thousandths)
+  {id:"c0010", coins:10,    price:1000},
+  {id:"c0100", coins:100,   price:10000},
+  {id:"c1000", coins:1000,  price:100000},
+  {id:"c10000", coins:10000, price:1000000}
+];
+const coins = n => ((n || 0) / 1000).toLocaleString("en-US", {minimumFractionDigits:0, maximumFractionDigits:3});
 const SITE_VERSION = "00.00.01";
 const APP_DL = "downloads/PremiumStudioSetup.exe";
 
@@ -241,7 +251,7 @@ function renderLib(){
 function renderAccount(){
   const a = $("#acct");
   if (!user) { a.innerHTML = '<div class="empty" style="grid-column:1/-1"><b style="color:var(--text)">ما سجّلت دخول</b><button class="btn buy" type="button" data-login>تسجيل الدخول</button></div>'; return; }
-  a.innerHTML = `<div class="panel"><h3>معلوماتك</h3><dl class="kv"><dt>رقم الحساب</dt><dd class="num ltr">${fmtPid(PROFILE && PROFILE.pid)}</dd><dt>الاسم</dt><dd id="aName"></dd><dt>الإيميل</dt><dd class="ltr" id="aMail"></dd><dt>التحقق</dt><dd>${user.emailVerified ? '<span class="st paid">الإيميل مؤكد</span>' : '<span class="st pending">غير مؤكد</span>'}</dd><dt>عضو من</dt><dd>${fdate(PROFILE && PROFILE.joined)}</dd></dl>
+  a.innerHTML = `<div class="panel"><h3>معلوماتك</h3><dl class="kv"><dt>PS ID</dt><dd class="num ltr">${fmtPid(PROFILE && PROFILE.pid)}</dd><dt>PS COIN</dt><dd class="num ltr">${coins(PROFILE && PROFILE.coins)}</dd><dt>الاسم</dt><dd id="aName"></dd><dt>الإيميل</dt><dd class="ltr" id="aMail"></dd><dt>التحقق</dt><dd>${user.emailVerified ? '<span class="st paid">الإيميل مؤكد</span>' : '<span class="st pending">غير مؤكد</span>'}</dd><dt>عضو من</dt><dd>${fdate(PROFILE && PROFILE.joined)}</dd></dl>
     ${user.emailVerified ? "" : '<div class="row"><button class="btn mini" id="aVerify" type="button">أرسل رابط التأكيد مرة ثانية</button><button class="btn mini ghost" id="aReload" type="button">أكدت، حدّث</button></div>'}</div>
     <div class="panel"><h3>الحساب</h3><p class="muted" style="font-size:14px">نفس الحساب يشتغل في الموقع وفي تطبيق Premium Studio.</p><div class="row"><button class="btn mini" id="aReset" type="button">تغيير كلمة السر</button><button class="btn mini danger" id="aOut" type="button">تسجيل الخروج</button></div></div>`;
   $("#aName").textContent = (PROFILE && PROFILE.name) || user.displayName || "—"; $("#aMail").textContent = user.email;
@@ -252,16 +262,18 @@ function renderAccount(){
 }
 
 /* ---------------- studio dashboard (admin) ---------------- */
-let USERS = {}, ORDERS = [];
+let USERS = {}, ORDERS = [], COINORDERS = [], MYCO = [];
 function startAdmin(){
   unsubs.push(onSnapshot(collection(fs, "users"), s => { USERS = {}; s.forEach(d => USERS[d.id] = d.data()); if (curView === "studio") renderStudio(); }, e => { $("#studioNote").textContent = "ما قدرت أقرأ قائمة اللاعبين: " + e.code; }));
+  unsubs.push(onSnapshot(collectionGroup(fs, "coinOrders"), s => { COINORDERS = s.docs.map(d => ({ref:d.ref, uid:d.ref.parent.parent.id, ...d.data()})); if (curView === "studio") renderStudio(); }, () => {}));
   unsubs.push(onSnapshot(collection(fs, "codes"), s => { CODES = {}; s.forEach(d => CODES[d.id] = d.data()); if (curView === "studio") renderCodes(); }, () => {}));
   unsubs.push(onSnapshot(collectionGroup(fs, "library"), s => { ORDERS = s.docs.map(d => ({ref:d.ref, uid:d.ref.parent.parent.id, ...d.data()})); if (curView === "studio") renderStudio(); }, e => { $("#studioNote").textContent = "ما قدرت أقرأ الطلبات: " + e.code; }));
 }
 function renderStudio(){
   const byUser = {}; ORDERS.forEach(o => (byUser[o.uid] = byUser[o.uid] || []).push(o));
   const paid = ORDERS.filter(o => o.status === "paid").reduce((a, o) => a + (o.price || 0), 0), pend = ORDERS.filter(o => o.status === "pending").length;
-  $("#kpis").innerHTML = `<div class="kpi"><b>${Object.keys(USERS).length}</b><span>لاعب مسجّل</span></div><div class="kpi"><b>${ORDERS.length}</b><span>طلب ولعبة في المكتبات</span></div><div class="kpi"><b>${pend}</b><span>بانتظار الدفع</span></div><div class="kpi"><b>${money(paid)}</b><span>إيرادات مؤكدة</span></div>`;
+  const coPaid = COINORDERS.filter(o => o.status === "paid").reduce((a, o) => a + (o.price || 0), 0), coPend = COINORDERS.filter(o => o.status === "pending").length;
+  $("#kpis").innerHTML = `<div class="kpi"><b>${Object.keys(USERS).length}</b><span>لاعب مسجّل</span></div><div class="kpi"><b>${ORDERS.length}</b><span>طلب ولعبة في المكتبات</span></div><div class="kpi"><b>${pend + coPend}</b><span>بانتظار الدفع</span></div><div class="kpi"><b>${money(paid + coPaid)}</b><span>إيرادات مؤكدة</span></div>`;
   const q = $("#q").value.trim().toLowerCase().replace(/\s+/g, " "), qd = q.replace(/[\s#]/g, ""), fg = $("#fGame").value, fst = $("#fSt").value;
   const list = Object.entries(USERS).map(([id, u]) => ({id, ...u, orders: byUser[id] || []})).filter(p => {
     if (q && !((p.name || "") + " " + (p.email || "")).toLowerCase().includes(q) && !(qd && String(p.pid || "").includes(qd))) return false;
@@ -269,11 +281,17 @@ function renderStudio(){
     if (fst && !p.orders.some(o => (!fg || o.game === fg) && o.status === fst)) return false; return true;
   }).sort((a, b) => tsMs(b.joined) - tsMs(a.joined));
   const tb = $("#rows"); tb.innerHTML = "";
-  if (!list.length) tb.innerHTML = `<tr><td colspan="5" class="muted" style="text-align:center;padding:24px">${Object.keys(USERS).length ? "ما فيه نتائج تطابق البحث" : "ما سجّل أحد للحين."}</td></tr>`;
+  const coBy = {}; COINORDERS.forEach(o => (coBy[o.uid] = coBy[o.uid] || []).push(o));
+  if (!list.length) tb.innerHTML = `<tr><td colspan="6" class="muted" style="text-align:center;padding:24px">${Object.keys(USERS).length ? "ما فيه نتائج تطابق البحث" : "ما سجّل أحد للحين."}</td></tr>`;
   list.forEach(p => { const tr = document.createElement("tr");
-    tr.innerHTML = `<td class="pidtag">${fmtPid(p.pid)}</td><td><b></b></td><td class="ltr"></td><td>${fdate(p.joined)}</td><td><div class="gl">${p.orders.length ? p.orders.map((o, i) => { const g = byId(o.game);
+    tr.innerHTML = `<td class="pidtag">${fmtPid(p.pid)}</td><td><b></b></td><td class="ltr"></td><td><div class="row" style="gap:6px;flex-wrap:nowrap"><span class="coin" aria-hidden="true"></span><b class="num">${coins(p.coins)}</b><button class="btn mini" data-coins>تعديل</button></div></td><td>${fdate(p.joined)}</td><td><div class="gl">${(coBy[p.id] || []).filter(o => o.status === "pending").map(o => `<div class="gi"><span class="num">${coins(o.coins)} PS COIN</span><span class="num muted">${money(o.price)}</span>${stPill("pending")}<button class="btn mini" data-copay="${esc(o.ref.id)}">تأكيد الدفع</button><button class="btn mini danger" data-corej="${esc(o.ref.id)}">رفض</button></div>`).join("")}${p.orders.length ? p.orders.map((o, i) => { const g = byId(o.game);
       return `<div class="gi"><span>${esc(g ? (g.en || g.title) : o.game)} · ${esc(g ? edName(g, o.edition) : o.edition)}</span><span class="num muted">${money(o.price || 0)}</span>${o.code ? `<span class="tag ltr">${esc(o.code)}</span>` : ""}${stPill(o.status)}${o.status === "pending" ? `<button class="btn mini" data-pay="${i}">تأكيد الدفع</button><button class="btn mini" data-gift="${i}">منح مجاني</button><button class="btn mini danger" data-rej="${i}">رفض</button>` : ""}</div>`; }).join("") : '<span class="muted">ما عنده ألعاب</span>'}</div></td>`;
     tr.children[1].firstChild.textContent = p.name || "—"; tr.children[2].textContent = p.email || "—";
+    tr.querySelector("[data-coins]").onclick = () => coinAdjust(p);
+    tr.querySelectorAll("[data-copay]").forEach(b => b.onclick = async () => { const o = (coBy[p.id] || []).find(x => x.ref.id === b.dataset.copay); if (!o) return; b.disabled = true;
+      try { const bt = writeBatch(fs); bt.update(o.ref, {status:"paid", paidAt:serverTimestamp()}); bt.update(doc(fs, "users", p.id), {coins:increment(o.coins)}); await bt.commit(); toast(`انضاف ${coins(o.coins)} PS COIN لـ ${p.name || "اللاعب"} ✓`); }
+      catch(e) { b.disabled = false; toast("ما تحدّث الطلب: " + e.code); } });
+    tr.querySelectorAll("[data-corej]").forEach(b => b.onclick = () => confirmModal("رفض طلب العملات؟", "ينحذف الطلب وما تنضاف عملات.", "رفض", async () => { const o = (coBy[p.id] || []).find(x => x.ref.id === b.dataset.corej); try { await deleteDoc(o.ref); toast("انرفض الطلب"); } catch(e) { toast("ما انحذف: " + e.code); } }));
     const setSt = async (b, i, status, msg) => { b.disabled = true; try { await updateDoc(p.orders[i].ref, {status, paidAt:serverTimestamp()}); toast(msg); } catch(e) { b.disabled = false; toast("ما تحدّث الطلب: " + e.code); } };
     tr.querySelectorAll("[data-pay]").forEach(b => b.onclick = () => setSt(b, +b.dataset.pay, "paid", "تم تأكيد الدفع ✓"));
     tr.querySelectorAll("[data-gift]").forEach(b => b.onclick = () => setSt(b, +b.dataset.gift, "granted", "انمنحت اللعبة مجانًا ✓"));
@@ -282,6 +300,37 @@ function renderStudio(){
   renderCodes();
 }
 ["#q", "#fGame", "#fSt"].forEach(s => $(s).addEventListener("input", renderStudio));
+
+function coinAdjust(p){
+  openModal(`<div class="eyebrow">PS COIN</div><h1 class="mbox-t">عملات ${esc(p.name || "")}</h1><p class="mbox-t">الرصيد الحالي: <b class="num">${coins(p.coins)}</b> · PS ID <span class="num">${fmtPid(p.pid)}</span></p>
+    <label class="fld">كم PS COIN تضيف؟ (بالسالب للخصم، مثل -0.5)<input id="caN" type="number" step="0.001" dir="ltr" value="1"></label><div class="err" id="caErr"></div>
+    <div class="row"><button class="btn buy" id="caOk" type="button">تطبيق</button><button class="btn ghost" data-close type="button">إلغاء</button></div>`);
+  $("#caOk").onclick = async () => { const n = Math.round(+$("#caN").value * 1000);
+    if (!n) { $("#caErr").textContent = "اكتب رقم غير صفر"; return; }
+    if ((p.coins || 0) + n < 0) { $("#caErr").textContent = "الرصيد ما يصير أقل من صفر"; return; }
+    $("#caOk").disabled = true;
+    try { await updateDoc(doc(fs, "users", p.id), {coins:increment(n)}); closeModal(); toast(n > 0 ? `انضاف ${coins(n)} PS COIN ✓` : `انخصم ${coins(-n)} PS COIN`); }
+    catch(e) { $("#caOk").disabled = false; $("#caErr").textContent = "ما تحدّث الرصيد: " + e.code; } };
+}
+
+/* ---------------- PS COIN wallet ---------------- */
+function renderCoins(){
+  const w = $("#wallet"), pk = $("#packs"), ol = $("#coinOrders");
+  if (!user) { w.innerHTML = '<div class="empty" style="flex:1"><b style="color:var(--text)">سجّل دخولك عشان تشوف رصيدك</b><button class="btn buy" type="button" data-login>تسجيل الدخول</button></div>'; pk.innerHTML = ""; ol.innerHTML = ""; return; }
+  w.innerHTML = `<span class="coin big" aria-hidden="true"></span><div><div class="lbl">PS COIN</div><div class="bal">${coins(PROFILE && PROFILE.coins)}</div></div><div class="muted" style="margin-inline-start:auto;font-size:14px;max-width:40ch">عملات بريميوم ستوديو. العملة الوحدة بـ $100,000. كل حساب جديد ياخذ ${coins(SIGNUP_BONUS)} PS COIN هدية.</div>`;
+  pk.innerHTML = PACKS.map(x => `<div class="pack"><div class="amt"><span class="coin" aria-hidden="true"></span>${coins(x.coins)}</div><div class="price" style="font-size:18px">${money(x.price)}</div><button class="btn buy" type="button" data-pack="${x.id}">شراء</button></div>`).join("");
+  pk.querySelectorAll("[data-pack]").forEach(b => b.onclick = () => buyPack(PACKS.find(x => x.id === b.dataset.pack)));
+  const list = MYCO.slice().sort((a, b) => tsMs(b.at) - tsMs(a.at));
+  ol.innerHTML = list.length ? list.map(o => `<div class="li" style="grid-template-columns:minmax(0,1fr) auto"><div class="info"><b class="num"><span class="coin" style="display:inline-block;vertical-align:-3px;margin-inline-end:6px"></span>${coins(o.coins)} PS COIN</b><span class="muted" style="font-size:12px">${fdate(o.at)} · <span class="num">${money(o.price)}</span></span></div><div>${stPill(o.status)}</div></div>`).join("") : '<div class="empty">ما عندك طلبات عملات.</div>';
+}
+function buyPack(x){
+  openModal(`<div class="eyebrow">PS COIN</div><h1 class="mbox-t">${coins(x.coins)} PS COIN</h1><div class="row" style="justify-content:space-between"><span class="muted">باقة عملات</span><span class="price">${money(x.price)}</span></div>
+    <p class="mbox-t">الدفع الإلكتروني ما تفعّل للحين. لما تأكد الطلب يوصل للاستوديو بحالة «بانتظار الدفع»، وتنضاف العملات لرصيدك أول ما يتأكد الدفع.</p><div class="err" id="pkErr"></div>
+    <div class="row"><button class="btn buy" id="pkOk" type="button">تأكيد الطلب</button><button class="btn ghost" data-close type="button">إلغاء</button></div>`);
+  $("#pkOk").onclick = async () => { $("#pkOk").disabled = true;
+    try { await setDoc(doc(collection(fs, "users", user.uid, "coinOrders")), {pack:x.id, coins:x.coins, price:x.price, status:"pending", at:serverTimestamp()}); closeModal(); toast("وصل طلبك ✓"); }
+    catch(e) { $("#pkOk").disabled = false; $("#pkErr").textContent = "ما انحفظ الطلب (" + (e.code || "خطأ") + ")"; } };
+}
 
 /* ---------------- discount codes (admin) ---------------- */
 let CODES = {};
@@ -357,7 +406,7 @@ $("#signIn").onclick = () => showAuth("login");
 let curView = "store";
 function route(){
   const h = (location.hash || "#store").slice(1), g = byId(h);
-  let v = g ? "game" : (["store", "library", "studio", "download", "account"].includes(h) ? h : "store");
+  let v = g ? "game" : (["store", "library", "studio", "download", "account", "coins"].includes(h) ? h : "store");
   if (v === "studio" && !isAdmin) v = "store";
   curView = v; $$(".view").forEach(s => s.hidden = s.dataset.view !== v);
   $$("#tabs a").forEach(a => a.setAttribute("aria-current", a.dataset.v === (g ? "store" : v) ? "page" : "false"));
@@ -365,7 +414,7 @@ function route(){
 }
 function guestNote(){
   const v = $(".view:not([hidden])"); if (!v) return; let n = v.querySelector(".guestnote");
-  const show = authReady && !user && curView !== "download";
+  const show = authReady && !user && curView !== "download" && curView !== "coins";
   if (!show) { if (n) n.remove(); return; }
   if (!n) { n = document.createElement("div"); n.className = "guestnote"; n.innerHTML = '<span>أنت تتصفح كضيف. تقدر تتفرج بس، وللشراء والتثبيت لازم تسجّل دخولك.</span><button class="btn buy mini" type="button" data-login>تسجيل الدخول</button>'; v.prepend(n); }
 }
@@ -377,6 +426,7 @@ function render(){
   else if (curView === "library") renderLib();
   else if (curView === "studio") renderStudio();
   else if (curView === "account") renderAccount();
+  else if (curView === "coins") renderCoins();
   else if (curView === "download") { $("#dlInApp").hidden = !PS; $("#dlBtn").hidden = !!PS; }
 }
 addEventListener("hashchange", route);
@@ -395,7 +445,7 @@ const AUTH_ERR = {
   "auth/unauthorized-domain":"هذا الموقع مو مضاف في Firebase (Authorized domains)."
 };
 const authErr = e => AUTH_ERR[e && e.code] || ("صار خطأ" + (e && e.code ? " (" + e.code + ")" : ""));
-const brandHTML = '<div class="brand"><span class="mark">P</span><b>PREMIUM <span>STUDIO</span></b></div>';
+const brandHTML = '<div class="brand"><span class="mark"><i>P</i><i>S</i></span><b>PREMIUM <span>STUDIO</span></b></div>';
 function showAuth(mode, note){
   closeModal();
   const login = mode === "login";
@@ -433,33 +483,37 @@ function showAuth(mode, note){
   });
 }
 let pendingName = "";
-/* every account gets a random 10-digit account number (leading zeros allowed), reserved in playerIds/<pid> so no two accounts share one; it never changes */
+/* every account gets a random 10-digit PS ID (leading zeros allowed), reserved in playerIds/<pid> so no two accounts share one; it never changes */
 const newPid = () => { const a = new Uint32Array(2); crypto.getRandomValues(a); return String((a[0] * 4294967296 + a[1]) % 10000000000).padStart(10, "0"); };
 async function ensureProfile(u, name){
   const r = doc(fs, "users", u.uid);
   const s = await getDoc(r);
-  if (s.exists() && s.data().pid) return;
+  const cur = s.exists() ? s.data() : null;
+  if (cur && cur.pid && "coins" in cur) return;
+  if (cur && cur.pid) { await updateDoc(r, {coins:SIGNUP_BONUS}); return; }   // older account: signup bonus once
   for (let i = 0; i < 5; i++) {
     const pid = newPid(), b = writeBatch(fs);
     b.set(doc(fs, "playerIds", pid), {uid:u.uid, at:serverTimestamp()});
-    if (s.exists()) b.update(r, {pid});
-    else b.set(r, {pid, name:(name || u.displayName || u.email.split("@")[0]).slice(0, 32), email:u.email.toLowerCase(), joined:serverTimestamp()});
+    if (cur) b.update(r, "coins" in cur ? {pid} : {pid, coins:SIGNUP_BONUS});
+    else b.set(r, {pid, coins:SIGNUP_BONUS, name:(name || u.displayName || u.email.split("@")[0]).slice(0, 32), email:u.email.toLowerCase(), joined:serverTimestamp()});
     try { await b.commit(); return; } catch(e) { if (i === 4) throw e; }   // a taken number fails the batch, so try another
   }
 }
 function setAdmin(){ isAdmin = !!(user && user.email && user.email.toLowerCase() === ADMIN_EMAIL && user.emailVerified); $("#tabStudio").hidden = !isAdmin; }
 function applyChrome(){
   $("#me").hidden = !user; $("#guestBar").hidden = !!user || !authReady;
-  if (user) { const n = (PROFILE && PROFILE.name) || user.displayName || user.email; $("#meName").textContent = n; $("#meAv").textContent = (n || "?").trim().charAt(0).toUpperCase(); $("#mePid").textContent = PROFILE && PROFILE.pid ? "#" + PROFILE.pid : ""; }
+  if (user) { const n = (PROFILE && PROFILE.name) || user.displayName || user.email; $("#meName").textContent = n; $("#meAv").textContent = (n || "?").trim().charAt(0).toUpperCase(); $("#mePid").textContent = PROFILE && PROFILE.pid ? "PS ID " + PROFILE.pid : ""; }
+  $("#coinChip").hidden = !user; if (user) $("#coinBal").textContent = coins(PROFILE && PROFILE.coins);
 }
 onAuthStateChanged(auth, async u => {
-  unsubs.forEach(f => { try { f(); } catch(e) {} }); unsubs = []; LIB = {}; PROFILE = null; USERS = {}; ORDERS = []; CODES = {};
+  unsubs.forEach(f => { try { f(); } catch(e) {} }); unsubs = []; LIB = {}; PROFILE = null; USERS = {}; ORDERS = []; CODES = {}; MYCO = []; COINORDERS = [];
   user = u; authReady = true; setAdmin();
   if (u) {
     $("#gate").hidden = true; guest = false;
     try { await ensureProfile(u, pendingName); } catch(e) { toast("ما قدرت أفتح حسابك في قاعدة البيانات: " + (e.code || e.message)); }
-    unsubs.push(onSnapshot(doc(fs, "users", u.uid), s => { PROFILE = s.exists() ? s.data() : null; applyChrome(); if (curView === "account") renderAccount(); }));
+    unsubs.push(onSnapshot(doc(fs, "users", u.uid), s => { PROFILE = s.exists() ? s.data() : null; applyChrome(); if (curView === "account") renderAccount(); if (curView === "coins") renderCoins(); }));
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "library"), s => { LIB = {}; s.forEach(d => LIB[d.id] = d.data()); render(); }, e => toast("ما قدرت أقرأ مكتبتك: " + e.code)));
+    unsubs.push(onSnapshot(collection(fs, "users", u.uid, "coinOrders"), s => { MYCO = s.docs.map(d => ({id:d.id, ...d.data()})); if (curView === "coins") renderCoins(); }, () => {}));
     if (isAdmin) startAdmin();
     if (PS && PS.setUser) PS.setUser({name:u.displayName || "", uid:u.uid});
   } else {

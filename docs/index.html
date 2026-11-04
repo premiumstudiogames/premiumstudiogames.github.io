@@ -14,13 +14,14 @@
 </head>
 <body>
 <header class="top"><div class="in">
-  <a class="brand" href="#store"><span class="mark">P</span><b>PREMIUM <span>STUDIO</span></b></a>
+  <a class="brand" href="#store"><span class="mark"><i>P</i><i>S</i></span><b>PREMIUM <span>STUDIO</span></b></a>
   <nav class="tabs" id="tabs">
     <a href="#store" data-v="store">المتجر</a>
     <a href="#library" data-v="library">المكتبة</a>
     <a href="#download" data-v="download" id="tabDl">حمّل التطبيق</a>
     <a href="#studio" data-v="studio" id="tabStudio" hidden>لوحة الاستوديو</a>
   </nav>
+  <a class="coinchip" id="coinChip" href="#coins" hidden><span class="coin" aria-hidden="true"></span><b class="num" id="coinBal">0</b><small>PS COIN</small></a>
   <div class="dlchip" id="dlChip" hidden><span class="spin"></span><span id="dlChipT"></span></div>
   <a class="me" id="me" href="#account" hidden><span class="av" id="meAv"></span><span class="mewho"><b id="meName"></b><small class="num ltr" id="mePid"></small></span></a>
   <div class="me" id="guestBar" hidden><span class="tag">ضيف</span><button class="btn buy mini" id="signIn" type="button">تسجيل الدخول</button></div>
@@ -59,6 +60,15 @@
     </div>
   </section>
 
+  <section class="view" data-view="coins" hidden>
+    <div class="sec-h"><h2>PS COIN</h2><small>WALLET</small></div>
+    <div class="wallet" id="wallet"></div>
+    <div class="sec-h"><h2>اشحن عملات</h2><small>COIN PACKS</small></div>
+    <div class="packs" id="packs"></div>
+    <div class="sec-h"><h2>طلباتك</h2><small>ORDERS</small></div>
+    <div class="lib" id="coinOrders"></div>
+  </section>
+
   <section class="view" data-view="account" hidden>
     <div class="sec-h"><h2>حسابي</h2><small>ACCOUNT</small></div>
     <div class="acct" id="acct"></div>
@@ -68,7 +78,7 @@
     <div class="sec-h"><h2>لوحة الاستوديو</h2><small>STUDIO DASHBOARD</small></div>
     <div class="kpis" id="kpis"></div>
     <div class="filter"><input id="q" type="search" placeholder="ابحث بالاسم أو الإيميل"><select id="fGame"><option value="">كل الألعاب</option></select><select id="fSt"><option value="">كل الحالات</option><option value="paid">مدفوع</option><option value="pending">بانتظار الدفع</option><option value="free">ديمو مجاني</option></select></div>
-    <div class="tbl"><table><thead><tr><th>رقم الحساب</th><th>اللاعب</th><th>الإيميل</th><th>تاريخ التسجيل</th><th>الألعاب</th></tr></thead><tbody id="rows"></tbody></table></div>
+    <div class="tbl"><table><thead><tr><th>PS ID</th><th>اللاعب</th><th>الإيميل</th><th>PS COIN</th><th>تاريخ التسجيل</th><th>الطلبات</th></tr></thead><tbody id="rows"></tbody></table></div>
     <p class="muted" id="studioNote" style="margin:0;font-size:13px"></p>
     <div class="sec-h"><h2>أكواد الخصم</h2><small>DISCOUNT CODES</small></div>
     <form class="codeform" id="codeForm" novalidate>
@@ -85,7 +95,7 @@
 
 <footer class="foot"><div class="in"><span class="ltr">© 2026 Premium Studio</span><span class="muted" id="ver"></span></div></footer>
 
-<div class="gate" id="gate"><div class="gbox" id="gbox"><div class="brand"><span class="mark">P</span><b>PREMIUM <span>STUDIO</span></b></div><h1>جاري التحميل…</h1></div></div>
+<div class="gate" id="gate"><div class="gbox" id="gbox"><div class="brand"><span class="mark"><i>P</i><i>S</i></span><b>PREMIUM <span>STUDIO</span></b></div><h1>جاري التحميل…</h1></div></div>
 <div class="modal" id="modal" hidden><div class="gbox" id="mbox"></div></div>
 <div class="toast" id="toast" role="status"></div>
 

@@ -1,7 +1,7 @@
 /* Premium Studio store — ink-navy ground, brushed-gold accent. One deliberate dark look. */
 :root{
   --ink:#0a0d14; --deck:#121725; --deck2:#1a2133; --line:#283149; --text:#e9ecf4; --muted:#8e97ad;
-  --gold:#d9b25f; --goldHi:#f3d58e; --goldDeep:#8a6a2a; --ok:#5ccf8f; --okDeep:#2f8a5a; --warn:#f0b44c; --bad:#ef6a5e; --info:#6aa7ff;
+  --gold:#d9b25f; --yellow:#ffcc1f; --goldHi:#f3d58e; --goldDeep:#8a6a2a; --ok:#5ccf8f; --okDeep:#2f8a5a; --warn:#f0b44c; --bad:#ef6a5e; --info:#6aa7ff;
   --display:'Chakra Petch','Reem Kufi',system-ui,sans-serif;
   --kufi:'Reem Kufi','Chakra Petch',system-ui,sans-serif;
   --body:'Readex Pro',system-ui,-apple-system,'Segoe UI',Tahoma,sans-serif;
@@ -27,7 +27,9 @@ p{margin:0}
 .top{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:rgba(10,13,20,.92);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
 .top .in,.foot .in{max-width:1200px;margin:0 auto;display:flex;align-items:center;gap:22px;padding-block:12px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
 .brand{display:flex;align-items:center;gap:10px;text-decoration:none;flex:none;direction:ltr}
-.brand .mark{width:30px;height:30px;display:grid;place-items:center;background:linear-gradient(145deg,var(--goldHi),var(--goldDeep));color:#1a1306;font:700 17px var(--display);clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)}
+.brand .mark{height:32px;padding:0 8px;display:inline-flex;align-items:center;background:#000;border:1px solid var(--line);border-radius:5px;font:700 20px/1 var(--display);letter-spacing:-.01em}
+.brand .mark i{font-style:normal;color:#fff}
+.brand .mark i+i{color:var(--yellow)}
 .brand b{font:700 17px var(--display);letter-spacing:.18em}
 .brand b span{color:var(--gold)}
 nav.tabs{display:flex;gap:4px;flex:1;min-width:0;overflow-x:auto;scrollbar-width:none}
@@ -208,3 +210,19 @@ form.f{display:flex;flex-direction:column;gap:14px}
 .toast.on{opacity:1}
 @media (max-width:640px){.me b{display:none}.top .in{gap:12px}.brand b{font-size:14px;letter-spacing:.12em}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+/* PS COIN */
+.coin{width:16px;height:16px;border-radius:50%;flex:none;background:radial-gradient(circle at 35% 30%,#fff3b0,var(--yellow) 45%,#b8860b);box-shadow:inset 0 0 0 2px rgba(0,0,0,.18)}
+.coin.big{width:46px;height:46px;box-shadow:inset 0 0 0 4px rgba(0,0,0,.18)}
+.coinchip{display:flex;align-items:center;gap:6px;flex:none;text-decoration:none;padding:5px 10px;border:1px solid var(--line);border-radius:20px;background:var(--deck)}
+.coinchip b{font-size:14px}.coinchip small{font:600 10px var(--mono);color:var(--yellow);letter-spacing:.08em}
+.wallet{display:flex;align-items:center;gap:18px;background:linear-gradient(135deg,#231d0a,var(--deck) 60%);border:1px solid var(--goldDeep);padding:24px;flex-wrap:wrap}
+.wallet .bal{font:700 clamp(30px,5vw,46px)/1 var(--mono);font-variant-numeric:tabular-nums;direction:ltr}
+.wallet .lbl{font:600 12px var(--mono);letter-spacing:.16em;color:var(--yellow)}
+.packs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+@media (max-width:860px){.packs{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.pack{background:var(--deck);border:1px solid var(--line);padding:18px;display:flex;flex-direction:column;gap:10px;align-items:flex-start}
+.pack .amt{font:700 26px var(--mono);font-variant-numeric:tabular-nums;direction:ltr;display:flex;align-items:center;gap:8px}
+.pack .bonus{font-size:12px;color:var(--ok)}
+.pack .btn{align-self:stretch}
+@media (max-width:640px){.coinchip small{display:none}}
