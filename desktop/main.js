@@ -97,7 +97,7 @@ function launchGame(id, edition) {
   if (!g) throw new Error('اللعبة مو مثبتة');
   if (edition && EDITIONS.includes(edition) && reg[id].edition !== edition) { reg[id].edition = edition; writeReg(reg).catch(() => {}); g.edition = edition; }
   if (g.type === 'bf-launcher') {
-    writeBfLicense(g.edition, g.code);
+    writeBfLicense(g.edition, g.unlock);
     const { spawn } = require('child_process');
     const child = spawn(BF_EXE, [], { cwd: BF_DIR, detached: true, stdio: 'ignore' });
     child.unref();
@@ -122,18 +122,17 @@ function launchGame(id, edition) {
   gameWins.set(id, w);
 }
 
-// BLOCKFALL's launcher reads its edition from %APPDATA%\.terravolt\license.json. The store's access code is an
-// invitation code the launcher itself accepts, so Standard and Gold owners open the launcher already unlocked.
-function writeBfLicense(edition, code) {
+// BLOCKFALL's launcher reads its edition from %APPDATA%\.terravolt\license.json and keeps a local unlock while its
+// fingerprint is listed in the launcher's shop.json. Premium Studio owners of Standard or Gold open it already unlocked.
+function writeBfLicense(edition, unlock) {
   try {
     const file = path.join(BF_DATA, 'license.json');
     let cur = null; try { cur = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) {}
-    if (cur && !cur.local && cur.key) return;                       // a real Lemon Squeezy key: leave it alone
-    if (!code || !edition || edition === 'demo') { if (cur && cur.ps) fs.rmSync(file, { force: true }); return; }
-    const key = String(code).toUpperCase();
-    const L = { key, code: crypto.createHash('sha256').update(key).digest('hex'), local: true, ed: edition, checked: Date.now(), ps: true };
+    if (cur && cur.key && !cur.ps) return;                           // the player's own key or code: leave it alone
+    const code = unlock && unlock[edition];
+    if (!code || edition === 'demo') { if (cur && cur.ps) fs.rmSync(file, { force: true }); return; }
     fs.mkdirSync(BF_DATA, { recursive: true });
-    fs.writeFileSync(file, JSON.stringify(L, null, 1));
+    fs.writeFileSync(file, JSON.stringify({ key: 'PREMIUM-STUDIO', code, local: true, ed: edition, checked: Date.now(), ps: true }, null, 1));
   } catch (e) {}
 }
 
@@ -192,14 +191,14 @@ async function install(id, opts) {
 
     if (m.type === 'bf-launcher') {
       // BLOCKFALL's official launcher package: encrypted parts on its CDN, unlocked with the studio's access code.
-      if (!opts.code) throw new Error('ما وصل كود التحميل، حدّث الصفحة وجرّب');
-      const P = await fetchJSON(m.parts); total = P.zipSize || P.size; version = P.version;
+      const P = await fetchJSON(m.parts);
+      if (P.enc && !opts.code) throw new Error('تحميل اللانشر يحتاج كود، تواصل مع الاستوديو'); total = P.zipSize || P.size; version = P.version;
       send('ps:progress', { id, phase: 'download', received: 0, total });
       const base = new URL('.', m.parts).toString();
       const chunks = [];
       for (const part of P.parts) chunks.push(await download(new URL(part.url, base).toString(), tick));
       send('ps:progress', { id, phase: 'extract', received, total: received });
-      const zip = decryptBf(Buffer.concat(chunks), P, opts.code);
+      const zip = P.enc ? decryptBf(Buffer.concat(chunks), P, opts.code) : Buffer.concat(chunks);
       if (P.sha1 && crypto.createHash('sha1').update(zip).digest('hex') !== P.sha1) throw new Error('الملف وصل ناقص، جرّب مرة ثانية');
       tmpZip = path.join(app.getPath('temp'), `ps-${id}-${Date.now()}.zip`);
       await fsp.writeFile(tmpZip, zip);
@@ -233,9 +232,9 @@ async function install(id, opts) {
 
     const reg = readReg();
     reg[id] = { type: m.type, name: m.name, version, entry, icon: m.type === 'bf-launcher' ? 'resources/app/icon.ico' : 'icon.ico', edition,
-      code: m.type === 'bf-launcher' ? String(opts.code).toUpperCase() : undefined, size: await dirSize(gameDir(id, m)), installedAt: Date.now() };
+      unlock: m.type === 'bf-launcher' ? (m.editionUnlock || {}) : undefined, size: await dirSize(gameDir(id, m)), installedAt: Date.now() };
     await writeReg(reg);
-    if (m.type === 'bf-launcher') writeBfLicense(edition, opts.code);
+    if (m.type === 'bf-launcher') writeBfLicense(edition, m.editionUnlock);
     makeShortcuts(id, reg[id]);
     send('ps:progress', { id, phase: 'done' });
     send('ps:installed-changed', {});

@@ -196,7 +196,7 @@ document.addEventListener("click", async e => {
   const own = ent(id).best;
   if (act === "install") { if (!own) return; b.disabled = true;
     const m = MANIFEST.games[id] || {}, opts = {edition:own.edition};
-    if (m.type === "bf-launcher") { opts.code = await bfCode(); if (!opts.code) { b.disabled = false; toast("ما قدرت أجيب كود التحميل. حدّث الصفحة وجرّب"); return; } }
+    if (m.type === "bf-launcher") opts.code = await bfCode();   // only needed if the launcher download is ever locked again
     PROGRESS[id] = {id, phase:"download", received:0, total:(LATEST[id] && LATEST[id].size) || m.installSize || 0}; render(); updateProgressUI();
     try { await PS.install(id, opts); } catch(err) { delete PROGRESS[id]; toast("ما تم التثبيت: " + (err && err.message || err)); render(); } }
   else if (act === "launch") { b.disabled = true; const t = b.textContent; b.textContent = "يتحقق من التحديثات…";

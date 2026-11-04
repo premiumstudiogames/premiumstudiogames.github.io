@@ -8,7 +8,11 @@
       "gameManifest": "https://abdullra7manx-cmyk.github.io/terravolt/mc/game/version_manifest_v2.json",
       "zipRoot": "BLOCKFALL3001/",
       "launcher": true,
-      "installSize": 300000000
+      "installSize": 300000000,
+      "editionUnlock": {
+        "std": "a931ea3e8683d0afeb62099a32d7fe3af48bc4200c8eb7d505167f5bf5411477",
+        "gold": "e0c2023896d5e7bf2854aa648e21fe1f58c5775ba6fb0f0e5f6d1f597906f204"
+      }
     },
     "last-recording": {
       "type": "manifest",
