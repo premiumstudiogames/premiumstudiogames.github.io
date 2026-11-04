@@ -73,7 +73,22 @@ const byId = id => GAMES.find(g => g.id === id);
 const edName = (g, id) => (g.editions.find(e => e.id === id) || {name:id}).name;
 GAMES.forEach(g => { for (const sel of ["#fGame", "#cGame"]) { const o = document.createElement("option"); o.value = g.id; o.textContent = g.en || g.title; $(sel).appendChild(o); } });
 let MANIFEST = {games:{}};
-fetch("games.json", {cache:"no-store"}).then(r => r.json()).then(j => { MANIFEST = j; render(); }).catch(()=>{});
+/* latest versions straight from each game's own update source (the same one the game updates from) */
+let LATEST = {};
+const noCache = u => u + (u.includes("?") ? "&" : "?") + "t=" + Date.now();
+async function loadLatest(){
+  for (const [id, m] of Object.entries(MANIFEST.games || {})) {
+    try {
+      if (m.type === "bf-launcher") { const [p, g] = await Promise.all([fetch(noCache(m.parts)).then(r => r.json()), fetch(noCache(m.gameManifest)).then(r => r.json())]); LATEST[id] = {version:p.version, game:g.latest && g.latest.release, size:p.size}; }
+      else if (m.type === "manifest") { const j = await fetch(noCache(m.base + "manifest.json")).then(r => r.json()); LATEST[id] = {version:j.version}; }
+    } catch(e) {}
+  }
+  render();
+}
+fetch("games.json", {cache:"no-store"}).then(r => r.json()).then(j => { MANIFEST = j; render(); loadLatest(); }).catch(()=>{});
+setInterval(() => { if (document.visibilityState === "visible") loadLatest(); }, 10 * 60 * 1000);   // pick up new releases while the store stays open
+/* the store's access code for BLOCKFALL's launcher download; only owners can read it */
+async function bfCode(){ try { const s = await getDoc(doc(fs, "keys", "blockfall")); return s.exists() ? s.data().code : ""; } catch(e) { return ""; } }
 
 /* ---------------- procedural cover art ---------------- */
 function rng(a){ return () => { a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
@@ -160,12 +175,15 @@ function installBlock(g){
   if (PS) {
     if (prog) return `<div class="inststate"><span data-progt>${progText(prog)}</span><span>${pct(prog)}%</span></div><div class="bar" data-prog="${g.id}"><i style="width:${pct(prog)}%"></i></div>`;
     if (inst) {
-      const upd = m && inst.version !== m.version;
-      return `<div class="inststate"><span class="st inst">مثبتة</span><span class="num">${esc(inst.version)} · ${mb(inst.size||0)}</span></div>
-        <div class="row">${upd ? `<button class="btn inst" data-act="install" data-g="${g.id}">تحديث إلى ${esc(m.version)}</button>` : `<button class="btn play big" data-act="launch" data-g="${g.id}">${m && m.launcher ? "فتح اللانشر" : "تشغيل"}</button>`}
+      const L = LATEST[g.id], bf = m && m.type === "bf-launcher";
+      const upd = !bf && L && L.version && inst.version !== L.version;   // BLOCKFALL's launcher updates itself and the game
+      const verTxt = bf ? `اللانشر ${esc(inst.version)}${L && L.game ? " · آخر إصدار للعبة " + esc(L.game) : ""}` : `${esc(inst.version)} · ${mb(inst.size||0)}`;
+      return `<div class="inststate"><span class="st inst">مثبتة</span><span class="num">${verTxt}</span></div>
+        ${bf ? '<div class="muted" style="font-size:12px">اللانشر يحمّل آخر تحديث للعبة تلقائيًا كل ما تفتحه.</div>' : ""}
+        <div class="row">${upd ? `<button class="btn inst" data-act="install" data-g="${g.id}">تحديث إلى ${esc(L.version)}</button>` : `<button class="btn play big" data-act="launch" data-g="${g.id}">${bf ? "فتح اللانشر" : "تشغيل"}</button>`}
         <button class="btn ghost" data-act="folder" data-g="${g.id}">مجلد اللعبة</button><button class="btn danger" data-act="uninstall" data-g="${g.id}">حذف</button></div>`;
     }
-    return `<div class="inststate"><span>غير مثبتة</span>${m ? `<span class="num">${mb(m.installSize)}</span>` : ""}</div><button class="btn inst big" data-act="install" data-g="${g.id}">تثبيت</button>`;
+    return `<div class="inststate"><span>غير مثبتة</span>${m && m.installSize ? `<span class="num">~${mb(m.installSize)}</span>` : ""}</div><button class="btn inst big" data-act="install" data-g="${g.id}">تثبيت</button>`;
   }
   if (isMobile) return `<div class="inststate"><span>اللعبة للكمبيوتر. افتح الموقع من الكمبيوتر عشان تثبّتها.</span></div>`;
   return `<button class="btn inst big" data-act="getapp" data-g="${g.id}">تثبيت</button><span class="muted" style="font-size:13px">التثبيت يتم من تطبيق Premium Studio</span>`;
@@ -175,8 +193,15 @@ document.addEventListener("click", async e => {
   const id = b.dataset.g, g = byId(id), act = b.dataset.act;
   if (act === "getapp") return getAppModal(g);
   if (!PS) return;
-  if (act === "install") { if (!ent(id).best) return; b.disabled = true; PROGRESS[id] = {id, phase:"download", received:0, total:(MANIFEST.games[id]||{}).zipSize||0}; render(); updateProgressUI(); try { await PS.install(id); } catch(err) { delete PROGRESS[id]; toast("ما تم التثبيت: " + (err && err.message || err)); render(); } }
-  else if (act === "launch") { try { await PS.launch(id); } catch(err) { toast("ما اشتغلت اللعبة: " + (err && err.message || err)); } }
+  const own = ent(id).best;
+  if (act === "install") { if (!own) return; b.disabled = true;
+    const m = MANIFEST.games[id] || {}, opts = {edition:own.edition};
+    if (m.type === "bf-launcher") { opts.code = await bfCode(); if (!opts.code) { b.disabled = false; toast("ما قدرت أجيب كود التحميل. حدّث الصفحة وجرّب"); return; } }
+    PROGRESS[id] = {id, phase:"download", received:0, total:(LATEST[id] && LATEST[id].size) || m.installSize || 0}; render(); updateProgressUI();
+    try { await PS.install(id, opts); } catch(err) { delete PROGRESS[id]; toast("ما تم التثبيت: " + (err && err.message || err)); render(); } }
+  else if (act === "launch") { b.disabled = true; const t = b.textContent; b.textContent = "يتحقق من التحديثات…";
+    try { await PS.launch(id, own && own.edition); } catch(err) { toast("ما اشتغلت اللعبة: " + (err && err.message || err)); }
+    b.disabled = false; b.textContent = t; }
   else if (act === "folder") { PS.showFolder(id); }
   else if (act === "uninstall") confirmModal(`حذف ${g.en || g.title}؟`, "تنحذف ملفات اللعبة وأيقونتها من سطح المكتب. تقدر تثبّتها مرة ثانية من مكتبتك أي وقت.", "حذف", async () => { try { await PS.uninstall(id); toast("انحذفت اللعبة"); } catch(err) { toast("ما انحذفت: " + (err && err.message || err)); } refreshInstalled(); });
 });
@@ -224,7 +249,7 @@ function renderGame(g){
   <div class="gp"><div class="about">
     <div>${g.about.map(p => `<p>${esc(p)}</p>`).join("")}</div>
     <div><div class="sec-h" style="margin-bottom:12px"><h2>المميزات</h2><small>FEATURES</small></div><ul class="feat">${g.feat.map(f => `<li>${esc(f)}</li>`).join("")}</ul></div>
-    <dl class="specs"><dt>المطوّر</dt><dd>Premium Studio</dd><dt>المنصة</dt><dd>Windows 10 / 11</dd><dt>النوع</dt><dd>${g.tags.map(esc).join(" · ")}</dd>${m ? `<dt>الإصدار</dt><dd class="num">${esc(m.version)}</dd><dt>الحجم</dt><dd class="num">${mb(m.installSize)}</dd>` : ""}</dl>
+    <dl class="specs"><dt>المطوّر</dt><dd>Premium Studio</dd><dt>المنصة</dt><dd>Windows 10 / 11</dd><dt>النوع</dt><dd>${g.tags.map(esc).join(" · ")}</dd>${LATEST[g.id] ? `<dt>آخر إصدار</dt><dd class="num">${esc(LATEST[g.id].game || LATEST[g.id].version)}</dd>` : ""}${LATEST[g.id] && LATEST[g.id].game ? `<dt>اللانشر</dt><dd class="num">${esc(LATEST[g.id].version)}</dd>` : ""}</dl>
   </div>
   <aside class="eds">
     ${best ? `<div class="ownbox"><div class="row" style="justify-content:space-between"><b>في مكتبتك</b>${stPill(best.status)}</div><div class="muted" style="font-size:13px">${esc(edName(g, best.edition))} · ${fdate(best.at)}</div>${installBlock(g)}</div>` : ""}

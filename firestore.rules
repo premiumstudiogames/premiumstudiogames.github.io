@@ -137,6 +137,16 @@ service cloud.firestore {
       }
     }
 
+    // Download codes for a game's official launcher: only players who own the game can read them
+    function ownsEd(g, ed) {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid)/library/$(g + '__' + ed))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)/library/$(g + '__' + ed)).data.status != 'pending';
+    }
+    match /keys/{game} {
+      allow get: if signedIn() && (ownsEd(game, 'demo') || ownsEd(game, 'std') || ownsEd(game, 'gold') || isAdmin());
+      allow list, create, update, delete: if isAdmin();
+    }
+
     // Discount codes: players can check one code by name; only the studio can list or change them
     match /codes/{code} {
       allow get: if signedIn();

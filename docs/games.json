@@ -1,26 +1,22 @@
 {
-  "updated": "2026-11-04",
+  "updated": "2026-11-05",
   "games": {
     "blockfall": {
+      "type": "bf-launcher",
       "name": "BLOCKFALL 3001",
-      "version": "00.01.02",
-      "entry": "index.html",
-      "icon": "icon.ico",
-      "zip": "downloads/blockfall-launcher-00.01.02.zip",
-      "zipSize": 7643005,
-      "installSize": 17093892,
-      "sha256": "7bfa9f1d833932fb255f948716b5bb40dc7505924392596a96eb83aec6efe2eb",
-      "launcher": true
+      "parts": "https://abdullra7manx-cmyk.github.io/terravolt/dl/parts.json",
+      "gameManifest": "https://abdullra7manx-cmyk.github.io/terravolt/mc/game/version_manifest_v2.json",
+      "zipRoot": "BLOCKFALL3001/",
+      "launcher": true,
+      "installSize": 300000000
     },
     "last-recording": {
+      "type": "manifest",
       "name": "التسجيل الأخير",
-      "version": "00.00.03",
+      "base": "https://raw.githubusercontent.com/abdullra7manx-cmyk/last-recording/main/docs/play/",
       "entry": "index.html",
-      "icon": "icon.ico",
-      "zip": "downloads/last-recording-00.00.03.zip",
-      "zipSize": 3912048,
-      "installSize": 7394398,
-      "sha256": "6c9042fb73478e8c7253cf02f2910aca6e1b13d202f09f03cc0ae714ffe6030d"
+      "icon": "icons/last-recording.ico",
+      "installSize": 9000000
     }
   }
 }
