@@ -238,3 +238,10 @@ form.f{display:flex;flex-direction:column;gap:14px}
 .fr .who{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
 .fr .row{gap:6px}
 @media (max-width:760px){.frcols{grid-template-columns:1fr}.fradd{flex-direction:column;align-items:stretch}}
+
+/* one install row per owned edition */
+.edinsts{display:flex;flex-direction:column;gap:10px;width:100%}
+.edinst{display:flex;flex-direction:column;gap:8px;background:var(--deck2);border:1px solid var(--line);padding:10px 12px}
+.edinst-h{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.edinst-h b{flex:1;min-width:0}
+.edinst .row{gap:6px;flex-wrap:wrap}

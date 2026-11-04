@@ -10,6 +10,7 @@ const ok = (() => {
 if (ok) {
   contextBridge.exposeInMainWorld('premiumStudio', {
     isApp: true,
+    multiEdition: true,
     version: ipcRenderer.sendSync('app:version'),
     getInstalled: () => ipcRenderer.invoke('ps:getInstalled'),
     install: (id, opts) => ipcRenderer.invoke('ps:install', id, opts),

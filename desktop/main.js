@@ -30,6 +30,15 @@ const BF_DIR = path.join(LOCAL, 'Programs', 'TERRAVOLT');
 const BF_EXE = path.join(BF_DIR, 'BLOCKFALL3001.exe');
 const BF_DATA = path.join(app.getPath('appData'), '.terravolt');
 function gameDir(id, m) { return m && m.type === 'bf-launcher' ? BF_DIR : path.join(GAMES_DIR, id); }
+// Every owned edition installs as its own game. Install key = "<game>--<edition>" (older installs keep the plain game id).
+const ED_LABEL = { demo: 'Demo', std: '', gold: 'Gold' };
+const edTitle = (name, ed) => name + (ED_LABEL[ed] ? ' ' + ED_LABEL[ed] : '');
+function keyInfo(key) {
+  const r = readReg()[key];
+  if (r) return { game: r.game || key.split('--')[0], edition: r.edition };
+  const [game, edition] = key.split('--');
+  return { game, edition: EDITIONS.includes(edition) ? edition : 'demo' };
+}
 
 function readReg() { try { return JSON.parse(fs.readFileSync(REG_FILE, 'utf8')); } catch (e) { return {}; } }
 async function writeReg(reg) { await fsp.mkdir(GAMES_DIR, { recursive: true }); await fsp.writeFile(REG_FILE, JSON.stringify(reg, null, 2)); }
@@ -37,7 +46,7 @@ function installedNow() {
   const reg = readReg(), out = {};
   for (const [id, v] of Object.entries(reg)) {
     const ok = v.type === 'bf-launcher' ? fs.existsSync(BF_EXE) : fs.existsSync(path.join(gameDir(id, v), v.entry || 'index.html'));
-    if (ok) out[id] = v;
+    if (ok) out[id] = { ...v, game: v.game || id.split('--')[0] };
   }
   return out;
 }
@@ -103,24 +112,29 @@ async function launchWithUpdate(id, edition) {
   const g = installedNow()[id];
   if (g && g.type === 'manifest' && !busy.has(id)) {
     try {
-      const m = ((await fetchManifest()).games || {})[id];
+      const m = ((await fetchManifest()).games || {})[g.game];
       if (m && JSON.stringify(m.account || null) !== JSON.stringify(readReg()[id].account || null)) { const reg = readReg(); reg[id].account = m.account || undefined; await writeReg(reg); }
-      if (m) { const l = await latestOf(m); if (l.version && l.version !== g.version) await install(id, { edition: edition || g.edition }); }
+      if (m) { const l = await latestOf(m); if (l.version && l.version !== g.version) await install(id); }
     } catch (e) { /* offline: play the copy we have */ }
   }
   launchGame(id, edition);
 }
 function launchGame(id, edition) {
-  const reg = readReg(), g = installedNow()[id];
+  const g = installedNow()[id];
   if (!g) throw new Error('اللعبة مو مثبتة');
-  if (edition && EDITIONS.includes(edition) && reg[id].edition !== edition) { reg[id].edition = edition; writeReg(reg).catch(() => {}); g.edition = edition; }
   if (g.type === 'bf-launcher') {
+    // One launcher on disk serves every owned BLOCKFALL edition; the edition comes from the license written just before it starts.
+    let cur = null; try { cur = JSON.parse(fs.readFileSync(path.join(BF_DATA, 'license.json'), 'utf8')); } catch (e) {}
+    const curEd = cur && cur.ps ? cur.ed : (cur && cur.key ? 'own' : 'demo');
+    if (curEd !== 'own' && curEd !== g.edition && process.platform === 'win32') { try { require('child_process').execSync('taskkill /IM BLOCKFALL3001.exe /F', { stdio: 'ignore' }); } catch (e) {} }
     writeBfLicense(g.edition, g.unlock);
     writeBfAccount();
     const { spawn } = require('child_process');
     const child = spawn(BF_EXE, [], { cwd: BF_DIR, detached: true, stdio: 'ignore' });
     child.unref();
-    if (!BrowserWindow.getAllWindows().length) setTimeout(() => app.quit(), 1500);   // started from a desktop shortcut: nothing else to keep open
+    // the launcher re-adds its own "BLOCKFALL 3001" shortcuts each start; put ours (one per edition) back
+    setTimeout(fixBfShortcuts, 6000);
+    if (!BrowserWindow.getAllWindows().length) setTimeout(() => app.quit(), 8000);   // started from a desktop shortcut: nothing else to keep open
     return;
   }
   if (gameWins.has(id) && !gameWins.get(id).isDestroyed()) { const w = gameWins.get(id); w.show(); w.focus(); return; }
@@ -139,6 +153,26 @@ function launchGame(id, edition) {
   w.loadURL(`psgame://${id}/${g.entry}${q}`);
   w.on('closed', () => { gameWins.delete(id); if (!BrowserWindow.getAllWindows().length) app.quit(); });
   gameWins.set(id, w);
+}
+
+// Installs from before editions were separate: give them their game id and an edition in the name and shortcut
+function migrateReg() {
+  try {
+    const reg = readReg(); let changed = false;
+    for (const [k, v] of Object.entries(reg)) {
+      if (v.game) continue;
+      const base = v.name; removeShortcuts(v);
+      v.game = k.split('--')[0]; v.name = edTitle(base, v.edition); changed = true;
+      makeShortcuts(k, v);
+    }
+    if (changed) writeReg(reg).catch(() => {});
+  } catch (e) {}
+}
+function fixBfShortcuts() {
+  const own = Object.entries(installedNow()).filter(([, v]) => v.type === 'bf-launcher');
+  try { fs.rmSync(path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'BLOCKFALL 3001.lnk'), { force: true }); } catch (e) {}
+  if (!own.some(([, v]) => v.edition === 'std')) { try { fs.rmSync(path.join(app.getPath('desktop'), 'BLOCKFALL 3001.lnk'), { force: true }); } catch (e) {} }
+  for (const [k, v] of own) makeShortcuts(k, v);
 }
 
 // BLOCKFALL's launcher reads its edition from %APPDATA%\.terravolt\license.json and keeps a local unlock while its
@@ -201,14 +235,18 @@ async function install(id, opts) {
   busy.add(id);
   let stage = null, tmpZip = null;
   try {
-    const man = await fetchManifest(), m = man.games && man.games[id];
+    const info = keyInfo(id), man = await fetchManifest(), m = man.games && man.games[info.game];
     if (!m) throw new Error('اللعبة مو موجودة في القائمة');
-    const edition = EDITIONS.includes(opts.edition) ? opts.edition : 'demo';
+    const edition = info.edition;
     let received = 0, last = 0, total = 0;
     const tick = n => { received += n; const now = Date.now(); if (now - last > 150) { last = now; send('ps:progress', { id, phase: 'download', received, total: total || received }); } };
     let entry = m.entry, version;
 
-    if (m.type === 'bf-launcher') {
+    if (m.type === 'bf-launcher' && fs.existsSync(BF_EXE) && !readReg()[id] && !opts.force) {
+      // another BLOCKFALL edition already put the launcher on this PC: this edition uses the same one
+      version = (Object.values(installedNow()).find(v => v.type === 'bf-launcher') || {}).version;
+      entry = 'BLOCKFALL3001.exe';
+    } else if (m.type === 'bf-launcher') {
       // BLOCKFALL's official launcher package: encrypted parts on its CDN, unlocked with the studio's access code.
       const P = await fetchJSON(m.parts);
       if (P.enc && !opts.code) throw new Error('تحميل اللانشر يحتاج كود، تواصل مع الاستوديو'); total = P.zipSize || P.size; version = P.version;
@@ -250,10 +288,10 @@ async function install(id, opts) {
     }
 
     const reg = readReg();
-    reg[id] = { type: m.type, name: m.name, version, entry, demoPatch: Array.isArray(m.demoPatch) ? m.demoPatch : undefined, account: m.account || undefined, icon: m.type === 'bf-launcher' ? 'resources/app/icon.ico' : 'icon.ico', edition,
+    if (m.type === 'bf-launcher') for (const v of Object.values(reg)) if (v.type === 'bf-launcher') v.version = version;
+    reg[id] = { type: m.type, game: info.game, name: edTitle(m.name, edition), version, entry, demoPatch: Array.isArray(m.demoPatch) ? m.demoPatch : undefined, account: m.account || undefined, icon: m.type === 'bf-launcher' ? 'resources/app/icon.ico' : 'icon.ico', edition,
       unlock: m.type === 'bf-launcher' ? (m.editionUnlock || {}) : undefined, size: await dirSize(gameDir(id, m)), installedAt: Date.now() };
     await writeReg(reg);
-    if (m.type === 'bf-launcher') writeBfLicense(edition, m.editionUnlock);
     makeShortcuts(id, reg[id]);
     send('ps:progress', { id, phase: 'done' });
     send('ps:installed-changed', {});
@@ -288,7 +326,9 @@ async function uninstall(id) {
   if (!validId(id)) throw new Error('لعبة غير معروفة');
   const w = gameWins.get(id); if (w && !w.isDestroyed()) w.close();
   const reg = readReg(), g = reg[id];
-  if (g && g.type === 'bf-launcher') {
+  const otherBf = g && g.type === 'bf-launcher' && Object.entries(reg).some(([k, v]) => k !== id && v.type === 'bf-launcher');
+  if (otherBf) { /* the launcher stays for the other BLOCKFALL edition(s) */ }
+  else if (g && g.type === 'bf-launcher') {
     try { require('child_process').execSync('taskkill /IM BLOCKFALL3001.exe /F', { stdio: 'ignore' }); } catch (e) {}
     await fsp.rm(BF_DIR, { recursive: true, force: true });
     for (const p of [path.join(app.getPath('desktop'), 'BLOCKFALL 3001.lnk'), path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'BLOCKFALL 3001.lnk')]) { try { fs.rmSync(p, { force: true }); } catch (e) {} }
@@ -372,7 +412,8 @@ ipcMain.handle('ps:getInstalled', guard(async () => installedNow()));
 ipcMain.handle('ps:install', guard(async (id, opts) => { await install(id, opts); return true; }));
 ipcMain.handle('ps:getLatest', guard(async () => getLatest()));
 ipcMain.handle('ps:uninstall', guard(async id => { await uninstall(id); return true; }));
-ipcMain.handle('ps:launch', guard(async (id, edition) => { await launchWithUpdate(id, edition); return true; }));
+ipcMain.handle('ps:launch', guard(async id => { await launchWithUpdate(id); return true; }));
+ipcMain.handle('ps:features', guard(async () => ({ editions: true })));
 ipcMain.handle('ps:showFolder', guard(async id => { if (validId(id)) shell.openPath(gameDir(id, readReg()[id])); return true; }));
 ipcMain.handle('ps:setUser', guard(async u => { setUser(u); return true; }));
 ipcMain.handle('ps:retryOnline', guard(async () => { if (mainWin) mainWin.loadURL(SITE); return true; }));
@@ -409,6 +450,7 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     Menu.setApplicationMenu(null);
     registerGameProtocol();
+    migrateReg();
     handleArgv(process.argv, true);
     if (!BrowserWindow.getAllWindows().length) createMain();
     if (app.isPackaged) {

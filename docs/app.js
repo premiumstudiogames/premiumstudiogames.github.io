@@ -154,7 +154,7 @@ function ent(gid){
 async function refreshInstalled(){ if (!PS) return; try { INSTALLED = await PS.getInstalled() || {}; } catch(e) { INSTALLED = {}; } render(); }
 if (PS) {
   $("#tabDl").hidden = true;
-  PS.onProgress(p => { PROGRESS[p.id] = p; if (p.phase === "done" || p.phase === "error") { delete PROGRESS[p.id]; if (p.phase === "error") toast("ما تم التثبيت: " + (p.error || "خطأ")); else toast("تم تثبيت " + (byId(p.id) ? (byId(p.id).en || byId(p.id).title) : p.id) + " ✓ أيقونتها على سطح المكتب"); refreshInstalled(); } updateProgressUI(); });
+  PS.onProgress(p => { PROGRESS[p.id] = p; if (p.phase === "done" || p.phase === "error") { delete PROGRESS[p.id]; if (p.phase === "error") toast("ما تم التثبيت: " + (p.error || "خطأ")); else toast("تم التثبيت ✓ أيقونتها على سطح المكتب"); refreshInstalled(); } updateProgressUI(); });
   PS.onInstalledChanged && PS.onInstalledChanged(() => refreshInstalled());
   refreshInstalled();
 }
@@ -167,42 +167,54 @@ function updateProgressUI(){
 const pct = p => p.total ? Math.min(100, Math.round(p.received / p.total * 100)) : (p.phase === "extract" ? 100 : 0);
 const progText = p => p.phase === "extract" ? "جاري فك الملفات…" : `${mb(p.received||0)} / ${mb(p.total||0)}`;
 
-/* the install / play block, Steam style */
+/* the install / play block, Steam style. Every owned edition installs and plays as its own game. */
+const ED_TAG = {demo:"Demo", std:"", gold:"Gold"};
+const ownedEds = gid => Object.values(LIB).filter(v => v.game === gid && v.status !== "pending").map(v => v.edition).sort((a, b) => RANK[a] - RANK[b]);
+const instOf = (gid, ed) => { for (const [k, v] of Object.entries(INSTALLED)) if (v.game === gid && v.edition === ed) return [k, v]; return [`${gid}--${ed}`, null]; };
+const anyInstalled = gid => Object.values(INSTALLED).some(v => v.game === gid);
+const keyGame = k => byId(INSTALLED[k] ? INSTALLED[k].game : String(k).split("--")[0]);
 function installBlock(g){
-  const {best, pending} = ent(g.id), m = MANIFEST.games[g.id];
-  if (!best) return "";
-  const inst = INSTALLED[g.id], prog = PROGRESS[g.id];
-  if (PS) {
-    if (prog) return `<div class="inststate"><span data-progt>${progText(prog)}</span><span>${pct(prog)}%</span></div><div class="bar" data-prog="${g.id}"><i style="width:${pct(prog)}%"></i></div>`;
-    if (inst) {
-      const L = LATEST[g.id], bf = m && m.type === "bf-launcher";
-      const upd = !bf && L && L.version && inst.version !== L.version;   // BLOCKFALL's launcher updates itself and the game
-      const verTxt = bf ? (L && L.game ? esc(L.game) : "") : `${esc(inst.version)} · ${mb(inst.size||0)}`;
-      return `<div class="inststate"><span class="st inst">مثبتة</span><span class="num">${verTxt}</span></div>
-        <div class="row">${upd ? `<button class="btn inst" data-act="install" data-g="${g.id}">تحديث إلى ${esc(L.version)}</button>` : `<button class="btn play big" data-act="launch" data-g="${g.id}">لعب</button>`}
-        <button class="btn ghost" data-act="folder" data-g="${g.id}">مجلد اللعبة</button><button class="btn danger" data-act="uninstall" data-g="${g.id}">حذف</button></div>`;
-    }
-    return `<div class="inststate"><span>غير مثبتة</span>${m && m.installSize ? `<span class="num">~${mb(m.installSize)}</span>` : ""}</div><button class="btn inst big" data-act="install" data-g="${g.id}">تثبيت</button>`;
+  const eds = ownedEds(g.id);
+  if (!eds.length) return "";
+  if (!PS) {
+    if (isMobile) return `<div class="inststate"><span>اللعبة للكمبيوتر. افتح الموقع من الكمبيوتر عشان تثبّتها.</span></div>`;
+    return `<button class="btn inst big" data-act="getapp" data-gid="${g.id}">تثبيت</button><span class="muted" style="font-size:13px">التثبيت يتم من تطبيق Premium Studio</span>`;
   }
-  if (isMobile) return `<div class="inststate"><span>اللعبة للكمبيوتر. افتح الموقع من الكمبيوتر عشان تثبّتها.</span></div>`;
-  return `<button class="btn inst big" data-act="getapp" data-g="${g.id}">تثبيت</button><span class="muted" style="font-size:13px">التثبيت يتم من تطبيق Premium Studio</span>`;
+  return `<div class="edinsts">${eds.map(ed => edInstall(g, ed)).join("")}</div>`;
+}
+function edInstall(g, ed){
+  const m = MANIFEST.games[g.id], [key, inst] = instOf(g.id, ed), prog = PROGRESS[key];
+  const a = `data-g="${key}" data-gid="${g.id}" data-ed="${ed}"`;
+  const head = `<div class="edinst-h"><b>${esc(g.en || g.title)}${ED_TAG[ed] ? ` <span class="tag">${ED_TAG[ed]}</span>` : ""}</b>`;
+  if (!PS.multiEdition) return `<div class="edinst">${head}</div><span class="muted" style="font-size:13px">حدّث تطبيق Premium Studio: اقفله وافتحه.</span></div>`;
+  if (prog) return `<div class="edinst">${head}<span class="num" data-progt>${progText(prog)}</span></div><div class="bar" data-prog="${key}"><i style="width:${pct(prog)}%"></i></div></div>`;
+  if (inst) {
+    const L = LATEST[g.id], bf = m && m.type === "bf-launcher";
+    const upd = !bf && L && L.version && inst.version !== L.version;
+    const verTxt = bf ? (L && L.game ? esc(L.game) : "") : `${esc(inst.version)} · ${mb(inst.size||0)}`;
+    return `<div class="edinst">${head}<span class="st inst">مثبتة</span><span class="num muted" style="font-size:12px">${verTxt}</span></div>
+      <div class="row">${upd ? `<button class="btn inst" data-act="install" ${a}>تحديث إلى ${esc(L.version)}</button>` : `<button class="btn play" data-act="launch" ${a}>لعب</button>`}
+      <button class="btn ghost mini" data-act="folder" ${a}>المجلد</button><button class="btn danger mini" data-act="uninstall" ${a}>حذف</button></div></div>`;
+  }
+  return `<div class="edinst">${head}<span class="muted" style="font-size:12px">غير مثبتة${m && m.installSize ? ` · <span class="num">~${mb(m.installSize)}</span>` : ""}</span></div><button class="btn inst" data-act="install" ${a}>تثبيت</button></div>`;
 }
 document.addEventListener("click", async e => {
   const b = e.target.closest("[data-act]"); if (!b) return;
-  const id = b.dataset.g, g = byId(id), act = b.dataset.act;
+  const key = b.dataset.g, gid = b.dataset.gid, ed = b.dataset.ed, g = byId(gid), act = b.dataset.act;
   if (act === "getapp") return getAppModal(g);
   if (!PS) return;
-  const own = ent(id).best;
-  if (act === "install") { if (!own) return; b.disabled = true;
-    const m = MANIFEST.games[id] || {}, opts = {edition:own.edition};
+  const owns = LIB[`${gid}__${ed}`] && LIB[`${gid}__${ed}`].status !== "pending";
+  if (act === "install") { if (!owns) return; b.disabled = true;
+    const m = MANIFEST.games[gid] || {}, opts = {edition:ed};
     if (m.type === "bf-launcher") opts.code = await bfCode();   // only needed if the launcher download is ever locked again
-    PROGRESS[id] = {id, phase:"download", received:0, total:(LATEST[id] && LATEST[id].size) || m.installSize || 0}; render(); updateProgressUI();
-    try { await PS.install(id, opts); } catch(err) { delete PROGRESS[id]; toast("ما تم التثبيت: " + (err && err.message || err)); render(); } }
-  else if (act === "launch") { b.disabled = true; const t = b.textContent; b.textContent = "جاري التشغيل…";
-    try { await PS.launch(id, own && own.edition); } catch(err) { toast("ما اشتغلت اللعبة: " + (err && err.message || err)); }
+    PROGRESS[key] = {id:key, phase:"download", received:0, total:(LATEST[gid] && LATEST[gid].size) || m.installSize || 0}; render(); updateProgressUI();
+    try { await PS.install(key, opts); } catch(err) { delete PROGRESS[key]; toast("ما تم التثبيت: " + (err && err.message || err)); render(); } }
+  else if (act === "launch") { if (!owns) return toast("ما تملك هذا الإصدار"); b.disabled = true; const t = b.textContent; b.textContent = "جاري التشغيل…";
+    try { await PS.launch(key, ed); } catch(err) { toast("ما اشتغلت اللعبة: " + (err && err.message || err)); }
     b.disabled = false; b.textContent = t; }
-  else if (act === "folder") { PS.showFolder(id); }
-  else if (act === "uninstall") confirmModal(`حذف ${g.en || g.title}؟`, "تنحذف ملفات اللعبة وأيقونتها من سطح المكتب. تقدر تثبّتها مرة ثانية من مكتبتك أي وقت.", "حذف", async () => { try { await PS.uninstall(id); toast("انحذفت اللعبة"); } catch(err) { toast("ما انحذفت: " + (err && err.message || err)); } refreshInstalled(); });
+  else if (act === "folder") { PS.showFolder(key); }
+  else if (act === "uninstall") { const nm = (g.en || g.title) + (ED_TAG[ed] ? " " + ED_TAG[ed] : "");
+    confirmModal(`حذف ${nm}؟`, "تنحذف اللعبة وأيقونتها من سطح المكتب. تقدر تثبّتها مرة ثانية من مكتبتك أي وقت.", "حذف", async () => { try { await PS.uninstall(key); toast("انحذفت " + nm); } catch(err) { toast("ما انحذفت: " + (err && err.message || err)); } refreshInstalled(); }); }
 });
 function getAppModal(g){
   openModal(`<div class="eyebrow">INSTALL</div><h1 class="mbox-t">ثبّت ${esc(g.en || g.title)}</h1>
@@ -235,7 +247,7 @@ function renderGrid(){
   GAMES.forEach(g => { const {best} = ent(g.id);
     const a = document.createElement("a"); a.className = "card"; a.href = "#" + g.id;
     a.innerHTML = `<div class="art"></div><div class="body"><div class="t ${g.ar ? "ar" : ""}">${esc(g.title)}</div><div class="muted" style="font-size:13px">${esc(g.sub)}</div>
-      <div class="ft">${best ? `<span class="own">في مكتبتك · ${esc(edName(g, best.edition))}${INSTALLED[g.id] ? " · مثبتة" : ""}</span>` : '<span class="tag">ديمو مجاني</span>'}<span class="price" style="font-size:16px">${money(lowPrice(g))}</span></div></div>`;
+      <div class="ft">${best ? `<span class="own">في مكتبتك · ${esc(edName(g, best.edition))}${anyInstalled(g.id) ? " · مثبتة" : ""}</span>` : '<span class="tag">ديمو مجاني</span>'}<span class="price" style="font-size:16px">${money(lowPrice(g))}</span></div></div>`;
     box.appendChild(a); cover(a.querySelector(".art"), g.id); });
   const s = document.createElement("div"); s.className = "card soon"; s.innerHTML = "<b>COMING SOON</b><span>ألعاب جديدة من بريميوم ستوديو قريبًا</span>"; box.appendChild(s);
 }
@@ -253,23 +265,23 @@ function renderGame(g){
   <aside class="eds">
     ${best ? `<div class="ownbox"><div class="row" style="justify-content:space-between"><b>في مكتبتك</b>${stPill(best.status)}</div><div class="muted" style="font-size:13px">${esc(edName(g, best.edition))} · ${fdate(best.at)}</div>${installBlock(g)}</div>` : ""}
     ${pending ? `<div class="ownbox pend"><div class="row" style="justify-content:space-between"><b>${esc(edName(g, pending.edition))}</b>${stPill("pending")}</div><div class="muted" style="font-size:13px">طلبك وصل للاستوديو. تقدر تلعب بعد تأكيد الدفع.</div></div>` : ""}
-    ${g.editions.map(e => { const has = RANK[e.id] <= mineRank, isPend = pending && pending.edition === e.id;
+    ${g.editions.map(e => { const has = (LIB[`${g.id}__${e.id}`] && LIB[`${g.id}__${e.id}`].status !== "pending") || (e.price > 0 && RANK[e.id] <= mineRank), isPend = pending && pending.edition === e.id;
       return `<div class="ed ${e.gold ? "gold" : ""}"><div class="h"><span class="n">${esc(e.name)}${e.egg ? '<span class="egg" aria-hidden="true"></span>' : ""}</span><span class="price" style="font-size:18px">${money(e.price)}</span></div><div class="d">${esc(e.d)}</div>
       ${has ? '<button class="btn" disabled>عندك هذا الإصدار</button>' : isPend ? '<button class="btn" disabled>بانتظار الدفع</button>' : `<button class="btn ${e.price ? "buy" : ""}" data-ed="${e.id}">${e.price ? (best ? "ترقية إلى هذا الإصدار" : "شراء") : "أضف الديمو للمكتبة"}</button>`}</div>`; }).join("")}
   </aside></div>`;
   cover(v.querySelector(".banner"), g.id);
-  v.querySelectorAll("[data-ed]").forEach(b => b.onclick = () => buy(g, g.editions.find(e => e.id === b.dataset.ed)));
+  v.querySelectorAll("[data-ed]:not([data-act])").forEach(b => b.onclick = () => buy(g, g.editions.find(e => e.id === b.dataset.ed)));
 }
 function renderLib(){
   const box = $("#lib"), bar = $("#libBar"); box.innerHTML = ""; bar.innerHTML = "";
   if (!user) { box.innerHTML = '<div class="empty"><b style="color:var(--text)">المكتبة للمسجّلين فقط</b><span>سجّل دخولك عشان تضيف ألعاب لمكتبتك وتثبّتها.</span><button class="btn buy" type="button" data-login>تسجيل الدخول</button></div>'; return; }
   const mine = GAMES.filter(g => ent(g.id).best || ent(g.id).pending);
-  if (PS) { const n = GAMES.filter(g => INSTALLED[g.id]).length, sz = Object.values(INSTALLED).reduce((a, x) => a + (x.size || 0), 0); bar.innerHTML = `<span class="tag">${mine.length} في المكتبة</span><span class="tag">${n} مثبتة · <span class="num">${mb(sz)}</span></span>`; }
+  if (PS) { const n = Object.keys(INSTALLED).length, sz = Object.values(INSTALLED).reduce((a, x) => a + (x.size || 0), 0); bar.innerHTML = `<span class="tag">${mine.length} في المكتبة</span><span class="tag">${n} مثبتة · <span class="num">${mb(sz)}</span></span>`; }
   else if (!isMobile) bar.innerHTML = `<span>عشان تثبّت ألعابك على الكمبيوتر تحتاج تطبيق Premium Studio.</span><a class="btn mini buy" href="#download">حمّل التطبيق</a>`;
   if (!mine.length) { box.innerHTML = '<div class="empty"><b style="color:var(--text)">مكتبتك فاضية</b><span>أي لعبة تشتريها أو تضيف ديمو حقها تطلع هنا.</span><a class="btn buy" href="#store">تصفّح المتجر</a></div>'; return; }
   mine.forEach(g => { const {best, pending} = ent(g.id), o = best || pending; const d = document.createElement("div"); d.className = "li";
     d.innerHTML = `<a class="art" href="#${g.id}" aria-label="${esc(g.en || g.title)}"></a><div class="info"><b style="font:700 19px ${g.ar ? "var(--kufi)" : "var(--display)"}">${esc(g.title)}</b>
-      <div class="row" style="gap:8px"><span class="muted" style="font-size:13px">${esc(edName(g, o.edition))}</span>${stPill(o.status)}${INSTALLED[g.id] ? '<span class="st inst">مثبتة</span>' : ""}</div>
+      <div class="row" style="gap:8px"><span class="muted" style="font-size:13px">${esc(edName(g, o.edition))}</span>${stPill(o.status)}${anyInstalled(g.id) ? '<span class="st inst">مثبتة</span>' : ""}</div>
       <span class="muted" style="font-size:12px">أضيفت ${fdate(o.at)}${pending && best ? " · ترقية بانتظار الدفع" : ""}</span></div>
       <div class="acts">${best ? installBlock(g) : '<span class="muted" style="font-size:13px">تقدر تلعب بعد تأكيد الدفع</span>'}</div>`;
     box.appendChild(d); cover(d.querySelector(".art"), g.id); });
