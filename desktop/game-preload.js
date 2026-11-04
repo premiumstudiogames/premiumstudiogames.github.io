@@ -7,4 +7,4 @@ window.TV_LAUNCHER = {
   relaunch() { location.reload(); },
   nick() { return ipcRenderer.sendSync('game:nick') || 'Player'; }
 };
-window.PREMIUM_STUDIO = { platform: 'windows', version: window.TV_LAUNCHER.version };
+window.PREMIUM_STUDIO = { platform: 'windows', version: window.TV_LAUNCHER.version, user: ipcRenderer.sendSync('game:user') };

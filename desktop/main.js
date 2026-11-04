@@ -42,8 +42,25 @@ function installedNow() {
   return out;
 }
 
-/* ---------------- settings (player name for games) ---------------- */
-let currentUser = null;
+/* ---------------- the signed-in Premium Studio account (games play under it) ---------------- */
+const USER_FILE = path.join(app.getPath('userData'), 'ps-user.json');
+let currentUser = (() => { try { return JSON.parse(fs.readFileSync(USER_FILE, 'utf8')); } catch (e) { return null; } })();
+function setUser(u) {
+  const clip = (v, n) => String(v || '').slice(0, n);
+  currentUser = u && typeof u === 'object' ? { username: clip(u.username, 20), name: clip(u.name, 32), pid: clip(u.pid, 10), email: clip(u.email, 120) } : null;
+  try { if (currentUser) fs.writeFileSync(USER_FILE, JSON.stringify(currentUser)); else fs.rmSync(USER_FILE, { force: true }); } catch (e) {}
+  writeBfAccount();
+}
+const playerName = () => (currentUser && (currentUser.username || currentUser.name)) || '';
+// BLOCKFALL's launcher: the Premium Studio account it should play under
+function writeBfAccount() {
+  try {
+    const f = path.join(BF_DATA, 'premium_account.json');
+    if (!currentUser || !currentUser.username) { fs.rmSync(f, { force: true }); return; }
+    if (!fs.existsSync(BF_DATA)) return;
+    fs.writeFileSync(f, JSON.stringify({ ...currentUser, source: 'premium-studio', at: Date.now() }, null, 1));
+  } catch (e) {}
+}
 
 /* ---------------- windows ---------------- */
 let mainWin = null;
@@ -87,6 +104,7 @@ async function launchWithUpdate(id, edition) {
   if (g && g.type === 'manifest' && !busy.has(id)) {
     try {
       const m = ((await fetchManifest()).games || {})[id];
+      if (m && JSON.stringify(m.account || null) !== JSON.stringify(readReg()[id].account || null)) { const reg = readReg(); reg[id].account = m.account || undefined; await writeReg(reg); }
       if (m) { const l = await latestOf(m); if (l.version && l.version !== g.version) await install(id, { edition: edition || g.edition }); }
     } catch (e) { /* offline: play the copy we have */ }
   }
@@ -98,6 +116,7 @@ function launchGame(id, edition) {
   if (edition && EDITIONS.includes(edition) && reg[id].edition !== edition) { reg[id].edition = edition; writeReg(reg).catch(() => {}); g.edition = edition; }
   if (g.type === 'bf-launcher') {
     writeBfLicense(g.edition, g.unlock);
+    writeBfAccount();
     const { spawn } = require('child_process');
     const child = spawn(BF_EXE, [], { cwd: BF_DIR, detached: true, stdio: 'ignore' });
     child.unref();
@@ -231,7 +250,7 @@ async function install(id, opts) {
     }
 
     const reg = readReg();
-    reg[id] = { type: m.type, name: m.name, version, entry, demoPatch: Array.isArray(m.demoPatch) ? m.demoPatch : undefined, icon: m.type === 'bf-launcher' ? 'resources/app/icon.ico' : 'icon.ico', edition,
+    reg[id] = { type: m.type, name: m.name, version, entry, demoPatch: Array.isArray(m.demoPatch) ? m.demoPatch : undefined, account: m.account || undefined, icon: m.type === 'bf-launcher' ? 'resources/app/icon.ico' : 'icon.ico', edition,
       unlock: m.type === 'bf-launcher' ? (m.editionUnlock || {}) : undefined, size: await dirSize(gameDir(id, m)), installedAt: Date.now() };
     await writeReg(reg);
     if (m.type === 'bf-launcher') writeBfLicense(edition, m.editionUnlock);
@@ -321,14 +340,25 @@ function registerGameProtocol() {
     const rel = decodeURIComponent(u.pathname).replace(/^\/+/, '') || 'index.html';
     const file = path.normalize(path.join(root, rel));
     if (!file.startsWith(root + path.sep)) return new Response('forbidden', { status: 403 });
-    // Demo owners: the game's own demo switch, applied to the entry page as it's served
     const g = readReg()[id];
-    if (u.searchParams.get('demo') === '1' && g && g.demoPatch && rel === g.entry) {
-      const html = fs.readFileSync(file, 'utf8').split(g.demoPatch[0]).join(g.demoPatch[1]);
+    if (g && rel === g.entry && ((u.searchParams.get('demo') === '1' && g.demoPatch) || g.account)) {
+      let html = fs.readFileSync(file, 'utf8');
+      // Demo owners: the game's own demo switch, applied to the entry page as it's served
+      if (u.searchParams.get('demo') === '1' && g.demoPatch) html = html.split(g.demoPatch[0]).join(g.demoPatch[1]);
+      // Play under the Premium Studio account: the game's saved player name is the username, and its name box is locked
+      if (g.account) html = html.replace(/<head[^>]*>/i, m => m + accountScript(g.account));
       return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } });
     }
     return net.fetch(pathToFileURL(file).toString());
   });
+}
+
+function accountScript(a) {
+  const J = v => JSON.stringify(String(v || ''));
+  return `<script>(function(){var u=window.PREMIUM_STUDIO&&window.PREMIUM_STUDIO.user;if(!u||!u.username)return;
+try{var k=${J(a.store)},o=JSON.parse(localStorage.getItem(k)||'{}');o[${J(a.nickKey || 'nick')}]=u.username;localStorage.setItem(k,JSON.stringify(o));}catch(e){}
+var f=${J(a.nickField)};if(!f)return;var lock=function(){var i=document.getElementById(f);if(i&&!i.readOnly){i.readOnly=true;i.value=u.username;i.title='Premium Studio';i.style.opacity='.75';}};
+new MutationObserver(lock).observe(document.documentElement,{childList:true,subtree:true});})();</script>`;
 }
 
 /* ---------------- IPC ---------------- */
@@ -344,10 +374,11 @@ ipcMain.handle('ps:getLatest', guard(async () => getLatest()));
 ipcMain.handle('ps:uninstall', guard(async id => { await uninstall(id); return true; }));
 ipcMain.handle('ps:launch', guard(async (id, edition) => { await launchWithUpdate(id, edition); return true; }));
 ipcMain.handle('ps:showFolder', guard(async id => { if (validId(id)) shell.openPath(gameDir(id, readReg()[id])); return true; }));
-ipcMain.handle('ps:setUser', guard(async u => { currentUser = u && typeof u === 'object' ? { name: String(u.name || '').slice(0, 32) } : null; return true; }));
+ipcMain.handle('ps:setUser', guard(async u => { setUser(u); return true; }));
 ipcMain.handle('ps:retryOnline', guard(async () => { if (mainWin) mainWin.loadURL(SITE); return true; }));
 ipcMain.on('game:exit', e => { const w = BrowserWindow.fromWebContents(e.sender); if (w) w.close(); });
-ipcMain.on('game:nick', e => { e.returnValue = currentUser && currentUser.name ? currentUser.name : ''; });
+ipcMain.on('game:nick', e => { e.returnValue = playerName(); });
+ipcMain.on('game:user', e => { e.returnValue = currentUser && currentUser.username ? { username: currentUser.username, name: currentUser.name, pid: currentUser.pid, email: currentUser.email } : null; });
 ipcMain.on('app:version', e => { e.returnValue = VERSION_LABEL; });
 
 /* ---------------- deep links + startup ---------------- */

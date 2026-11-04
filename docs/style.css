@@ -226,3 +226,15 @@ form.f{display:flex;flex-direction:column;gap:14px}
 .pack .bonus{font-size:12px;color:var(--ok)}
 .pack .btn{align-self:stretch}
 @media (max-width:640px){.coinchip small{display:none}}
+
+/* friends */
+.nbadge{display:inline-block;min-width:18px;height:18px;line-height:18px;padding:0 5px;margin-inline-start:6px;border-radius:9px;background:var(--yellow,#ffcc1f);color:#000;font:700 11px var(--mono,monospace);text-align:center;vertical-align:middle}
+.fradd{display:flex;gap:10px;align-items:end;background:var(--deck);border:1px solid var(--line);padding:16px;margin-bottom:18px}
+.fradd .fld{flex:1}
+.frcols{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:18px}
+.frlist{display:flex;flex-direction:column;gap:8px}
+.fr{display:flex;align-items:center;gap:12px;background:var(--deck2);border:1px solid var(--line);padding:10px 12px}
+.fr .av{width:36px;height:36px;flex:none;display:grid;place-items:center;background:var(--ink);border:1px solid var(--line);font-weight:700}
+.fr .who{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.fr .row{gap:6px}
+@media (max-width:760px){.frcols{grid-template-columns:1fr}.fradd{flex-direction:column;align-items:stretch}}

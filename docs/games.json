@@ -25,7 +25,12 @@
       "demoPatch": [
         "const DEMO=false;const TAPE_GOAL=5;",
         "const DEMO=true;const TAPE_GOAL=2;"
-      ]
+      ],
+      "account": {
+        "store": "tlr-settings",
+        "nickKey": "nick",
+        "nickField": "oNick"
+      }
     }
   }
 }

@@ -177,10 +177,9 @@ function installBlock(g){
     if (inst) {
       const L = LATEST[g.id], bf = m && m.type === "bf-launcher";
       const upd = !bf && L && L.version && inst.version !== L.version;   // BLOCKFALL's launcher updates itself and the game
-      const verTxt = bf ? `اللانشر ${esc(inst.version)}${L && L.game ? " · آخر إصدار للعبة " + esc(L.game) : ""}` : `${esc(inst.version)} · ${mb(inst.size||0)}`;
+      const verTxt = bf ? (L && L.game ? esc(L.game) : "") : `${esc(inst.version)} · ${mb(inst.size||0)}`;
       return `<div class="inststate"><span class="st inst">مثبتة</span><span class="num">${verTxt}</span></div>
-        ${bf ? '<div class="muted" style="font-size:12px">اللانشر يحمّل آخر تحديث للعبة تلقائيًا كل ما تفتحه.</div>' : ""}
-        <div class="row">${upd ? `<button class="btn inst" data-act="install" data-g="${g.id}">تحديث إلى ${esc(L.version)}</button>` : `<button class="btn play big" data-act="launch" data-g="${g.id}">${bf ? "فتح اللانشر" : "تشغيل"}</button>`}
+        <div class="row">${upd ? `<button class="btn inst" data-act="install" data-g="${g.id}">تحديث إلى ${esc(L.version)}</button>` : `<button class="btn play big" data-act="launch" data-g="${g.id}">لعب</button>`}
         <button class="btn ghost" data-act="folder" data-g="${g.id}">مجلد اللعبة</button><button class="btn danger" data-act="uninstall" data-g="${g.id}">حذف</button></div>`;
     }
     return `<div class="inststate"><span>غير مثبتة</span>${m && m.installSize ? `<span class="num">~${mb(m.installSize)}</span>` : ""}</div><button class="btn inst big" data-act="install" data-g="${g.id}">تثبيت</button>`;
@@ -199,7 +198,7 @@ document.addEventListener("click", async e => {
     if (m.type === "bf-launcher") opts.code = await bfCode();   // only needed if the launcher download is ever locked again
     PROGRESS[id] = {id, phase:"download", received:0, total:(LATEST[id] && LATEST[id].size) || m.installSize || 0}; render(); updateProgressUI();
     try { await PS.install(id, opts); } catch(err) { delete PROGRESS[id]; toast("ما تم التثبيت: " + (err && err.message || err)); render(); } }
-  else if (act === "launch") { b.disabled = true; const t = b.textContent; b.textContent = "يتحقق من التحديثات…";
+  else if (act === "launch") { b.disabled = true; const t = b.textContent; b.textContent = "جاري التشغيل…";
     try { await PS.launch(id, own && own.edition); } catch(err) { toast("ما اشتغلت اللعبة: " + (err && err.message || err)); }
     b.disabled = false; b.textContent = t; }
   else if (act === "folder") { PS.showFolder(id); }
@@ -249,7 +248,7 @@ function renderGame(g){
   <div class="gp"><div class="about">
     <div>${g.about.map(p => `<p>${esc(p)}</p>`).join("")}</div>
     <div><div class="sec-h" style="margin-bottom:12px"><h2>المميزات</h2><small>FEATURES</small></div><ul class="feat">${g.feat.map(f => `<li>${esc(f)}</li>`).join("")}</ul></div>
-    <dl class="specs"><dt>المطوّر</dt><dd>Premium Studio</dd><dt>المنصة</dt><dd>Windows 10 / 11</dd><dt>النوع</dt><dd>${g.tags.map(esc).join(" · ")}</dd>${LATEST[g.id] ? `<dt>آخر إصدار</dt><dd class="num">${esc(LATEST[g.id].game || LATEST[g.id].version)}</dd>` : ""}${LATEST[g.id] && LATEST[g.id].game ? `<dt>اللانشر</dt><dd class="num">${esc(LATEST[g.id].version)}</dd>` : ""}</dl>
+    <dl class="specs"><dt>المطوّر</dt><dd>Premium Studio</dd><dt>المنصة</dt><dd>Windows 10 / 11</dd><dt>النوع</dt><dd>${g.tags.map(esc).join(" · ")}</dd>${LATEST[g.id] ? `<dt>آخر إصدار</dt><dd class="num">${esc(LATEST[g.id].game || LATEST[g.id].version)}</dd>` : ""}</dl>
   </div>
   <aside class="eds">
     ${best ? `<div class="ownbox"><div class="row" style="justify-content:space-between"><b>في مكتبتك</b>${stPill(best.status)}</div><div class="muted" style="font-size:13px">${esc(edName(g, best.edition))} · ${fdate(best.at)}</div>${installBlock(g)}</div>` : ""}
@@ -289,6 +288,52 @@ function renderAccount(){
 }
 
 /* ---------------- studio dashboard (admin) ---------------- */
+/* ---------------- friends ----------------
+   users/<me>/friends/<them> = {username: their @name, status}. "out" = I asked, "in" = they asked, "ok" = friends.
+   Both sides are written together, so each player sees the request. */
+let FRIENDS = {};
+const frRef = (a, b) => doc(fs, "users", a, "friends", b);
+function frBadge(){ const n = Object.values(FRIENDS).filter(f => f.status === "in").length, b = $("#frBadge"); b.hidden = !n; b.textContent = n; }
+async function addFriend(raw){
+  const un = normUname(raw), me = PROFILE && PROFILE.username;
+  if (!me) return "اختر اسم مستخدم لحسابك أول";
+  if (!UNAME_RE.test(un)) return "اكتب اسم مستخدم صحيح";
+  if (un === me) return "هذا اسمك أنت 🙂";
+  let s; try { s = await getDoc(doc(fs, "usernames", un)); } catch(e) { return "ما قدرت أبحث: " + (e.code || e.message); }
+  if (!s.exists()) return `ما فيه لاعب باسم @${un}`;
+  const fid = s.data().uid, cur = FRIENDS[fid];
+  if (cur && cur.status === "ok") return `@${un} صاحبك من قبل`;
+  if (cur && cur.status === "out") return `أرسلت طلب لـ @${un} من قبل`;
+  if (cur && cur.status === "in") { await acceptFriend(fid); return ""; }
+  const b = writeBatch(fs);
+  b.set(frRef(user.uid, fid), {username:un, status:"out", at:serverTimestamp()});
+  b.set(frRef(fid, user.uid), {username:me, status:"in", at:serverTimestamp()});
+  try { await b.commit(); toast(`أرسلت طلب صداقة لـ @${un}`); return ""; } catch(e) { return "ما انرسل الطلب: " + (e.code || e.message); }
+}
+async function acceptFriend(fid){
+  const b = writeBatch(fs); b.update(frRef(user.uid, fid), {status:"ok"}); b.update(frRef(fid, user.uid), {status:"ok"});
+  try { await b.commit(); toast(`صرت أنت و @${FRIENDS[fid] ? FRIENDS[fid].username : ""} أصدقاء ✓`); } catch(e) { toast("ما تم: " + (e.code || e.message)); }
+}
+async function dropFriend(fid){
+  const b = writeBatch(fs); b.delete(frRef(user.uid, fid)); b.delete(frRef(fid, user.uid));
+  try { await b.commit(); } catch(e) { toast("ما تم: " + (e.code || e.message)); }
+}
+function renderFriends(){
+  const box = $("#friends");
+  if (!user) { box.innerHTML = '<div class="empty"><b style="color:var(--text)">الأصدقاء للمسجّلين فقط</b><span>سجّل دخولك عشان تضيف أصدقاءك باسم المستخدم.</span><button class="btn buy" type="button" data-login>تسجيل الدخول</button></div>'; return; }
+  const all = Object.entries(FRIENDS).map(([id, f]) => ({id, ...f})).sort((a, b) => a.username.localeCompare(b.username));
+  const ok = all.filter(f => f.status === "ok"), inc = all.filter(f => f.status === "in"), out = all.filter(f => f.status === "out");
+  const row = (f, acts) => `<div class="fr"><span class="av">${esc(f.username.charAt(0).toUpperCase())}</span><b class="who ltr">@${esc(f.username)}</b><div class="row">${acts}</div></div>`;
+  box.innerHTML = `<form class="fradd" id="frForm" novalidate><label class="fld">أضف صديق باسم المستخدم<input id="frU" dir="ltr" maxlength="21" autocomplete="off" placeholder="@username"></label><button class="btn buy" type="submit">إضافة</button></form>
+    <div class="err" id="frErr" style="margin:-10px 0 12px"></div>
+    <div class="frcols"><div class="panel"><h3>أصدقائي <span class="tag num">${ok.length}</span></h3><div class="frlist">${ok.length ? ok.map(f => row(f, `<button class="btn mini ghost" data-fr-del="${f.id}">إزالة</button>`)).join("") : '<span class="muted">ما عندك أصدقاء للحين. أضفهم باسم المستخدم حقهم.</span>'}</div></div>
+    <div class="panel"><h3>طلبات الصداقة</h3><div class="frlist">${inc.length ? inc.map(f => row(f, `<button class="btn mini buy" data-fr-ok="${f.id}">قبول</button><button class="btn mini ghost" data-fr-del="${f.id}">رفض</button>`)).join("") : '<span class="muted">ما فيه طلبات.</span>'}</div>
+    ${out.length ? `<h3 style="margin-top:8px">طلبات أرسلتها</h3><div class="frlist">${out.map(f => row(f, `<button class="btn mini ghost" data-fr-del="${f.id}">إلغاء</button>`)).join("")}</div>` : ""}</div></div>`;
+  $("#frForm").onsubmit = async ev => { ev.preventDefault(); const btn = ev.target.querySelector("button"); btn.disabled = true; const m = await addFriend($("#frU").value); btn.disabled = false; if (m) $("#frErr").textContent = m; else { $("#frU").value = ""; $("#frErr").textContent = ""; } };
+  box.querySelectorAll("[data-fr-ok]").forEach(b => b.onclick = () => { b.disabled = true; acceptFriend(b.dataset.frOk); });
+  box.querySelectorAll("[data-fr-del]").forEach(b => b.onclick = () => { b.disabled = true; dropFriend(b.dataset.frDel); });
+}
+
 let USERS = {}, ORDERS = [], COINORDERS = [], MYCO = [];
 function startAdmin(){
   unsubs.push(onSnapshot(collection(fs, "users"), s => { USERS = {}; s.forEach(d => USERS[d.id] = d.data()); if (curView === "studio") renderStudio(); }, e => { $("#studioNote").textContent = "ما قدرت أقرأ قائمة اللاعبين: " + e.code; }));
@@ -433,7 +478,7 @@ $("#signIn").onclick = () => showAuth("login");
 let curView = "store";
 function route(){
   const h = (location.hash || "#store").slice(1), g = byId(h);
-  let v = g ? "game" : (["store", "library", "studio", "download", "account", "coins"].includes(h) ? h : "store");
+  let v = g ? "game" : (["store", "library", "friends", "studio", "download", "account", "coins"].includes(h) ? h : "store");
   if (v === "studio" && !isAdmin) v = "store";
   curView = v; $$(".view").forEach(s => s.hidden = s.dataset.view !== v);
   $$("#tabs a").forEach(a => a.setAttribute("aria-current", a.dataset.v === (g ? "store" : v) ? "page" : "false"));
@@ -454,6 +499,7 @@ function render(){
   else if (curView === "studio") renderStudio();
   else if (curView === "account") renderAccount();
   else if (curView === "coins") renderCoins();
+  else if (curView === "friends") renderFriends();
   else if (curView === "download") { $("#dlInApp").hidden = !PS; $("#dlBtn").hidden = !!PS; }
 }
 addEventListener("hashchange", route);
@@ -563,6 +609,8 @@ async function ensureProfileOnce(u, name, un){
     try { await b.commit(); return; } catch(e) { if (i === 4) throw e; }   // a taken number fails the batch, so try another
   }
 }
+function sendUserToApp(){ if (!PS || !PS.setUser || !user) return;
+  PS.setUser({username:(PROFILE && PROFILE.username) || "", name:(PROFILE && PROFILE.name) || user.displayName || "", pid:(PROFILE && PROFILE.pid) || "", email:user.email || ""}); }
 function setAdmin(){ isAdmin = !!(user && user.email && user.email.toLowerCase() === ADMIN_EMAIL && user.emailVerified); $("#tabStudio").hidden = !isAdmin; }
 function applyChrome(){
   $("#me").hidden = !user; $("#guestBar").hidden = !!user || !authReady;
@@ -570,17 +618,17 @@ function applyChrome(){
   $("#coinChip").hidden = !user; if (user) $("#coinBal").textContent = coins(PROFILE && PROFILE.coins);
 }
 onAuthStateChanged(auth, async u => {
-  unsubs.forEach(f => { try { f(); } catch(e) {} }); unsubs = []; LIB = {}; PROFILE = null; USERS = {}; ORDERS = []; CODES = {}; MYCO = []; COINORDERS = [];
+  unsubs.forEach(f => { try { f(); } catch(e) {} }); unsubs = []; LIB = {}; PROFILE = null; FRIENDS = {}; frBadge(); USERS = {}; ORDERS = []; CODES = {}; MYCO = []; COINORDERS = [];
   user = u; authReady = true; setAdmin();
   if (u) {
     $("#gate").hidden = true; guest = false;
     try { await ensureProfile(u, pendingName, pendingUname); } catch(e) { toast("ما قدرت أفتح حسابك في قاعدة البيانات: " + (e.code || e.message)); }
-    unsubs.push(onSnapshot(doc(fs, "users", u.uid), s => { PROFILE = s.exists() ? s.data() : null; applyChrome();
+    unsubs.push(onSnapshot(doc(fs, "users", u.uid), s => { PROFILE = s.exists() ? s.data() : null; applyChrome(); sendUserToApp();
       if (PROFILE && PROFILE.pid && !PROFILE.username && !$("#uf")) askUsername(u); if (curView === "account") renderAccount(); if (curView === "coins") renderCoins(); }));
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "library"), s => { LIB = {}; s.forEach(d => LIB[d.id] = d.data()); render(); }, e => toast("ما قدرت أقرأ مكتبتك: " + e.code)));
+    unsubs.push(onSnapshot(collection(fs, "users", u.uid, "friends"), s => { FRIENDS = {}; s.forEach(d => FRIENDS[d.id] = d.data()); frBadge(); if (curView === "friends") renderFriends(); }, () => {}));
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "coinOrders"), s => { MYCO = s.docs.map(d => ({id:d.id, ...d.data()})); if (curView === "coins") renderCoins(); }, () => {}));
     if (isAdmin) startAdmin();
-    if (PS && PS.setUser) PS.setUser({name:u.displayName || "", uid:u.uid});
   } else {
     let g = false; try { g = sessionStorage.getItem("ps-guest") === "1"; } catch(e) {}
     if (!g && !guest) showAuth("signup"); else $("#gate").hidden = true;

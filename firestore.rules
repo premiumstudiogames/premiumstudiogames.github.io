@@ -41,6 +41,9 @@ service cloud.firestore {
         && getAfter(/databases/$(database)/documents/playerIds/$(pid)).data.uid == request.auth.uid;
     }
 
+    function unameOwner(un) { return get(/databases/$(database)/documents/usernames/$(un)).data.uid; }
+    function frAfter(a, b) { return getAfter(/databases/$(database)/documents/users/$(a)/friends/$(b)).data.status; }
+
     // Usernames: one document per name, so no two accounts share one. Never changes.
     function validUname(un) { return un is string && un.matches('^[a-z0-9_.]{3,20}$'); }
     function unameReserved(un) {
@@ -107,6 +110,23 @@ service cloud.firestore {
           && request.resource.data.at == request.time;
         allow update: if isAdmin() && changed().hasOnly(['status', 'paidAt']);
         allow delete: if isAdmin();
+      }
+
+      // Friends: users/<me>/friends/<them>. Both sides are written in one batch:
+      // a request is "out" on the sender and "in" on the receiver; accepting turns both to "ok".
+      match /friends/{fid} {
+        allow read: if isMe(uid) || isAdmin();
+        allow create: if signedIn() && fid != uid
+          && request.resource.data.keys().hasOnly(['username', 'status', 'at'])
+          && request.resource.data.at == request.time
+          && request.resource.data.username is string
+          && unameOwner(request.resource.data.username) == fid
+          && ((isMe(uid) && request.resource.data.status == 'out' && frAfter(fid, uid) == 'in')
+              || (request.auth.uid == fid && request.resource.data.status == 'in' && frAfter(fid, uid) == 'out'));
+        allow update: if signedIn() && changed().hasOnly(['status']) && request.resource.data.status == 'ok'
+          && frAfter(fid, uid) == 'ok'
+          && ((isMe(uid) && resource.data.status == 'in') || (request.auth.uid == fid && resource.data.status == 'out'));
+        allow delete: if isMe(uid) || (signedIn() && request.auth.uid == fid) || isAdmin();
       }
 
       // Library: one document per game edition, id = "<game>__<edition>"
