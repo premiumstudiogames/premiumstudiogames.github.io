@@ -245,3 +245,10 @@ form.f{display:flex;flex-direction:column;gap:14px}
 .edinst-h{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .edinst-h b{flex:1;min-width:0}
 .edinst .row{gap:6px;flex-wrap:wrap}
+
+/* running game + friends playing now */
+.st.run{color:#3ddc84;font-weight:600}
+.edinst.running{border-color:#3ddc84;box-shadow:inset 3px 0 0 #3ddc84}
+.fr .who{display:flex;flex-direction:column;gap:2px}
+.fr .plg{color:#3ddc84;font-size:12px}
+.fr.playing .av{border-color:#3ddc84;color:#3ddc84}

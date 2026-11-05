@@ -21,6 +21,9 @@ if (ok) {
     setUser: u => ipcRenderer.invoke('ps:setUser', u),
     retryOnline: () => ipcRenderer.invoke('ps:retryOnline'),
     onProgress: cb => { const f = (e, p) => cb(p); ipcRenderer.on('ps:progress', f); return () => ipcRenderer.removeListener('ps:progress', f); },
+    getRunning: () => ipcRenderer.invoke('ps:getRunning'),
+    stop: id => ipcRenderer.invoke('ps:stop', id),
+    onRunning: cb => { const f = (e, r) => cb(r); ipcRenderer.on('ps:running', f); return () => ipcRenderer.removeListener('ps:running', f); },
     onInstalledChanged: cb => { const f = () => cb(); ipcRenderer.on('ps:installed-changed', f); return () => ipcRenderer.removeListener('ps:installed-changed', f); }
   });
 }

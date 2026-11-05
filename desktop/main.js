@@ -1,6 +1,6 @@
 'use strict';
 // Premium Studio desktop client: hosts the store, installs / launches / removes games.
-const { app, BrowserWindow, ipcMain, shell, protocol, net, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, protocol, net, Menu, Tray, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const fsp = fs.promises;
@@ -60,6 +60,7 @@ function setUser(u) {
   currentUser = u && typeof u === 'object' ? { username: clip(u.username, 20), name: clip(u.name, 32), pid: clip(u.pid, 10), email: clip(u.email, 120), uid: clip(u.uid, 128), refreshToken: clip(u.refreshToken, 4096) } : null;
   try { if (currentUser) fs.writeFileSync(USER_FILE, JSON.stringify(currentUser)); else fs.rmSync(USER_FILE, { force: true }); } catch (e) {}
   writeBfAccount();
+  updateTray();
   // switched or signed out (like Steam): games running under the old account close
   if (before && before !== (currentUser && currentUser.uid)) closeRunningGames();
 }
@@ -110,15 +111,123 @@ function createMain(hash, query) {
     if (isMain && code !== -3) mainWin.loadFile(path.join(__dirname, 'offline.html'));
   });
   mainWin.loadURL(SITE + q + (hash ? '#' + hash : ''));
+  mainWin.on('close', e => { if (!quitting && tray) { e.preventDefault(); mainWin.hide(); } });
   mainWin.on('closed', () => { mainWin = null; });
+  mainWin.webContents.on('did-finish-load', () => mainWin && mainWin.webContents.send('ps:running', runningList()));
   return mainWin;
 }
+/* ---------------- running games (like Steam: the app knows what you're playing) ---------------- */
+const running = new Map();   // install key -> {since, game, name}
+const FB_KEY = 'AIzaSyBLZ4t7g5S03MFQS8ZF5jKDjKER-Te_Me0';
+const FB_DB = 'projects/premium-studio-f9bc9/databases/(default)/documents';
+let idTok = { t: '', exp: 0, uid: '' };
+async function fbToken() {
+  if (!currentUser || !currentUser.refreshToken || !currentUser.uid) return null;
+  if (idTok.t && idTok.uid === currentUser.uid && Date.now() < idTok.exp - 60000) return idTok.t;
+  const r = await net.fetch(`https://securetoken.googleapis.com/v1/token?key=${FB_KEY}`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'grant_type=refresh_token&refresh_token=' + encodeURIComponent(currentUser.refreshToken) });
+  if (!r.ok) return null;
+  const j = await r.json();
+  idTok = { t: j.id_token, exp: Date.now() + (+j.expires_in || 3600) * 1000, uid: currentUser.uid };
+  return idTok.t;
+}
+async function fbCommit(writes) {
+  try { const t = await fbToken(); if (!t) return;
+    await net.fetch(`https://firestore.googleapis.com/v1/${FB_DB}:commit`, { method: 'POST', headers: { authorization: 'Bearer ' + t, 'content-type': 'application/json' }, body: JSON.stringify({ writes }) });
+  } catch (e) {}
+}
+// what you're playing, for your friends' list (refreshed every few minutes while a game runs)
+function pushPresence() {
+  if (!currentUser || !currentUser.uid) return;
+  const last = [...running.values()].pop();
+  return fbCommit([{ update: { name: `${FB_DB}/presence/${currentUser.uid}`, fields: { game: { stringValue: last ? String(last.name).slice(0, 60) : '' }, gid: { stringValue: last ? String(last.game) : '' } } },
+    updateTransforms: [{ fieldPath: 'at', setToServerValue: 'REQUEST_TIME' }] }]);
+}
+setInterval(() => { if (running.size) pushPresence(); }, 4 * 60000);
+// play time per game, kept on the account
+function addPlaytime(r, ms) {
+  const min = Math.min(1440, Math.round(ms / 60000));
+  if (!currentUser || !currentUser.uid || !r.game) return;
+  return fbCommit([{ update: { name: `${FB_DB}/users/${currentUser.uid}/play/${r.game}`, fields: { game: { stringValue: r.game } } }, updateMask: { fieldPaths: ['game'] },
+    updateTransforms: [{ fieldPath: 'minutes', increment: { integerValue: String(min) } }, { fieldPath: 'last', setToServerValue: 'REQUEST_TIME' }] }]);
+}
+const runningList = () => Object.fromEntries([...running].map(([k, v]) => [k, { since: v.since, game: v.game }]));
+function runningChanged() {
+  if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('ps:running', runningList());
+  updateTray();
+}
+function markRunning(key) {
+  if (running.has(key)) return;
+  const g = readReg()[key] || {};
+  running.set(key, { since: Date.now(), game: g.game || key.split('--')[0], name: g.name || key });
+  pushPresence(); runningChanged();
+  if (g.type === 'bf-launcher') watchBf();
+}
+function markStopped(key) {
+  const r = running.get(key); if (!r) return;
+  running.delete(key);
+  addPlaytime(r, Date.now() - r.since); pushPresence(); runningChanged();
+}
+// BLOCKFALL runs as its own program: watch its process
+let bfTimer = null;
+function bfAlive() {
+  return new Promise(res => {
+    if (process.platform !== 'win32') return res(false);
+    require('child_process').execFile('tasklist', ['/FI', 'IMAGENAME eq BLOCKFALL3001.exe', '/NH'], { windowsHide: true }, (e, out) => res(!e && /BLOCKFALL3001\.exe/i.test(out || '')));
+  });
+}
+function watchBf() {
+  if (bfTimer) return;
+  let misses = 0;
+  bfTimer = setInterval(async () => {
+    const bfKeys = [...running.keys()].filter(k => (readReg()[k] || {}).type === 'bf-launcher');
+    if (!bfKeys.length) { clearInterval(bfTimer); bfTimer = null; return; }
+    if (await bfAlive()) { misses = 0; return; }
+    if (++misses >= 2) { bfKeys.forEach(markStopped); clearInterval(bfTimer); bfTimer = null; }
+  }, 5000);
+}
+function stopGame(key) {
+  const g = readReg()[key];
+  if (g && g.type === 'bf-launcher') { if (process.platform === 'win32') { try { require('child_process').execSync('taskkill /IM BLOCKFALL3001.exe /F', { stdio: 'ignore' }); } catch (e) {} } markStopped(key); return; }
+  const w = gameWins.get(key); if (w && !w.isDestroyed()) w.close(); else markStopped(key);
+}
+
+/* ---------------- tray: the app keeps running in the background, like Steam ---------------- */
+let tray = null, quitting = false;
+function updateTray() {
+  if (!tray) return;
+  const games = Object.entries(installedNow());
+  const items = [
+    { label: 'المتجر', click: () => createMain('store') },
+    { label: 'المكتبة', click: () => createMain('library') },
+    { label: 'الأصدقاء', click: () => createMain('friends') },
+    { type: 'separator' }
+  ];
+  if (running.size) for (const [k, r] of running) items.push({ label: `▶ ${r.name} — إيقاف`, click: () => stopGame(k) });
+  else for (const [k, v] of games.slice(0, 8)) items.push({ label: v.name, click: () => playFromOutside(k) });
+  items.push({ type: 'separator' }, { label: 'خروج من Premium Studio', click: () => { quitting = true; app.quit(); } });
+  tray.setContextMenu(Menu.buildFromTemplate(items));
+  tray.setToolTip(running.size ? 'Premium Studio — ' + [...running.values()].map(r => r.name).join('، ') : 'Premium Studio');
+}
+function makeTray() {
+  try {
+    tray = new Tray(nativeImage.createFromPath(ICON));
+    tray.on('click', () => createMain());
+    tray.on('double-click', () => createMain());
+    updateTray();
+  } catch (e) { tray = null; }
+}
+// started from a desktop shortcut or the tray: play only if signed in, otherwise open the sign-in
+function playFromOutside(key) {
+  if (!currentUser || !currentUser.uid) { createMain(); return; }
+  launchWithUpdate(key).catch(() => createMain());
+}
+
 function openExternal(url) { if (/^https?:\/\//.test(url)) shell.openExternal(url); }
 
 // Before starting a game that updates from its own manifest, pull the newest version (like the game's standalone app does).
 async function launchWithUpdate(id, edition) {
   const g = installedNow()[id];
-  if (g && g.type === 'manifest' && !busy.has(id)) {
+  if (g && g.type === 'manifest' && !busy.has(id) && !running.has(id)) {
     try {
       const m = ((await fetchManifest()).games || {})[g.game];
       if (m && JSON.stringify(m.account || null) !== JSON.stringify(readReg()[id].account || null)) { const reg = readReg(); reg[id].account = m.account || undefined; await writeReg(reg); }
@@ -140,9 +249,10 @@ function launchGame(id, edition) {
     const { spawn } = require('child_process');
     const child = spawn(BF_EXE, [], { cwd: BF_DIR, detached: true, stdio: 'ignore' });
     child.unref();
+    for (const k of [...running.keys()]) if ((readReg()[k] || {}).type === 'bf-launcher' && k !== id) markStopped(k);
+    markRunning(id);
     // the launcher re-adds its own "BLOCKFALL 3001" shortcuts each start; put ours (one per edition) back
     setTimeout(fixBfShortcuts, 6000);
-    if (!BrowserWindow.getAllWindows().length) setTimeout(() => app.quit(), 8000);   // started from a desktop shortcut: nothing else to keep open
     return;
   }
   if (gameWins.has(id) && !gameWins.get(id).isDestroyed()) { const w = gameWins.get(id); w.show(); w.focus(); return; }
@@ -159,8 +269,9 @@ function launchGame(id, edition) {
   });
   const q = g.edition === 'demo' ? '?demo=1' : '';
   w.loadURL(`psgame://${id}/${g.entry}${q}`);
-  w.on('closed', () => { gameWins.delete(id); if (!BrowserWindow.getAllWindows().length) app.quit(); });
+  w.on('closed', () => { gameWins.delete(id); markStopped(id); });
   gameWins.set(id, w);
+  markRunning(id);
 }
 
 // Installs from before editions were separate: give them their game id and an edition in the name and shortcut
@@ -304,7 +415,7 @@ async function install(id, opts) {
     await writeReg(reg);
     makeShortcuts(id, reg[id]);
     send('ps:progress', { id, phase: 'done' });
-    send('ps:installed-changed', {});
+    send('ps:installed-changed', {}); updateTray();
   } catch (e) {
     if (stage) await fsp.rm(stage, { recursive: true, force: true }).catch(() => {});
     send('ps:progress', { id, phase: 'error', error: e.message || String(e) });
@@ -348,7 +459,7 @@ async function uninstall(id) {
   }
   if (g) removeShortcuts(g);
   delete reg[id]; await writeReg(reg);
-  send('ps:installed-changed', {});
+  send('ps:installed-changed', {}); updateTray();
 }
 
 async function dirSize(dir) {
@@ -423,7 +534,9 @@ ipcMain.handle('ps:install', guard(async (id, opts) => { await install(id, opts)
 ipcMain.handle('ps:getLatest', guard(async () => getLatest()));
 ipcMain.handle('ps:uninstall', guard(async id => { await uninstall(id); return true; }));
 ipcMain.handle('ps:launch', guard(async id => { await launchWithUpdate(id); return true; }));
-ipcMain.handle('ps:features', guard(async () => ({ editions: true })));
+ipcMain.handle('ps:features', guard(async () => ({ editions: true, running: true })));
+ipcMain.handle('ps:getRunning', guard(async () => runningList()));
+ipcMain.handle('ps:stop', guard(async id => { if (!validId(id)) throw new Error('bad id'); stopGame(id); return true; }));
 ipcMain.handle('ps:showFolder', guard(async id => { if (validId(id)) shell.openPath(gameDir(id, readReg()[id])); return true; }));
 ipcMain.handle('ps:setUser', guard(async u => { setUser(u); return true; }));
 ipcMain.handle('ps:retryOnline', guard(async () => { if (mainWin) mainWin.loadURL(SITE); return true; }));
@@ -438,7 +551,7 @@ function handleDeepLink(url) {
   // premiumstudio://game/<id>  → open store page;  premiumstudio://launch/<id> → start the game
   try {
     const u = new URL(url), kind = u.hostname, id = u.pathname.replace(/^\/+/, '').split('/')[0];
-    if (kind === 'launch' && validId(id) && installedNow()[id]) return launchWithUpdate(id).catch(() => createMain());
+    if (kind === 'launch' && validId(id) && installedNow()[id]) return playFromOutside(id);
     if (kind === 'install' && validId(id)) return createMain(id.split('--')[0], 'install=' + encodeURIComponent(id));
     createMain(validId(id) ? id : (kind === 'library' ? 'library' : ''));
   } catch (e) { createMain(); }
@@ -446,9 +559,10 @@ function handleDeepLink(url) {
 function handleArgv(argv, firstRun) {
   const launch = argValue(argv, 'launch');
   const link = argv.find(a => a.startsWith('premiumstudio://'));
-  if (launch && validId(launch) && installedNow()[launch]) { launchWithUpdate(launch).catch(() => createMain()); return; }
-  if (link) return handleDeepLink(link);
-  if (!firstRun || !launch) createMain();
+  if (launch && validId(launch) && installedNow()[launch]) { playFromOutside(launch); return true; }
+  if (link) { handleDeepLink(link); return true; }
+  if (firstRun && argv.includes('--hidden')) return true;   // started with Windows: stay in the tray
+  createMain(); return true;
 }
 
 if (!app.requestSingleInstanceLock()) {
@@ -462,8 +576,10 @@ if (!app.requestSingleInstanceLock()) {
     Menu.setApplicationMenu(null);
     registerGameProtocol();
     migrateReg();
+    makeTray();
     handleArgv(process.argv, true);
-    if (!BrowserWindow.getAllWindows().length) createMain();
+    // start with Windows, quietly in the tray (like Steam)
+    if (app.isPackaged && process.platform === 'win32') { try { app.setLoginItemSettings({ openAtLogin: true, args: ['--hidden'] }); } catch (e) {} }
     if (app.isPackaged) {
       try {
         const { autoUpdater } = require('electron-updater');
@@ -472,5 +588,6 @@ if (!app.requestSingleInstanceLock()) {
       } catch (e) {}
     }
   });
-  app.on('window-all-closed', () => app.quit());
+  app.on('window-all-closed', () => { if (!tray) app.quit(); });   // otherwise keep running in the tray
+  app.on('before-quit', () => { quitting = true; for (const k of [...running.keys()]) if (!gameWins.has(k)) { const r = running.get(k); addPlaytime(r, Date.now() - r.since); } });
 }

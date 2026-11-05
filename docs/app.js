@@ -139,7 +139,7 @@ if (!reduce) setInterval(() => { const t = performance.now(); for (const o of [.
 
 /* ---------------- state ---------------- */
 let user = null, PROFILE = null, LIB = {}, isAdmin = false, guest = false, authReady = false;
-let INSTALLED = {}, PROGRESS = {};
+let INSTALLED = {}, PROGRESS = {}, RUNNING = {}, PLAY = {}, PRES = {};
 let unsubs = [];
 /* entitlement: highest owned (free or paid) edition, plus any pending order */
 function ent(gid){
@@ -166,6 +166,7 @@ if (PS) {
   $("#tabDl").hidden = true;
   PS.onProgress(p => { PROGRESS[p.id] = p; if (p.phase === "done" || p.phase === "error") { delete PROGRESS[p.id]; if (p.phase === "error") toast("ما تم التثبيت: " + (p.error || "خطأ")); else toast("تم التثبيت ✓ أيقونتها على سطح المكتب"); refreshInstalled(); } updateProgressUI(); });
   PS.onInstalledChanged && PS.onInstalledChanged(() => refreshInstalled());
+  if (PS.onRunning) { PS.onRunning(r => { RUNNING = r || {}; render(); }); PS.getRunning().then(r => { RUNNING = r || {}; render(); }).catch(() => {}); }
   refreshInstalled();
 }
 function updateProgressUI(){
@@ -183,11 +184,17 @@ const ownedEds = gid => Object.values(LIB).filter(v => v.game === gid && v.statu
 const instOf = (gid, ed) => { for (const [k, v] of Object.entries(INSTALLED)) if (v.game === gid && v.edition === ed) return [k, v]; return [`${gid}--${ed}`, null]; };
 const anyInstalled = gid => Object.values(INSTALLED).some(v => v.game === gid);
 const keyGame = k => byId(INSTALLED[k] ? INSTALLED[k].game : String(k).split("--")[0]);
+function fmtPlay(gid){
+  const p = PLAY[gid]; if (!p || !p.minutes) return "";
+  const h = p.minutes / 60, t = h >= 1 ? `${h.toFixed(h < 10 ? 1 : 0)} ساعة` : `${p.minutes} دقيقة`;
+  let last = ""; if (p.last && p.last.toDate) { const d = p.last.toDate(), days = Math.floor((Date.now() - d) / 864e5); last = days <= 0 ? "اليوم" : days === 1 ? "أمس" : d.toLocaleDateString("ar-SA-u-nu-latn", {day:"numeric", month:"short"}); }
+  return `<div class="muted playtime" style="font-size:12px">وقت اللعب: <b class="num">${t}</b>${last ? ` · آخر تشغيل: ${last}` : ""}</div>`;
+}
 function installBlock(g){
   const eds = ownedEds(g.id);
   if (!eds.length) return "";
   if (!PS && isMobile) return `<div class="inststate"><span>اللعبة للكمبيوتر. افتح الموقع من الكمبيوتر عشان تثبّتها.</span></div>`;
-  return `<div class="edinsts">${eds.map(ed => edInstall(g, ed)).join("")}</div>`;
+  return `<div class="edinsts">${fmtPlay(g.id)}${eds.map(ed => edInstall(g, ed)).join("")}</div>`;
 }
 function edInstall(g, ed){
   const m = MANIFEST.games[g.id], [key, inst] = instOf(g.id, ed), prog = PROGRESS[key];
@@ -196,6 +203,11 @@ function edInstall(g, ed){
   if (!PS) return `<div class="edinst">${head}</div><button class="btn inst" data-act="getapp" ${a}>تثبيت</button></div>`;
   if (!PS.multiEdition) return `<div class="edinst">${head}</div><span class="muted" style="font-size:13px">حدّث تطبيق Premium Studio: اقفله وافتحه.</span></div>`;
   if (prog) return `<div class="edinst">${head}<span class="num" data-progt>${progText(prog)}</span></div><div class="bar" data-prog="${key}"><i style="width:${pct(prog)}%"></i></div></div>`;
+  if (inst && RUNNING[key]) {
+    const mins = Math.max(0, Math.floor((Date.now() - RUNNING[key].since) / 60000));
+    return `<div class="edinst running">${head}<span class="st run">● شغالة</span><span class="num muted" style="font-size:12px">${mins ? mins + " د" : "الحين"}</span></div>
+      <div class="row"><button class="btn play" data-act="launch" ${a}>إظهار</button><button class="btn danger mini" data-act="stop" ${a}>إيقاف</button></div></div>`;
+  }
   if (inst) {
     const L = LATEST[g.id], bf = m && m.type === "bf-launcher";
     const upd = !bf && L && L.version && inst.version !== L.version;
@@ -221,6 +233,7 @@ document.addEventListener("click", async e => {
     try { await PS.launch(key, ed); } catch(err) { toast("ما اشتغلت اللعبة: " + (err && err.message || err)); }
     b.disabled = false; b.textContent = t; }
   else if (act === "folder") { PS.showFolder(key); }
+  else if (act === "stop") { b.disabled = true; try { await PS.stop(key); } catch(err) { toast("ما وقفت: " + (err && err.message || err)); b.disabled = false; } }
   else if (act === "uninstall") { const nm = (g.en || g.title) + (ED_TAG[ed] ? " " + ED_TAG[ed] : "");
     confirmModal(`حذف ${nm}؟`, "تنحذف اللعبة وأيقونتها من سطح المكتب. تقدر تثبّتها مرة ثانية من مكتبتك أي وقت.", "حذف", async () => { try { await PS.uninstall(key); toast("انحذفت " + nm); } catch(err) { toast("ما انحذفت: " + (err && err.message || err)); } refreshInstalled(); }); }
 });
@@ -338,12 +351,20 @@ async function dropFriend(fid){
   const b = writeBatch(fs); b.delete(frRef(user.uid, fid)); b.delete(frRef(fid, user.uid));
   try { await b.commit(); } catch(e) { toast("ما تم: " + (e.code || e.message)); }
 }
+const presUnsubs = {};
+function watchPresence(){
+  const ok = Object.keys(FRIENDS).filter(id => FRIENDS[id].status === "ok");
+  for (const id of Object.keys(presUnsubs)) if (!ok.includes(id)) { presUnsubs[id](); delete presUnsubs[id]; delete PRES[id]; }
+  for (const id of ok) if (!presUnsubs[id]) presUnsubs[id] = onSnapshot(doc(fs, "presence", id), s => { PRES[id] = s.exists() ? s.data() : null; if (curView === "friends") renderFriends(); }, () => {});
+}
+function playingNow(id){ const p = PRES[id]; return p && p.game && p.at && p.at.toDate && Date.now() - p.at.toDate() < 10 * 60000 ? p.game : ""; }
 function renderFriends(){
   const box = $("#friends");
   if (!user) { box.innerHTML = '<div class="empty"><b style="color:var(--text)">الأصدقاء للمسجّلين فقط</b><span>سجّل دخولك عشان تضيف أصدقاءك باسم المستخدم.</span><button class="btn buy" type="button" data-login>تسجيل الدخول</button></div>'; return; }
   const all = Object.entries(FRIENDS).map(([id, f]) => ({id, ...f})).sort((a, b) => a.username.localeCompare(b.username));
-  const ok = all.filter(f => f.status === "ok"), inc = all.filter(f => f.status === "in"), out = all.filter(f => f.status === "out");
-  const row = (f, acts) => `<div class="fr"><span class="av">${esc(f.username.charAt(0).toUpperCase())}</span><b class="who ltr">@${esc(f.username)}</b><div class="row">${acts}</div></div>`;
+  const ok = all.filter(f => f.status === "ok").sort((a, b) => !!playingNow(b.id) - !!playingNow(a.id)), inc = all.filter(f => f.status === "in"), out = all.filter(f => f.status === "out");
+  const row = (f, acts) => { const pl = f.status === "ok" ? playingNow(f.id) : "";
+    return `<div class="fr${pl ? " playing" : ""}"><span class="av">${esc(f.username.charAt(0).toUpperCase())}</span><div class="who"><b class="ltr">@${esc(f.username)}</b>${pl ? `<small class="plg">يلعب ${esc(pl)}</small>` : ""}</div><div class="row">${acts}</div></div>`; };
   box.innerHTML = `<form class="fradd" id="frForm" novalidate><label class="fld">أضف صديق باسم المستخدم<input id="frU" dir="ltr" maxlength="21" autocomplete="off" placeholder="@username"></label><button class="btn buy" type="submit">إضافة</button></form>
     <div class="err" id="frErr" style="margin:-10px 0 12px"></div>
     <div class="frcols"><div class="panel"><h3>أصدقائي <span class="tag num">${ok.length}</span></h3><div class="frlist">${ok.length ? ok.map(f => row(f, `<button class="btn mini ghost" data-fr-del="${f.id}">إزالة</button>`)).join("") : '<span class="muted">ما عندك أصدقاء للحين. أضفهم باسم المستخدم حقهم.</span>'}</div></div>
@@ -638,7 +659,7 @@ function applyChrome(){
   $("#coinChip").hidden = !user; if (user) $("#coinBal").textContent = coins(PROFILE && PROFILE.coins);
 }
 onAuthStateChanged(auth, async u => {
-  unsubs.forEach(f => { try { f(); } catch(e) {} }); unsubs = []; LIB = {}; PROFILE = null; FRIENDS = {}; frBadge(); USERS = {}; ORDERS = []; CODES = {}; MYCO = []; COINORDERS = [];
+  unsubs.forEach(f => { try { f(); } catch(e) {} }); unsubs = []; LIB = {}; PROFILE = null; FRIENDS = {}; watchPresence(); PLAY = {}; frBadge(); USERS = {}; ORDERS = []; CODES = {}; MYCO = []; COINORDERS = [];
   user = u; authReady = true; setAdmin();
   if (u) {
     $("#gate").hidden = true; guest = false;
@@ -646,7 +667,8 @@ onAuthStateChanged(auth, async u => {
     unsubs.push(onSnapshot(doc(fs, "users", u.uid), s => { PROFILE = s.exists() ? s.data() : null; applyChrome(); sendUserToApp();
       if (PROFILE && PROFILE.pid && !PROFILE.username && !$("#uf")) askUsername(u); if (curView === "account") renderAccount(); if (curView === "coins") renderCoins(); }));
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "library"), s => { LIB = {}; s.forEach(d => LIB[d.id] = d.data()); render(); autoInstall(); }, e => toast("ما قدرت أقرأ مكتبتك: " + e.code)));
-    unsubs.push(onSnapshot(collection(fs, "users", u.uid, "friends"), s => { FRIENDS = {}; s.forEach(d => FRIENDS[d.id] = d.data()); frBadge(); if (curView === "friends") renderFriends(); }, () => {}));
+    unsubs.push(onSnapshot(collection(fs, "users", u.uid, "friends"), s => { FRIENDS = {}; s.forEach(d => FRIENDS[d.id] = d.data()); frBadge(); watchPresence(); if (curView === "friends") renderFriends(); }, () => {}));
+    unsubs.push(onSnapshot(collection(fs, "users", u.uid, "play"), s => { PLAY = {}; s.forEach(d => PLAY[d.id] = d.data()); render(); }, () => {}));
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "coinOrders"), s => { MYCO = s.docs.map(d => ({id:d.id, ...d.data()})); if (curView === "coins") renderCoins(); }, () => {}));
     if (isAdmin) startAdmin();
   } else {
