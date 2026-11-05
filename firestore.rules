@@ -91,12 +91,86 @@ service cloud.firestore {
           // pick a username once
           || (changed().hasOnly(['username']) && !('username' in resource.data)
             && validUname(request.resource.data.username) && unameReserved(request.resource.data.username))
+          // market: the buyer pays for a listing (their coins go down by its price)
+          || (changed().hasOnly(['coins', 'lastTrade']) && request.resource.data.lastTrade is string
+            && getAfter(/databases/$(database)/documents/listings/$(request.resource.data.lastTrade)).data.buyer == uid
+            && get(/databases/$(database)/documents/listings/$(request.resource.data.lastTrade)).data.status == 'open'
+            && request.resource.data.coins == resource.data.coins - get(/databases/$(database)/documents/listings/$(request.resource.data.lastTrade)).data.price
+            && request.resource.data.coins >= 0)
           // change the display name only; PS ID and coins stay
           || (changed().hasOnly(['name'])
             && request.resource.data.name is string
             && request.resource.data.name.size() >= 1 && request.resource.data.name.size() <= 32)
         ));
+      // market: the buyer pays the seller in the same write that buys the listing
+      allow update: if signedIn() && request.auth.uid != uid
+        && changed().hasOnly(['coins', 'lastSale']) && request.resource.data.lastSale is string
+        && get(/databases/$(database)/documents/listings/$(request.resource.data.lastSale)).data.status == 'open'
+        && get(/databases/$(database)/documents/listings/$(request.resource.data.lastSale)).data.seller == uid
+        && getAfter(/databases/$(database)/documents/listings/$(request.resource.data.lastSale)).data.buyer == request.auth.uid
+        && request.resource.data.coins == resource.data.coins + get(/databases/$(database)/documents/listings/$(request.resource.data.lastSale)).data.price;
       allow delete: if isAdmin();
+
+      // Gifts: buy an edition for a friend; the studio confirms the payment and it goes to their library
+      match /gifts/{gid2} {
+        allow read: if isMe(uid) || isAdmin();
+        allow create: if isMe(uid)
+          && request.resource.data.keys().hasOnly(['to', 'toName', 'game', 'edition', 'price', 'status', 'at'])
+          && request.resource.data.game + '__' + request.resource.data.edition in prices()
+          && prices()[request.resource.data.game + '__' + request.resource.data.edition] > 0
+          && request.resource.data.price == prices()[request.resource.data.game + '__' + request.resource.data.edition]
+          && request.resource.data.status == 'pending' && request.resource.data.at == request.time
+          && request.resource.data.to is string && request.resource.data.to != uid
+          && exists(/databases/$(database)/documents/users/$(uid)/friends/$(request.resource.data.to))
+          && get(/databases/$(database)/documents/users/$(uid)/friends/$(request.resource.data.to)).data.status == 'ok';
+        allow update: if isAdmin() && changed().hasOnly(['status', 'sentAt']);
+        allow delete: if isAdmin() || (isMe(uid) && resource.data.status == 'pending');
+      }
+
+      // Trading cards: one drops for every 30 minutes played, up to 3 per game; also bought on the market
+      match /cardDrops/{game} {
+        allow read: if isMe(uid);
+        allow create, update: if isMe(uid) && request.resource.data.keys().hasOnly(['n'])
+          && request.resource.data.n == (resource == null ? 0 : resource.data.n) + 1 && request.resource.data.n <= 3
+          && request.resource.data.n * 30 <= get(/databases/$(database)/documents/users/$(uid)/play/$(game)).data.minutes;
+      }
+      match /cards/{card} {
+        allow read: if signedIn();
+        allow create, update: if isMe(uid) && request.resource.data.keys().hasOnly(['game', 'count', 'lastTrade', 'via'])
+          && request.resource.data.count is int && request.resource.data.count >= 0 && request.resource.data.game is string
+          && card.matches('^' + request.resource.data.game + '_[0-9]$') && (
+            // a drop
+            (request.resource.data.via == 'drop' && request.resource.data.count == (resource == null ? 0 : resource.data.count) + 1
+              && getAfter(/databases/$(database)/documents/users/$(uid)/cardDrops/$(request.resource.data.game)).data.n == (exists(/databases/$(database)/documents/users/$(uid)/cardDrops/$(request.resource.data.game)) ? get(/databases/$(database)/documents/users/$(uid)/cardDrops/$(request.resource.data.game)).data.n : 0) + 1)
+            // put one on the market (it's held by the listing)
+            || (request.resource.data.via == 'list' && resource != null && request.resource.data.count == resource.data.count - 1
+              && getAfter(/databases/$(database)/documents/listings/$(request.resource.data.lastTrade)).data.seller == uid && !exists(/databases/$(database)/documents/listings/$(request.resource.data.lastTrade)))
+            // bought one
+            || (request.resource.data.via == 'buy' && request.resource.data.count == (resource == null ? 0 : resource.data.count) + 1
+              && get(/databases/$(database)/documents/listings/$(request.resource.data.lastTrade)).data.status == 'open'
+              && get(/databases/$(database)/documents/listings/$(request.resource.data.lastTrade)).data.card == card
+              && getAfter(/databases/$(database)/documents/listings/$(request.resource.data.lastTrade)).data.buyer == uid)
+            // took a listing back
+            || (request.resource.data.via == 'cancel' && request.resource.data.count == (resource == null ? 0 : resource.data.count) + 1
+              && get(/databases/$(database)/documents/listings/$(request.resource.data.lastTrade)).data.status == 'open'
+              && get(/databases/$(database)/documents/listings/$(request.resource.data.lastTrade)).data.seller == uid
+              && get(/databases/$(database)/documents/listings/$(request.resource.data.lastTrade)).data.card == card
+              && getAfter(/databases/$(database)/documents/listings/$(request.resource.data.lastTrade)).data.status == 'cancelled')
+            // used for a badge (one of each card of the set)
+            || (request.resource.data.via == 'craft' && resource != null && request.resource.data.count == resource.data.count - 1
+              && getAfter(/databases/$(database)/documents/users/$(uid)/badges/$(request.resource.data.game)).data.level == (exists(/databases/$(database)/documents/users/$(uid)/badges/$(request.resource.data.game)) ? get(/databases/$(database)/documents/users/$(uid)/badges/$(request.resource.data.game)).data.level : 0) + 1));
+      }
+      match /badges/{game} {
+        allow read: if signedIn();
+        allow create, update: if isMe(uid) && request.resource.data.keys().hasOnly(['level', 'at'])
+          && request.resource.data.level == (resource == null ? 0 : resource.data.level) + 1 && request.resource.data.level <= 5
+          && request.resource.data.at == request.time
+          && getAfter(/databases/$(database)/documents/users/$(uid)/cards/$(game + '_1')).data.count == get(/databases/$(database)/documents/users/$(uid)/cards/$(game + '_1')).data.count - 1
+          && getAfter(/databases/$(database)/documents/users/$(uid)/cards/$(game + '_2')).data.count == get(/databases/$(database)/documents/users/$(uid)/cards/$(game + '_2')).data.count - 1
+          && getAfter(/databases/$(database)/documents/users/$(uid)/cards/$(game + '_3')).data.count == get(/databases/$(database)/documents/users/$(uid)/cards/$(game + '_3')).data.count - 1
+          && getAfter(/databases/$(database)/documents/users/$(uid)/cards/$(game + '_4')).data.count == get(/databases/$(database)/documents/users/$(uid)/cards/$(game + '_4')).data.count - 1
+          && getAfter(/databases/$(database)/documents/users/$(uid)/cards/$(game + '_5')).data.count == get(/databases/$(database)/documents/users/$(uid)/cards/$(game + '_5')).data.count - 1;
+      }
 
       // PS COIN purchase requests; the studio confirms payment and adds the coins
       match /coinOrders/{oid} {
@@ -201,7 +275,7 @@ service cloud.firestore {
 
       // Library: one document per game edition, id = "<game>__<edition>"
       match /library/{itemId} {
-        allow read: if isMe(uid) || isAdmin();
+        allow read: if isMe(uid) || isAdmin() || inFamilyOf(uid);
         allow create: if isMe(uid)
           && itemId in prices()
           && request.resource.data.game + '__' + request.resource.data.edition == itemId
@@ -223,7 +297,7 @@ service cloud.firestore {
         // the studio can give any edition (also the Developer edition, which isn't sold)
         allow create: if isAdmin()
           && itemId.matches('^[a-z0-9-]+__(demo|std|gold|dev)$')
-          && request.resource.data.keys().hasOnly(['game', 'edition', 'price', 'status', 'at'])
+          && request.resource.data.keys().hasOnly(['game', 'edition', 'price', 'status', 'at', 'from'])
           && request.resource.data.game + '__' + request.resource.data.edition == itemId
           && request.resource.data.status == 'granted' && request.resource.data.price == 0;
         allow update: if isAdmin()
@@ -326,6 +400,41 @@ service cloud.firestore {
         && request.resource.data.hours is int && request.resource.data.username is string && request.resource.data.username.size() <= 20
         && request.resource.data.at == request.time;
       allow delete: if isMe(uid) || isAdmin();
+    }
+
+    // Family sharing: an owner lets up to 5 friends play their games
+    function inFamilyOf(owner) { return signedIn() && exists(/databases/$(database)/documents/families/$(owner)) && request.auth.uid in get(/databases/$(database)/documents/families/$(owner)).data.members; }
+    match /families/{owner} {
+      allow read: if signedIn() && (request.auth.uid == owner || request.auth.uid in resource.data.members);
+      allow create, update: if isMe(owner) && request.resource.data.keys().hasOnly(['members', 'names'])
+        && request.resource.data.members is list && request.resource.data.members.size() <= 5 && !(owner in request.resource.data.members)
+        && request.resource.data.names is map;
+      allow delete: if isMe(owner);
+    }
+
+    // Market: trading cards for PS COIN. Listing holds the card; buying moves the coins and the card in one write.
+    match /listings/{id} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.keys().hasOnly(['seller', 'sellerName', 'card', 'game', 'price', 'status', 'at'])
+        && request.resource.data.seller == request.auth.uid && request.resource.data.status == 'open' && request.resource.data.at == request.time
+        && request.resource.data.price is int && request.resource.data.price >= 1 && request.resource.data.price <= 10000000
+        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)/cards/$(request.resource.data.card)).data.lastTrade == id
+        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)/cards/$(request.resource.data.card)).data.via == 'list';
+      allow update: if signedIn() && resource.data.status == 'open' && (
+          // buy
+          (request.auth.uid != resource.data.seller && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'buyer', 'soldAt'])
+            && request.resource.data.status == 'sold' && request.resource.data.buyer == request.auth.uid && request.resource.data.soldAt == request.time
+            && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.lastTrade == id
+            && getAfter(/databases/$(database)/documents/users/$(resource.data.seller)).data.lastSale == id
+            && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)/cards/$(resource.data.card)).data.lastTrade == id)
+          // take it back
+          || (request.auth.uid == resource.data.seller && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+            && request.resource.data.status == 'cancelled'
+            && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)/cards/$(resource.data.card)).data.lastTrade == id));
+      allow delete: if isAdmin();
+    }
+    match /{path=**}/gifts/{g} {
+      allow read: if isAdmin();
     }
 
     // Public profile card (level, badges) that friends see
