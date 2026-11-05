@@ -56,9 +56,16 @@ const USER_FILE = path.join(app.getPath('userData'), 'ps-user.json');
 let currentUser = (() => { try { return JSON.parse(fs.readFileSync(USER_FILE, 'utf8')); } catch (e) { return null; } })();
 function setUser(u) {
   const clip = (v, n) => String(v || '').slice(0, n);
+  const before = currentUser && currentUser.uid;
   currentUser = u && typeof u === 'object' ? { username: clip(u.username, 20), name: clip(u.name, 32), pid: clip(u.pid, 10), email: clip(u.email, 120), uid: clip(u.uid, 128), refreshToken: clip(u.refreshToken, 4096) } : null;
   try { if (currentUser) fs.writeFileSync(USER_FILE, JSON.stringify(currentUser)); else fs.rmSync(USER_FILE, { force: true }); } catch (e) {}
   writeBfAccount();
+  // switched or signed out (like Steam): games running under the old account close
+  if (before && before !== (currentUser && currentUser.uid)) closeRunningGames();
+}
+function closeRunningGames() {
+  for (const w of gameWins.values()) { try { if (!w.isDestroyed()) w.close(); } catch (e) {} }
+  if (process.platform === 'win32') { try { require('child_process').execSync('taskkill /IM BLOCKFALL3001.exe /F', { stdio: 'ignore' }); } catch (e) {} }
 }
 const playerName = () => (currentUser && (currentUser.username || currentUser.name)) || '';
 // BLOCKFALL's launcher: the Premium Studio account it should play under
