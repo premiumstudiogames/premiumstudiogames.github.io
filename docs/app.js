@@ -3,7 +3,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/fireba
 import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut,
   sendPasswordResetEmail, sendEmailVerification, updateProfile, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, collectionGroup, onSnapshot,
-  serverTimestamp, writeBatch, Timestamp, increment, addDoc, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  serverTimestamp, writeBatch, Timestamp, increment, addDoc, query, orderBy, limit, where } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 /* ---------------- config ---------------- */
 const firebaseConfig = {
@@ -28,7 +28,7 @@ const PACKS = [             // must match coinPacks() in firestore.rules (coins 
   {id:"u100000",coins:100000, price:1000000}
 ];
 const coins = n => ((n || 0) / COIN_UNIT).toLocaleString("en-US", {minimumFractionDigits:0, maximumFractionDigits:4});
-const SITE_VERSION = "00.00.23";
+const SITE_VERSION = "00.00.24";
 const APP_DL = "downloads/PremiumStudioSetup.exe";
 
 const fb = initializeApp(firebaseConfig);
@@ -140,6 +140,7 @@ if (!reduce) setInterval(() => { const t = performance.now(); for (const o of [.
 
 /* ---------------- state ---------------- */
 let user = null, PROFILE = null, LIB = {}, isAdmin = false, guest = false, authReady = false;
+let SHARED = {}, FAMILY = null, CARDS = {}, DROPS = {}, CBADGES = {}, LISTINGS = [], GIFTS = [], ALLGIFTS = [];
 let INSTALLED = {}, PROGRESS = {}, RUNNING = {}, PLAY = {}, PRES = {}, REFUNDS = {}, ACH = {}, PROFS = {}, WISH = {}, PREFS = {fav:[], hidden:[]}, REVIEWS = {}, NEWS = {};
 let unsubs = [];
 /* entitlement: highest owned (free or paid) edition, plus any pending order */
@@ -248,7 +249,10 @@ const progText = p => p.phase === "extract" ? "جاري فك الملفات…" 
 
 /* the install / play block, Steam style. Every owned edition installs and plays as its own game. */
 const ED_TAG = {demo:"Demo", std:"Standard", gold:"Gold", dev:"المبرمج"};
-const ownedEds = gid => Object.values(LIB).filter(v => v.game === gid && v.status !== "pending").map(v => v.edition).sort((a, b) => RANK[a] - RANK[b]);
+const sharedItems = () => Object.entries(SHARED).flatMap(([owner, o]) => Object.values(o.lib || {}).map(v => ({...v, owner, ownerName:o.name})));
+const ownedEds = gid => [...new Set(Object.values(LIB).filter(v => v.game === gid && v.status !== "pending").map(v => v.edition)
+  .concat(sharedItems().filter(v => v.game === gid && v.status !== "pending").map(v => v.edition)))].sort((a, b) => RANK[a] - RANK[b]);
+const sharedFrom = gid => { const own = Object.values(LIB).some(v => v.game === gid && v.status !== "pending"); if (own) return ""; const x = sharedItems().find(v => v.game === gid && v.status !== "pending"); return x ? x.ownerName : ""; };
 const instOf = (gid, ed) => { for (const [k, v] of Object.entries(INSTALLED)) if (v.game === gid && v.edition === ed) return [k, v]; return [`${gid}--${ed}`, null]; };
 const anyInstalled = gid => Object.values(INSTALLED).some(v => v.game === gid);
 const keyGame = k => byId(INSTALLED[k] ? INSTALLED[k].game : String(k).split("--")[0]);
@@ -292,7 +296,7 @@ document.addEventListener("click", async e => {
   const key = b.dataset.g, gid = b.dataset.gid, ed = b.dataset.ed, g = byId(gid), act = b.dataset.act;
   if (act === "getapp") return getAppModal(g, ed, key);
   if (!PS) return;
-  const owns = LIB[`${gid}__${ed}`] && LIB[`${gid}__${ed}`].status !== "pending";
+  const owns = ownedEds(gid).includes(ed);
   if (act === "install") { if (!owns) return; b.disabled = true;
     const m = MANIFEST.games[gid] || {}, opts = {edition:ed};
     if (m.type === "bf-launcher") opts.code = await bfCode();   // only needed if the launcher download is ever locked again
@@ -357,16 +361,18 @@ function renderGame(g){
     ${pending ? `<div class="ownbox pend"><div class="row" style="justify-content:space-between"><b>${esc(edName(g, pending.edition))}</b>${stPill("pending")}</div><div class="muted" style="font-size:13px">طلبك وصل للاستوديو. تقدر تلعب بعد تأكيد الدفع.</div></div>` : ""}
     ${g.editions.map(e => { const has = (LIB[`${g.id}__${e.id}`] && LIB[`${g.id}__${e.id}`].status !== "pending") || (e.price > 0 && RANK[e.id] <= mineRank), isPend = pending && pending.edition === e.id;
       return `<div class="ed ${e.gold ? "gold" : ""}${e.studio ? " studio" : ""}"><div class="h"><span class="n">${esc(e.name)}${e.egg ? '<span class="egg" aria-hidden="true"></span>' : ""}</span><span class="price" style="font-size:${e.studio ? 13 : 18}px">${e.studio ? "من الاستوديو" : money(e.price)}</span></div><div class="d">${esc(e.d)}</div>
+      ${e.price > 0 && user ? `<button class="btn mini ghost giftbtn" type="button" data-gift-ed="${e.id}">🎁 أهدِها</button>` : ""}
       ${has ? '<button class="btn" disabled>عندك هذا الإصدار</button>' : e.studio ? '<button class="btn" disabled>يعطيها الاستوديو للمطورين</button>' : isPend ? '<button class="btn" disabled>بانتظار الدفع</button>' : `<button class="btn ${e.price ? "buy" : ""}" data-ed="${e.id}">${e.price ? (best ? "ترقية إلى هذا الإصدار" : "شراء") : "أضف الديمو للمكتبة"}</button>`}</div>`; }).join("")}
   </aside></div>`;
   cover(v.querySelector(".banner"), g.id);
   v.querySelectorAll("[data-ed]:not([data-act])").forEach(b => b.onclick = () => buy(g, g.editions.find(e => e.id === b.dataset.ed)));
   gameExtras(g, v, best);
+  v.querySelectorAll("[data-gift-ed]").forEach(b => b.onclick = () => giftModal(g, g.editions.find(e => e.id === b.dataset.giftEd)));
 }
 /* ---------------- library, Steam style: game list on the side, shelves and a game page on the right ---------------- */
 let LIBSEL = "", LIBQ = "", LIBF = "", LIBSORT = "az";
 function libGames(all){
-  return GAMES.filter(g => (ent(g.id).best || ent(g.id).pending) && (all || LIBF === "hidden" || !(PREFS.hidden || []).includes(g.id)));
+  return GAMES.filter(g => (ent(g.id).best || ent(g.id).pending || sharedFrom(g.id)) && (all || LIBF === "hidden" || !(PREFS.hidden || []).includes(g.id)));
 }
 const lastPlayed = gid => PLAY[gid] && PLAY[gid].last ? tsMs(PLAY[gid].last) : 0;
 const runningGame = gid => Object.entries(RUNNING).some(([k, r]) => (r.game || k.split("--")[0]) === gid);
@@ -377,7 +383,8 @@ function renderLibSide(){
   const list = libGames().filter(g => (!q || (g.title + " " + (g.en || "")).toLowerCase().includes(q))
     && (!LIBF || (LIBF === "inst" ? anyInstalled(g.id) : LIBF === "fav" ? (PREFS.fav || []).includes(g.id) : LIBF === "hidden" ? (PREFS.hidden || []).includes(g.id) : !anyInstalled(g.id)))).sort((a, b) => (a.en || a.title).localeCompare(b.en || b.title));
   side.querySelector(".ls-list").innerHTML = list.length ? list.map(g => { const pr = progGame(g.id), run = runningGame(g.id), inst = anyInstalled(g.id);
-    const tag = run ? '<small class="ls-run">● شغالة</small>' : pr ? `<small class="ls-dl num">يحمّل ${pct(pr)}%</small>` : ent(g.id).best ? "" : '<small class="muted">بانتظار الدفع</small>';
+    const sh = sharedFrom(g.id);
+    const tag = run ? '<small class="ls-run">● شغالة</small>' : pr ? `<small class="ls-dl num">يحمّل ${pct(pr)}%</small>` : ent(g.id).best ? "" : sh ? `<small class="muted">من @${esc(sh)}</small>` : '<small class="muted">بانتظار الدفع</small>';
     return `<button class="ls-item${LIBSEL === g.id ? " on" : ""}${inst ? " inst" : ""}" data-sel="${g.id}" type="button"><span class="ls-ic" data-cover="${g.id}"></span><span class="ls-n">${(PREFS.fav || []).includes(g.id) ? "★ " : ""}${esc(g.en || g.title)}</span>${tag}</button>`; }).join("") : '<p class="muted" style="padding:10px">ما فيه نتائج</p>';
   side.querySelectorAll("[data-cover]").forEach(el => cover(el, el.dataset.cover));
   side.querySelectorAll("[data-sel]").forEach(b => b.onclick = () => { LIBSEL = b.dataset.sel; renderLib(); });
@@ -401,16 +408,17 @@ function renderLibHome(main){
   $("#libSort").value = LIBSORT; $("#libSort").onchange = e => { LIBSORT = e.target.value; renderLib(); };
 }
 function renderLibGame(main, g){
-  const {best, pending} = ent(g.id), o = best || pending, mins = (PLAY[g.id] && PLAY[g.id].minutes) || 0, last = lastPlayed(g.id);
+  const sh = sharedFrom(g.id), shv = sh && sharedItems().find(v => v.game === g.id);
+  const {best, pending} = ent(g.id), o = best || pending || shv, mins = (PLAY[g.id] && PLAY[g.id].minutes) || 0, last = lastPlayed(g.id);
   const ach = Object.values(ACH).filter(a => a.game === g.id).length, achAll = Object.keys((MANIFEST.games[g.id] || {}).achievements || {}).length;
   const days = last ? Math.floor((Date.now() - last) / 864e5) : -1;
   main.innerHTML = `<div class="lg-hero"><span class="lg-art" data-cover="${g.id}"></span><div class="lg-title"><div class="row" style="gap:6px"><button class="btn ghost mini" id="libBack" type="button">→ المكتبة</button>
       <button class="btn ghost mini" id="libFav" type="button">${(PREFS.fav || []).includes(g.id) ? "★ مفضلة" : "☆ أضف للمفضلة"}</button><button class="btn ghost mini" id="libHide" type="button">${(PREFS.hidden || []).includes(g.id) ? "إظهار" : "إخفاء"}</button><button class="btn ghost mini" id="libProps" type="button">⚙ خصائص</button></div><h1>${esc(g.title)}</h1></div></div>
-    <div class="lg-bar">${best ? installBlock(g) : '<span class="muted">تقدر تلعب بعد تأكيد الدفع</span>'}
+    <div class="lg-bar">${best || sh ? installBlock(g) : '<span class="muted">تقدر تلعب بعد تأكيد الدفع</span>'}
       <div class="lg-stats"><div><small>آخر تشغيل</small><b>${days < 0 ? "—" : days === 0 ? "اليوم" : days === 1 ? "أمس" : new Date(last).toLocaleDateString("ar-SA-u-nu-latn", {day:"numeric", month:"short"})}</b></div>
         <div><small>وقت اللعب</small><b class="num">${mins >= 60 ? (mins / 60).toFixed(1) + " ساعة" : mins + " دقيقة"}</b></div>
         ${achAll ? `<div><small>الإنجازات</small><b class="num">${ach}/${achAll}</b><span class="lg-ach"><i style="width:${Math.round(ach / achAll * 100)}%"></i></span></div>` : ""}</div></div>
-    <div class="lg-body"><div class="panel"><h3>نسختك</h3><div class="row" style="gap:8px"><span>${esc(edName(g, o.edition))}</span>${stPill(o.status)}</div><span class="muted" style="font-size:12px">أضيفت ${fdate(o.at)}${pending && best ? " · ترقية بانتظار الدفع" : ""}</span>${refundLine(g)}<a class="linkbtn" href="#${g.id}">صفحة المتجر</a></div>
+    <div class="lg-body"><div class="panel"><h3>نسختك</h3><div class="row" style="gap:8px"><span>${esc(edName(g, o.edition))}</span>${sh ? `<span class="tag">مشاركة من @${esc(sh)}</span>` : stPill(o.status)}${o.from ? `<span class="tag">🎁 هدية من @${esc(o.from)}</span>` : ""}</div><span class="muted" style="font-size:12px">أضيفت ${fdate(o.at)}${pending && best ? " · ترقية بانتظار الدفع" : ""}</span>${refundLine(g)}<a class="linkbtn" href="#${g.id}">صفحة المتجر</a></div>
       ${achAll ? `<div class="panel"><h3>الإنجازات</h3><div class="lg-achs">${Object.entries(MANIFEST.games[g.id].achievements).map(([id, d]) => { const got = ACH[g.id + "__" + id];
         return `<div class="badge${got ? " got" : ""}" title="${esc(d.desc || "")}"><span>🏆</span><b>${esc(d.name)}</b><small>${esc(d.desc || "")}</small></div>`; }).join("")}</div></div>` : ""}</div>`;
   $("#libBack").onclick = () => { LIBSEL = ""; renderLib(); };
@@ -440,7 +448,7 @@ function renderLib(){
   $("#libHome").classList.toggle("on", !LIBSEL);
   renderLibSide();
   const main = $("#libMain"), g = LIBSEL && byId(LIBSEL);
-  if (g && (ent(g.id).best || ent(g.id).pending)) renderLibGame(main, g); else { LIBSEL = ""; renderLibHome(main); }
+  if (g && (ent(g.id).best || ent(g.id).pending || sharedFrom(g.id))) renderLibGame(main, g); else { LIBSEL = ""; renderLibHome(main); }
   main.querySelectorAll("[data-cover]").forEach(el => cover(el, el.dataset.cover));
   main.querySelectorAll(".lt[data-sel]").forEach(b => b.onclick = () => { LIBSEL = b.dataset.sel; renderLib(); main.scrollIntoView({block:"start"}); });
 }
@@ -579,6 +587,114 @@ function renderBell(){
   const l = $("#bellList"); if (l && !l.hidden) l.innerHTML = n.length ? n.map(x => `<a href="${x.href}"><span>${x.i}</span>${esc(x.t)}</a>`).join("") : '<p class="muted">ما فيه إشعارات</p>';
 }
 
+/* ---------------- gifts: buy an edition for a friend ---------------- */
+function giftModal(g, e){
+  if (!user) return showAuth("login");
+  const fr = Object.entries(FRIENDS).filter(([, f]) => f.status === "ok");
+  if (!fr.length) return toast("أضف أصدقاء أول عشان تهديهم");
+  openModal(`<div class="eyebrow">GIFT</div><h1 class="mbox-t">🎁 أهدِ ${esc(e.name)}</h1><p class="muted">اختر صديقك. بعد ما يأكد الاستوديو الدفع (${money(e.price)})، توصله اللعبة في مكتبته.</p>
+    <div class="giftlist">${fr.map(([id, f]) => `<label><input type="radio" name="gto" value="${id}"> @${esc(f.username)}</label>`).join("")}</div>
+    <div class="err" id="gErr"></div><div class="row" style="justify-content:flex-end;gap:8px;margin-top:12px"><button class="btn" type="button" data-close>إلغاء</button><button class="btn buy" type="button" id="gGo">أرسل الهدية</button></div>`);
+  $("#mbox [data-close]").onclick = closeModal;
+  $("#gGo").onclick = async () => { const to = (document.querySelector('input[name="gto"]:checked') || {}).value; if (!to) return $("#gErr").textContent = "اختر صديق";
+    try { await addDoc(collection(fs, "users", user.uid, "gifts"), {to, toName:FRIENDS[to].username, game:g.id, edition:e.id, price:e.price, status:"pending", at:serverTimestamp()}); closeModal(); toast("انرسل طلب الهدية ✓ بانتظار تأكيد الدفع"); }
+    catch(err) { $("#gErr").textContent = "ما انرسلت: " + (err.code || err.message); } };
+}
+
+/* ---------------- family sharing: let up to 5 friends play your games ---------------- */
+function familyBox(){
+  const fr = Object.entries(FRIENDS).filter(([, f]) => f.status === "ok"), mem = (FAMILY && FAMILY.members) || [];
+  const shared = Object.entries(SHARED);
+  return `<h3 style="margin-top:16px">مشاركة العائلة</h3><p class="muted" style="font-size:13px;margin:0 0 8px">اختر لين 5 أصدقاء يقدرون يلعبون ألعاب مكتبتك.</p>
+    ${fr.length ? `<div class="row famrow" style="gap:8px;flex-wrap:wrap">${fr.map(([id, f]) => `<label class="tag"><input type="checkbox" data-fam="${id}"${mem.includes(id) ? " checked" : ""}> @${esc(f.username)}</label>`).join("")}</div>` : '<span class="muted">أضف أصدقاء أول.</span>'}
+    ${shared.length ? `<p style="margin:10px 0 0">مكتبات مشاركة معك: ${shared.map(([, o]) => `<span class="tag">@${esc(o.name)}</span>`).join(" ")}</p>` : ""}`;
+}
+async function saveFamily(){
+  const ids = [...document.querySelectorAll("[data-fam]:checked")].map(x => x.dataset.fam).slice(0, 5);
+  if (document.querySelectorAll("[data-fam]:checked").length > 5) toast("الحد 5 أشخاص");
+  const names = {}; ids.forEach(id => names[id] = FRIENDS[id].username);
+  try { await setDoc(doc(fs, "families", user.uid), {members:ids, names}); toast("انحفظت مشاركة العائلة ✓"); } catch(e) { toast("ما انحفظت: " + (e.code || e.message)); }
+}
+const famUnsubs = {};
+function watchShared(){
+  if (!user) return;
+  unsubs.push(onSnapshot(query(collection(fs, "families"), where("members", "array-contains", user.uid)), s => {
+    const owners = s.docs.map(d => d.id);
+    for (const o of Object.keys(famUnsubs)) if (!owners.includes(o)) { famUnsubs[o](); delete famUnsubs[o]; delete SHARED[o]; }
+    for (const d of s.docs) { const o = d.id; if (famUnsubs[o]) continue;
+      SHARED[o] = {name:"", lib:{}};
+      famUnsubs[o] = onSnapshot(collection(fs, "users", o, "library"), ls => { SHARED[o] = {name:(PROFS[o] && PROFS[o].username) || (FRIENDS[o] && FRIENDS[o].username) || "صديق", lib:Object.fromEntries(ls.docs.map(x => [x.id, x.data()]))}; render(); sendOwned(); }, () => {}); }
+    render(); }, () => {}));
+}
+
+/* ---------------- trading cards, badges and the market (PS COIN) ---------------- */
+const CARDSET = {
+  "blockfall": [["الناجي","🧍"],["الحفّار","⛏"],["البنّاء","🧱"],["السائق","🚙"],["الرادار","📡"]],
+  "last-recording": [["الكاميرا","📹"],["الشريط","📼"],["الحارس","🔦"],["المول","🏬"],["الظل","👤"]]
+};
+const cardName = id => { const [g, i] = [id.replace(/_\d$/, ""), +id.slice(-1)]; const c = (CARDSET[g] || [])[i - 1]; return c ? c[0] : id; };
+const cardIcon = id => { const g = id.replace(/_\d$/, ""), c = (CARDSET[g] || [])[+id.slice(-1) - 1]; return c ? c[1] : "🃏"; };
+// a card drops for every 30 minutes played, up to 3 per game
+let dropping = false;
+async function maybeDrop(){
+  if (!user || dropping) return;
+  for (const g of GAMES) { const mins = (PLAY[g.id] && PLAY[g.id].minutes) || 0, n = (DROPS[g.id] && DROPS[g.id].n) || 0;
+    if (n >= 3 || (n + 1) * 30 > mins || !CARDSET[g.id]) continue;
+    dropping = true; const i = 1 + Math.floor(Math.random() * 5), cid = `${g.id}_${i}`;
+    try { const b = writeBatch(fs); b.set(doc(fs, "users", user.uid, "cardDrops", g.id), {n:n + 1}); b.set(doc(fs, "users", user.uid, "cards", cid), {game:g.id, count:((CARDS[cid] && CARDS[cid].count) || 0) + 1, via:"drop"});
+      await b.commit(); toast(`🃏 حصلت بطاقة: ${cardName(cid)} (${g.en || g.title})`); } catch(e) {}
+    dropping = false; return; }
+}
+async function craftBadge(gid){
+  const lv = (CBADGES[gid] && CBADGES[gid].level) || 0, b = writeBatch(fs);
+  for (let i = 1; i <= 5; i++) { const cid = `${gid}_${i}`; b.update(doc(fs, "users", user.uid, "cards", cid), {count:CARDS[cid].count - 1, via:"craft"}); }
+  b.set(doc(fs, "users", user.uid, "badges", gid), {level:lv + 1, at:serverTimestamp()});
+  try { await b.commit(); toast(`🏅 صنعت شارة ${byId(gid).en || byId(gid).title} مستوى ${lv + 1}`); } catch(e) { toast("ما تم: " + (e.code || e.message)); }
+}
+function cardsBox(){
+  return `<h3 style="margin-top:16px">بطاقاتي</h3><p class="muted" style="font-size:13px;margin:0 0 8px">كل نص ساعة لعب تعطيك بطاقة (لين 3 لكل لعبة). جمّع الخمس واصنع شارة، أو بِع وشترِ في <a href="#market">السوق</a>.</p>
+    ${GAMES.filter(g => CARDSET[g.id]).map(g => { const have = CARDSET[g.id].map((c, i) => (CARDS[`${g.id}_${i + 1}`] || {}).count || 0), full = have.every(x => x > 0), lv = (CBADGES[g.id] && CBADGES[g.id].level) || 0;
+      return `<div class="cset"><div class="row" style="justify-content:space-between"><b>${esc(g.en || g.title)}${lv ? ` <span class="tag">🏅 شارة مستوى ${lv}</span>` : ""}</b>${full && lv < 5 ? `<button class="btn mini buy" type="button" data-craft="${g.id}">اصنع الشارة</button>` : `<small class="muted num">${have.filter(x => x).length}/5</small>`}</div>
+        <div class="cards">${CARDSET[g.id].map((c, i) => `<div class="tcard${have[i] ? " got" : ""}"><span>${c[1]}</span><b>${esc(c[0])}</b>${have[i] ? `<small class="num">×${have[i]}</small>` : ""}</div>`).join("")}</div></div>`; }).join("")}`;
+}
+async function listCard(cid){
+  const v = prompt(`سعر «${cardName(cid)}» بـ PS COIN (مثلاً 0.0005)`); if (!v) return;
+  const price = Math.round(parseFloat(v) * COIN_UNIT); if (!(price >= 1)) return toast("اكتب سعر صحيح (أقل شي 0.0001)");
+  const ref = doc(collection(fs, "listings")), b = writeBatch(fs);
+  b.set(ref, {seller:user.uid, sellerName:(PROFILE && PROFILE.username) || "", card:cid, game:cid.replace(/_\d$/, ""), price, status:"open", at:serverTimestamp()});
+  b.update(doc(fs, "users", user.uid, "cards", cid), {count:CARDS[cid].count - 1, via:"list", lastTrade:ref.id});
+  try { await b.commit(); toast("انعرضت في السوق ✓"); } catch(e) { toast("ما انعرضت: " + (e.code || e.message)); }
+}
+async function buyListing(l){
+  if (!user) return showAuth("login");
+  const mine = (PROFILE && PROFILE.coins) || 0; if (mine < l.price) return toast("رصيدك من PS COIN ما يكفي");
+  const b = writeBatch(fs);
+  b.update(doc(fs, "listings", l.id), {status:"sold", buyer:user.uid, soldAt:serverTimestamp()});
+  b.update(doc(fs, "users", user.uid), {coins:mine - l.price, lastTrade:l.id});
+  b.update(doc(fs, "users", l.seller), {coins:increment(l.price), lastSale:l.id});
+  b.set(doc(fs, "users", user.uid, "cards", l.card), {game:l.game, count:((CARDS[l.card] && CARDS[l.card].count) || 0) + 1, via:"buy", lastTrade:l.id});
+  try { await b.commit(); toast(`اشتريت «${cardName(l.card)}» ✓`); } catch(e) { toast("ما تم الشراء: " + (e.code || e.message)); }
+}
+async function cancelListing(l){
+  const b = writeBatch(fs); b.update(doc(fs, "listings", l.id), {status:"cancelled"});
+  b.set(doc(fs, "users", user.uid, "cards", l.card), {game:l.game, count:((CARDS[l.card] && CARDS[l.card].count) || 0) + 1, via:"cancel", lastTrade:l.id});
+  try { await b.commit(); toast("رجعت البطاقة لك"); } catch(e) { toast("ما تم: " + (e.code || e.message)); }
+}
+function renderMarket(){
+  const box = $("#market"); if (!box) return;
+  if (!user) { box.innerHTML = '<div class="empty"><b style="color:var(--text)">السوق للمسجّلين</b><button class="btn buy" type="button" data-login>تسجيل الدخول</button></div>'; return; }
+  const mineCards = Object.entries(CARDS).filter(([, c]) => c.count > 0);
+  box.innerHTML = `<div class="mk-bal">رصيدك: <b class="num">${coins((PROFILE && PROFILE.coins) || 0)}</b> PS COIN</div>
+    <div class="sec-h"><h2>معروض للبيع</h2><small>LISTINGS</small></div>
+    <div class="mk-grid">${LISTINGS.length ? LISTINGS.map((l, i) => `<div class="tcard got big"><span>${cardIcon(l.card)}</span><b>${esc(cardName(l.card))}</b><small>${esc((byId(l.game) || {}).en || (byId(l.game) || {}).title || l.game)} · @${esc(l.sellerName || "")}</small><b class="num">${coins(l.price)} PS COIN</b>
+      ${l.seller === user.uid ? `<button class="btn mini ghost" type="button" data-mkc="${i}">اسحبها</button>` : `<button class="btn mini buy" type="button" data-mkb="${i}">شراء</button>`}</div>`).join("") : '<p class="muted">ما فيه شي معروض الحين.</p>'}</div>
+    <div class="sec-h"><h2>بطاقاتك</h2><small>YOUR CARDS</small></div>
+    <div class="mk-grid">${mineCards.length ? mineCards.map(([cid, c]) => `<div class="tcard got"><span>${cardIcon(cid)}</span><b>${esc(cardName(cid))}</b><small class="num">×${c.count}</small><button class="btn mini" type="button" data-mks="${cid}">اعرضها للبيع</button></div>`).join("") : '<p class="muted">ما عندك بطاقات للحين. العب وتطيح لك.</p>'}</div>`;
+  box.querySelectorAll("[data-mkb]").forEach(b => b.onclick = () => { b.disabled = true; buyListing(LISTINGS[+b.dataset.mkb]); });
+  box.querySelectorAll("[data-mkc]").forEach(b => b.onclick = () => { b.disabled = true; cancelListing(LISTINGS[+b.dataset.mkc]); });
+  box.querySelectorAll("[data-mks]").forEach(b => b.onclick = () => listCard(b.dataset.mks));
+}
+
 /* refunds: a paid edition can be returned within 14 days of purchase if played under 2 hours */
 const REFUND_DAYS = 14, REFUND_MIN = 120;
 function refundable(g){
@@ -605,6 +721,9 @@ function renderAccount(){
   const sb = $("#statusBox");
   if (sb && user) { const st = myStatus(); sb.innerHTML = `<h3>حالتك</h3><div class="row" style="gap:8px">${[["online","● متصل"],["away","◐ بعيد"],["invisible","○ أبان غير متصل"]].map(([k, n]) => `<button class="btn mini${st === k ? " buy" : ""}" type="button" data-st="${k}">${n}</button>`).join("")}</div>
     ${Object.keys(WISH).length ? `<h3 style="margin-top:16px">قائمة أمنياتك</h3><div class="row" style="gap:8px;flex-wrap:wrap">${Object.keys(WISH).map(id => { const g = byId(id); return g ? `<a class="btn mini" href="#${id}">♥ ${esc(g.en || g.title)}</a>` : ""; }).join("")}</div>` : ""}`;
+    sb.insertAdjacentHTML("beforeend", familyBox() + cardsBox());
+    sb.querySelectorAll("[data-fam]").forEach(c => c.onchange = saveFamily);
+    sb.querySelectorAll("[data-craft]").forEach(b => b.onclick = () => { b.disabled = true; craftBadge(b.dataset.craft); });
     sb.querySelectorAll("[data-st]").forEach(b => b.onclick = () => setStatus(b.dataset.st)); }
   const a = $("#acct");
   if (!user) { a.innerHTML = '<div class="empty" style="grid-column:1/-1"><b style="color:var(--text)">ما سجّلت دخول</b><button class="btn buy" type="button" data-login>تسجيل الدخول</button></div>'; return; }
@@ -763,10 +882,22 @@ function startAdmin(){
   unsubs.push(onSnapshot(collection(fs, "users"), s => { USERS = {}; s.forEach(d => USERS[d.id] = d.data()); if (curView === "studio") renderStudio(); }, e => { $("#studioNote").textContent = "ما قدرت أقرأ قائمة اللاعبين: " + e.code; }));
   unsubs.push(onSnapshot(collectionGroup(fs, "coinOrders"), s => { COINORDERS = s.docs.map(d => ({ref:d.ref, uid:d.ref.parent.parent.id, ...d.data()})); if (curView === "studio") renderStudio(); }, () => {}));
   unsubs.push(onSnapshot(collection(fs, "codes"), s => { CODES = {}; s.forEach(d => CODES[d.id] = d.data()); if (curView === "studio") renderCodes(); }, () => {}));
+  unsubs.push(onSnapshot(collectionGroup(fs, "gifts"), s => { ALLGIFTS = s.docs.map(d => ({ref:d.ref, from:d.ref.parent.parent.id, ...d.data()})); if (curView === "studio") renderStudio(); }, () => {}));
   unsubs.push(onSnapshot(collectionGroup(fs, "refunds"), s => { ALLREFUNDS = {}; s.forEach(d => ALLREFUNDS[d.ref.parent.parent.id + "/" + d.id] = {ref:d.ref, ...d.data()}); if (curView === "studio") renderStudio(); }, () => {}));
   unsubs.push(onSnapshot(collectionGroup(fs, "library"), s => { ORDERS = s.docs.map(d => ({ref:d.ref, uid:d.ref.parent.parent.id, ...d.data()})); if (curView === "studio") renderStudio(); }, e => { $("#studioNote").textContent = "ما قدرت أقرأ الطلبات: " + e.code; }));
 }
+function renderGifts(){
+  const box = $("#giftRows"); if (!box) return;
+  const l = ALLGIFTS.filter(g => g.status === "pending");
+  box.innerHTML = l.length ? l.map((g, i) => `<div class="prop"><b>🎁 ${esc(edName(byId(g.game), g.edition))} · ${money(g.price)}</b><span class="muted">من ${esc((USERS[g.from] || {}).username ? "@" + USERS[g.from].username : g.from)} إلى @${esc(g.toName)}</span>
+    <div class="row" style="gap:6px"><button class="btn mini buy" type="button" data-gs="${i}">تأكيد الدفع وإرسال الهدية</button><button class="btn mini danger" type="button" data-gx="${i}">رفض</button></div></div>`).join("") : '<p class="muted">ما فيه هدايا تنتظر.</p>';
+  box.querySelectorAll("[data-gs]").forEach(b => b.onclick = async () => { const g = l[+b.dataset.gs]; b.disabled = true;
+    try { const bt = writeBatch(fs); bt.set(doc(fs, "users", g.to, "library", `${g.game}__${g.edition}`), {game:g.game, edition:g.edition, price:0, status:"granted", at:serverTimestamp(), from:(USERS[g.from] || {}).username || "صديق"});
+      bt.update(g.ref, {status:"sent", sentAt:serverTimestamp()}); await bt.commit(); toast("وصلت الهدية ✓"); } catch(e) { b.disabled = false; toast("ما تم: " + e.code); } });
+  box.querySelectorAll("[data-gx]").forEach(b => b.onclick = async () => { const g = l[+b.dataset.gx]; try { await updateDoc(g.ref, {status:"rejected", sentAt:serverTimestamp()}); } catch(e) { toast("ما تم: " + e.code); } });
+}
 function renderStudio(){
+  renderGifts();
   const byUser = {}; ORDERS.forEach(o => (byUser[o.uid] = byUser[o.uid] || []).push(o));
   const paid = ORDERS.filter(o => o.status === "paid").reduce((a, o) => a + (o.price || 0), 0), pend = ORDERS.filter(o => o.status === "pending").length;
   const coPaid = COINORDERS.filter(o => o.status === "paid").reduce((a, o) => a + (o.price || 0), 0), coPend = COINORDERS.filter(o => o.status === "pending").length;
@@ -911,7 +1042,7 @@ function route(){
   const h0 = (location.hash || "#store").slice(1);
   if (h0 === "bigpicture") { bigPicture().open(); return; }
   const h = h0, g = byId(h);
-  let v = g ? "game" : (["store", "library", "downloads", "friends", "studio", "download", "account", "coins"].includes(h) ? h : "store");
+  let v = g ? "game" : (["store", "library", "downloads", "friends", "market", "studio", "download", "account", "coins"].includes(h) ? h : "store");
   if (v === "studio" && !isAdmin) v = "store";
   curView = v; $$(".view").forEach(s => s.hidden = s.dataset.view !== v);
   $$("#tabs a").forEach(a => a.setAttribute("aria-current", a.dataset.v === (g ? "store" : v) ? "page" : "false"));
@@ -941,6 +1072,7 @@ function render(){
   else if (curView === "coins") renderCoins();
   else if (curView === "friends") renderFriends();
   else if (curView === "downloads") renderDownloads();
+  else if (curView === "market") renderMarket();
   else if (curView === "download") { $("#dlInApp").hidden = !PS; $("#dlBtn").hidden = !!PS; }
 }
 addEventListener("hashchange", route);
@@ -1060,7 +1192,8 @@ function applyChrome(){
   $("#coinChip").hidden = !user; if (user) $("#coinBal").textContent = coins(PROFILE && PROFILE.coins);
 }
 onAuthStateChanged(auth, async u => {
-  unsubs.forEach(f => { try { f(); } catch(e) {} }); unsubs = []; LIB = {}; PROFILE = null; FRIENDS = {}; watchPresence(); watchChats(); PLAY = {}; REFUNDS = {}; ACH = {}; WISH = {}; PREFS = {fav:[], hidden:[]}; lastPub = ""; frBadge(); USERS = {}; ORDERS = []; CODES = {}; MYCO = []; COINORDERS = [];
+  unsubs.forEach(f => { try { f(); } catch(e) {} }); unsubs = []; LIB = {}; PROFILE = null; FRIENDS = {}; watchPresence(); watchChats(); PLAY = {}; REFUNDS = {}; ACH = {}; WISH = {}; PREFS = {fav:[], hidden:[]}; lastPub = ""; frBadge();
+    SHARED = {}; for (const k of Object.keys(famUnsubs)) { famUnsubs[k](); delete famUnsubs[k]; } CARDS = {}; DROPS = {}; CBADGES = {}; LISTINGS = []; FAMILY = null; GIFTS = []; USERS = {}; ORDERS = []; CODES = {}; MYCO = []; COINORDERS = [];
   user = u; authReady = true; setAdmin();
   if (u) {
     $("#gate").hidden = true; guest = false;
@@ -1070,11 +1203,18 @@ onAuthStateChanged(auth, async u => {
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "library"), s => { LIB = {}; s.forEach(d => LIB[d.id] = d.data()); render(); autoInstall(); sendOwned(); }, e => toast("ما قدرت أقرأ مكتبتك: " + e.code)));
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "friends"), s => { FRIENDS = {}; s.forEach(d => FRIENDS[d.id] = d.data()); watchChats(); frBadge(); watchPresence(); if (curView === "friends") renderFriends(); }, () => {}));
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "achievements"), s => { ACH = {}; s.forEach(d => ACH[d.id] = d.data()); publishProfile(); if (curView === "account") renderProfile(); }, () => {}));
+    unsubs.push(onSnapshot(collection(fs, "users", u.uid, "cards"), s => { CARDS = {}; s.forEach(d => CARDS[d.id] = d.data()); if (curView === "account") renderAccount(); if (curView === "market") renderMarket(); }, () => {}));
+    unsubs.push(onSnapshot(collection(fs, "users", u.uid, "cardDrops"), s => { DROPS = {}; s.forEach(d => DROPS[d.id] = d.data()); maybeDrop(); }, () => {}));
+    unsubs.push(onSnapshot(collection(fs, "users", u.uid, "badges"), s => { CBADGES = {}; s.forEach(d => CBADGES[d.id] = d.data()); if (curView === "account") renderAccount(); }, () => {}));
+    unsubs.push(onSnapshot(query(collection(fs, "listings"), where("status", "==", "open")), s => { LISTINGS = s.docs.map(d => ({id:d.id, ...d.data()})).sort((a, b) => a.price - b.price); if (curView === "market") renderMarket(); }, () => {}));
+    unsubs.push(onSnapshot(doc(fs, "families", u.uid), s => { FAMILY = s.exists() ? s.data() : null; if (curView === "account") renderAccount(); }, () => {}));
+    unsubs.push(onSnapshot(collection(fs, "users", u.uid, "gifts"), s => { GIFTS = s.docs.map(d => ({id:d.id, ...d.data()})); }, () => {}));
+    watchShared();
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "wishlist"), s => { WISH = {}; s.forEach(d => WISH[d.id] = d.data()); render(); }, () => {}));
     unsubs.push(onSnapshot(doc(fs, "users", u.uid, "meta", "prefs"), s => { PREFS = s.exists() ? {fav:[], hidden:[], ...s.data()} : {fav:[], hidden:[]}; render(); }, () => {}));
     beat();
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "refunds"), s => { REFUNDS = {}; s.forEach(d => REFUNDS[d.id] = d.data()); render(); }, () => {}));
-    unsubs.push(onSnapshot(collection(fs, "users", u.uid, "play"), s => { PLAY = {}; s.forEach(d => PLAY[d.id] = d.data()); render(); }, () => {}));
+    unsubs.push(onSnapshot(collection(fs, "users", u.uid, "play"), s => { PLAY = {}; s.forEach(d => PLAY[d.id] = d.data()); render(); maybeDrop(); }, () => {}));
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "coinOrders"), s => { MYCO = s.docs.map(d => ({id:d.id, ...d.data()})); if (curView === "coins") renderCoins(); }, () => {}));
     if (isAdmin) startAdmin();
   } else {

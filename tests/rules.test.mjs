@@ -1,7 +1,7 @@
 // Firestore rules tests (run in CI with the emulator)
 import { initializeTestEnvironment, assertSucceeds, assertFails } from '@firebase/rules-unit-testing';
 import { readFileSync } from 'fs';
-import { doc, setDoc, getDoc, getDocs, collection, writeBatch, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { doc, setDoc, getDoc, getDocs, collection, writeBatch, serverTimestamp, updateDoc, increment, query, where } from 'firebase/firestore';
 const env = await initializeTestEnvironment({ projectId: 'premium-studio-test', firestore: { rules: readFileSync('firestore.rules', 'utf8'), host: '127.0.0.1', port: 8080 } });
 let failed = 0; const ok = async (name, p) => { try { await p; console.log('PASS', name); } catch (e) { failed++; console.log('FAIL', name, e.message.slice(0, 300)); } };
 await env.withSecurityRulesDisabled(async c => {
@@ -46,6 +46,13 @@ await ok('cannot just raise your coins', assertFails(updateDoc(doc(B, 'users/B')
 await ok('list another and take it back', assertSucceeds((async () => {
   let b = writeBatch(A); b.set(doc(A, 'listings/L2'), { seller: 'A', sellerName: 'alice', card: 'blockfall_2', game: 'blockfall', price: 10, status: 'open', at: serverTimestamp() }); b.update(doc(A, 'users/A/cards/blockfall_2'), { count: 0, via: 'list', lastTrade: 'L2' }); await b.commit();
   b = writeBatch(A); b.update(doc(A, 'listings/L2'), { status: 'cancelled' }); b.update(doc(A, 'users/A/cards/blockfall_2'), { count: 1, via: 'cancel', lastTrade: 'L2' }); await b.commit(); })()));
+// the way the store does it: seller paid with increment(), family found with a query
+await ok('buy with increment (store code)', assertSucceeds((async () => {
+  let b = writeBatch(A); b.set(doc(A, 'listings/L3'), { seller: 'A', sellerName: 'alice', card: 'blockfall_2', game: 'blockfall', price: 40, status: 'open', at: serverTimestamp() }); b.update(doc(A, 'users/A/cards/blockfall_2'), { count: 0, via: 'list', lastTrade: 'L3' }); await b.commit();
+  const bal = (await getDoc(doc(B, 'users/B'))).data().coins;
+  b = writeBatch(B); b.update(doc(B, 'listings/L3'), { status: 'sold', buyer: 'B', soldAt: serverTimestamp() }); b.update(doc(B, 'users/B'), { coins: bal - 40, lastTrade: 'L3' });
+  b.update(doc(B, 'users/A'), { coins: increment(40), lastSale: 'L3' }); b.set(doc(B, 'users/B/cards/blockfall_2'), { game: 'blockfall', count: 1, via: 'buy', lastTrade: 'L3' }); await b.commit(); })()));
+await ok('family query by member', assertSucceeds(getDocs(query(collection(B, 'families'), where('members', 'array-contains', 'B')))));
 // badge
 const craft = db => { const b = writeBatch(db); for (let i = 1; i <= 5; i++) b.update(doc(db, `users/C/cards/blockfall_${i}`), { count: 0, via: 'craft' }); b.set(doc(db, 'users/C/badges/blockfall'), { level: 1, at: serverTimestamp() }); return b.commit(); };
 await ok('craft a badge from a full set', assertSucceeds(craft(C)));
