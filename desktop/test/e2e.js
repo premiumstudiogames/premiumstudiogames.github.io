@@ -44,6 +44,16 @@ app.whenReady().then(async () => {
     const hadLnk = fs.existsSync(lnk);
     await call('ps:launch', 'blockfall--gold');
     ok('BLOCKFALL opens (launcher reports open)', await waitFor(() => { const s = state(); return s && s.open && Date.now() - s.at < 15000; }, 90000), JSON.stringify(state()));
+    if (!(state() && state().open)) {   // diagnose: run the launcher directly and show what it says
+      console.log('alive?', procAlive(), 'files in .terravolt:', (() => { try { return fs.readdirSync(bfData).join(','); } catch (e) { return e.message; } })());
+      try { require('child_process').execSync('taskkill /IM BLOCKFALL3001.exe /F', { stdio: 'ignore' }); } catch (e) {}
+      const cp = require('child_process').spawn(path.join(process.env.LOCALAPPDATA, 'Programs', 'TERRAVOLT', 'BLOCKFALL3001.exe'), ['--premium', '--enable-logging'], { env: { ...process.env, ELECTRON_ENABLE_LOGGING: '1' } });
+      let out = ''; cp.stdout.on('data', d => out += d); cp.stderr.on('data', d => out += d);
+      let code = 'running'; cp.on('exit', c => code = c);
+      await sleep(30000);
+      console.log('---- launcher output (exit: ' + code + ') ----\n' + out.slice(-6000) + '\n---- state: ' + JSON.stringify(state()));
+      try { require('child_process').execSync('taskkill /IM BLOCKFALL3001.exe /F', { stdio: 'ignore' }); } catch (e) {}
+    }
     let lic = null; try { lic = JSON.parse(fs.readFileSync(path.join(bfData, 'license.json'), 'utf8')); } catch (e) {}
     ok('Gold edition handed to the launcher', lic && lic.ed === 'gold', lic && lic.ed);
     ok('app shows BLOCKFALL as running', !!(await call('ps:getRunning'))['blockfall--gold']);
