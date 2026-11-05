@@ -5,7 +5,8 @@ let rec = null, chunks = [], stream = null;
 ipcRenderer.on('rec:start', async (e, sourceId) => {
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { mandatory: { chromeMediaSource: 'desktop', chromeMediaSourceId: sourceId, maxFrameRate: 30, maxWidth: 1920, maxHeight: 1080 } } });
-    chunks = []; rec = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9', videoBitsPerSecond: 8e6 });
+    chunks = []; const mime = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'].find(m => MediaRecorder.isTypeSupported(m));
+    rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8e6 });
     rec.ondataavailable = ev => { if (ev.data && ev.data.size) chunks.push(ev.data); };
     rec.onstop = async () => { const buf = await new Blob(chunks, { type: 'video/webm' }).arrayBuffer(); stream.getTracks().forEach(t => t.stop()); ipcRenderer.send('rec:done', new Uint8Array(buf)); chunks = []; };
     rec.start(1000); ipcRenderer.send('rec:started');

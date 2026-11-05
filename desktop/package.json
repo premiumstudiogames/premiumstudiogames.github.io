@@ -1,7 +1,7 @@
 {
   "name": "premium-studio",
   "productName": "Premium Studio",
-  "version": "0.0.25",
+  "version": "0.0.26",
   "description": "Premium Studio — game library and launcher",
   "author": "Premium Studio",
   "license": "UNLICENSED",
@@ -24,7 +24,8 @@
     "productName": "Premium Studio",
     "copyright": "© 2026 Premium Studio",
     "directories": { "buildResources": "build", "output": "dist" },
-    "files": ["main.js", "preload.js", "game-preload.js", "recorder-preload.js", "offline.html", "build/icon.png", "build/icon.ico"],
+    "files": ["main.js", "preload.js", "game-preload.js", "recorder-preload.js",
+      "recorder.html", "offline.html", "build/icon.png", "build/icon.ico"],
     "protocols": [{ "name": "Premium Studio", "schemes": ["premiumstudio"] }],
     "win": {
       "target": [{ "target": "nsis", "arch": ["x64"] }],

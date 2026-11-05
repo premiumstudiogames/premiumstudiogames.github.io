@@ -370,14 +370,14 @@ async function toggleRecord(key) {
     if (!sourceId) return;
     if (!recWin || recWin.isDestroyed()) {
       recWin = new BrowserWindow({ show: false, width: 200, height: 100, webPreferences: { preload: path.join(__dirname, 'recorder-preload.js'), contextIsolation: false, sandbox: false, backgroundThrottling: false } });
-      await recWin.loadURL('data:text/html,<title>rec</title>');
+      await recWin.loadFile(path.join(__dirname, 'recorder.html'));   // a file page is a secure context, so it can record (a data: page can't)
     }
     recKey = key; recWin.webContents.send('rec:start', sourceId);
     clearTimeout(recT); recT = setTimeout(() => { if (recKey && recWin && !recWin.isDestroyed()) recWin.webContents.send('rec:stop'); }, 10 * 60000);   // 10 minutes at most
-  } catch (e) { recKey = ''; }
+  } catch (e) { console.log('recording failed:', e && e.message); recKey = ''; }
 }
 ipcMain.on('rec:started', () => flash('⏺ يسجّل… اضغط F9 عشان توقف'));
-ipcMain.on('rec:error', () => { recKey = ''; flash('ما قدرت أسجّل'); });
+ipcMain.on('rec:error', (e, m) => { console.log('recording failed:', m); recKey = ''; flash('ما قدرت أسجّل'); });
 ipcMain.on('rec:done', async (e, bytes) => {
   const key = recKey; recKey = ''; clearTimeout(recT);
   try { const dir = path.join(CLIPS(), gameFolder(key)); await fsp.mkdir(dir, { recursive: true });
