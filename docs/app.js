@@ -1,3 +1,4 @@
+import { makeBP } from "./bp.js?v=1";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut,
   sendPasswordResetEmail, sendEmailVerification, updateProfile, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -27,7 +28,7 @@ const PACKS = [             // must match coinPacks() in firestore.rules (coins 
   {id:"u100000",coins:100000, price:1000000}
 ];
 const coins = n => ((n || 0) / COIN_UNIT).toLocaleString("en-US", {minimumFractionDigits:0, maximumFractionDigits:4});
-const SITE_VERSION = "00.00.22";
+const SITE_VERSION = "00.00.23";
 const APP_DL = "downloads/PremiumStudioSetup.exe";
 
 const fb = initializeApp(firebaseConfig);
@@ -139,7 +140,7 @@ if (!reduce) setInterval(() => { const t = performance.now(); for (const o of [.
 
 /* ---------------- state ---------------- */
 let user = null, PROFILE = null, LIB = {}, isAdmin = false, guest = false, authReady = false;
-let INSTALLED = {}, PROGRESS = {}, RUNNING = {}, PLAY = {}, PRES = {}, REFUNDS = {}, ACH = {}, PROFS = {};
+let INSTALLED = {}, PROGRESS = {}, RUNNING = {}, PLAY = {}, PRES = {}, REFUNDS = {}, ACH = {}, PROFS = {}, WISH = {}, PREFS = {fav:[], hidden:[]}, REVIEWS = {}, NEWS = {};
 let unsubs = [];
 /* entitlement: highest owned (free or paid) edition, plus any pending order */
 function ent(gid){
@@ -183,7 +184,7 @@ if (PS) {
   refreshInstalled();
 }
 /* download speed (like Steam's network graph) and the list of finished downloads */
-const SPEED = {}; let PEAK = 0;
+const SPEED = {}; let PEAK = 0, SETS = null;
 function trackSpeed(p){
   const now = performance.now(), s = SPEED[p.id] || (SPEED[p.id] = {t:now, r:p.received || 0, v:0});
   if (p.phase !== "download") { s.v = 0; return; }
@@ -231,7 +232,8 @@ function renderDownloads(light){
   }
   const done = loadDone(), ups = pendingUpdates();
   const art = id => `<span class="dl-art" data-cover="${id}"></span>`;
-  box.innerHTML = `<div class="dl-net"><div><small>الشبكة</small><b class="num" data-net>${fmtSpeed(sp)}</b></div><div><small>الأعلى</small><b class="num" data-peak>${fmtSpeed(PEAK)}</b></div><div><small>التحديث التلقائي</small><b>شغال</b></div></div>
+  if (PS.getSettings && !SETS) PS.getSettings().then(x => { SETS = x || {}; renderDownloads(); }).catch(() => {});
+  box.innerHTML = `<div class="dl-net"><div><small>الشبكة</small><b class="num" data-net>${fmtSpeed(sp)}</b></div><div><small>الأعلى</small><b class="num" data-peak>${fmtSpeed(PEAK)}</b></div><div><small>التحديث التلقائي</small><b>شغال</b></div><label class="dl-lim"><small>حد السرعة</small><select id="dlLim">${[[0,"بدون حد"],[524288,"0.5 MB/s"],[1048576,"1 MB/s"],[2097152,"2 MB/s"],[5242880,"5 MB/s"],[10485760,"10 MB/s"],[26214400,"25 MB/s"]].map(([v, n]) => `<option value="${v}"${(+(SETS && SETS.limit) || 0) === v ? " selected" : ""}>${n}</option>`).join("")}</select></label></div>
     <div class="dl-sec"><h3>قيد التحميل <span class="num muted">(${act.length})</span></h3>${act.length ? act.map(p => { const v = String(p.id).split("--")[0];
       return `<div class="dl-row" data-dl="${p.id}">${art(v)}<div class="dl-info"><b>${esc(keyTitle(p.id))}</b><span class="num muted" data-progt>${progText(p)}</span><div class="bar"><i style="width:${pct(p)}%"></i></div></div><span class="num muted" data-eta>…</span></div>`; }).join("") : '<p class="muted">ما فيه تحميلات الحين.</p>'}</div>
     ${ups.length ? `<div class="dl-sec"><h3>تحديثات متوفرة <span class="num muted">(${ups.length})</span></h3>${ups.map(([k, v]) => `<div class="dl-row">${art(v.game)}<div class="dl-info"><b>${esc(keyTitle(k))}</b><span class="muted num">${esc(v.version)} ← ${esc(LATEST[v.game].version)}</span></div><span class="muted" style="font-size:12px">يتحدّث تلقائيًا لما تشغّلها</span><button class="btn inst mini" data-act="install" data-g="${k}" data-gid="${v.game}" data-ed="${v.edition}">حدّث الحين</button></div>`).join("")}</div>` : ""}
@@ -239,6 +241,7 @@ function renderDownloads(light){
       return `<div class="dl-row">${art(gid)}<div class="dl-info"><b>${esc(keyTitle(d.key))}</b><span class="muted num" style="font-size:12px">${inst ? mb(inst.size || 0) + " · " : ""}اكتمل ${new Date(d.at).toLocaleString("ar-SA-u-nu-latn", {weekday:"short", hour:"numeric", minute:"2-digit"})}</span></div>${inst ? (RUNNING[d.key] ? '<span class="st run">● شغالة</span>' : `<button class="btn play" data-act="launch" data-g="${d.key}" data-gid="${gid}" data-ed="${inst.edition}">▶ لعب</button>`) : '<span class="muted">انحذفت</span>'}</div>`; }).join("") : '<p class="muted">ما فيه شي.</p>'}</div>`;
   box.querySelectorAll("[data-cover]").forEach(el => cover(el, el.dataset.cover));
   const c = $("#dlClear"); if (c) c.onclick = clearDone;
+  const lim = $("#dlLim"); if (lim) lim.onchange = async () => { try { SETS = await PS.setSettings({limit:+lim.value}); toast("انحفظ حد السرعة"); } catch(e) {} };
 }
 const pct = p => p.total ? Math.min(100, Math.round(p.received / p.total * 100)) : (p.phase === "extract" ? 100 : 0);
 const progText = p => p.phase === "extract" ? "جاري فك الملفات…" : `${mb(p.received||0)} / ${mb(p.total||0)}`;
@@ -358,11 +361,12 @@ function renderGame(g){
   </aside></div>`;
   cover(v.querySelector(".banner"), g.id);
   v.querySelectorAll("[data-ed]:not([data-act])").forEach(b => b.onclick = () => buy(g, g.editions.find(e => e.id === b.dataset.ed)));
+  gameExtras(g, v, best);
 }
 /* ---------------- library, Steam style: game list on the side, shelves and a game page on the right ---------------- */
 let LIBSEL = "", LIBQ = "", LIBF = "", LIBSORT = "az";
-function libGames(){
-  return GAMES.filter(g => ent(g.id).best || ent(g.id).pending);
+function libGames(all){
+  return GAMES.filter(g => (ent(g.id).best || ent(g.id).pending) && (all || LIBF === "hidden" || !(PREFS.hidden || []).includes(g.id)));
 }
 const lastPlayed = gid => PLAY[gid] && PLAY[gid].last ? tsMs(PLAY[gid].last) : 0;
 const runningGame = gid => Object.entries(RUNNING).some(([k, r]) => (r.game || k.split("--")[0]) === gid);
@@ -371,10 +375,10 @@ function renderLibSide(){
   const side = $("#libSide"); if (!side) return;
   const q = LIBQ.trim().toLowerCase();
   const list = libGames().filter(g => (!q || (g.title + " " + (g.en || "")).toLowerCase().includes(q))
-    && (!LIBF || (LIBF === "inst" ? anyInstalled(g.id) : !anyInstalled(g.id)))).sort((a, b) => (a.en || a.title).localeCompare(b.en || b.title));
+    && (!LIBF || (LIBF === "inst" ? anyInstalled(g.id) : LIBF === "fav" ? (PREFS.fav || []).includes(g.id) : LIBF === "hidden" ? (PREFS.hidden || []).includes(g.id) : !anyInstalled(g.id)))).sort((a, b) => (a.en || a.title).localeCompare(b.en || b.title));
   side.querySelector(".ls-list").innerHTML = list.length ? list.map(g => { const pr = progGame(g.id), run = runningGame(g.id), inst = anyInstalled(g.id);
     const tag = run ? '<small class="ls-run">● شغالة</small>' : pr ? `<small class="ls-dl num">يحمّل ${pct(pr)}%</small>` : ent(g.id).best ? "" : '<small class="muted">بانتظار الدفع</small>';
-    return `<button class="ls-item${LIBSEL === g.id ? " on" : ""}${inst ? " inst" : ""}" data-sel="${g.id}" type="button"><span class="ls-ic" data-cover="${g.id}"></span><span class="ls-n">${esc(g.en || g.title)}</span>${tag}</button>`; }).join("") : '<p class="muted" style="padding:10px">ما فيه نتائج</p>';
+    return `<button class="ls-item${LIBSEL === g.id ? " on" : ""}${inst ? " inst" : ""}" data-sel="${g.id}" type="button"><span class="ls-ic" data-cover="${g.id}"></span><span class="ls-n">${(PREFS.fav || []).includes(g.id) ? "★ " : ""}${esc(g.en || g.title)}</span>${tag}</button>`; }).join("") : '<p class="muted" style="padding:10px">ما فيه نتائج</p>';
   side.querySelectorAll("[data-cover]").forEach(el => cover(el, el.dataset.cover));
   side.querySelectorAll("[data-sel]").forEach(b => b.onclick = () => { LIBSEL = b.dataset.sel; renderLib(); });
 }
@@ -400,7 +404,8 @@ function renderLibGame(main, g){
   const {best, pending} = ent(g.id), o = best || pending, mins = (PLAY[g.id] && PLAY[g.id].minutes) || 0, last = lastPlayed(g.id);
   const ach = Object.values(ACH).filter(a => a.game === g.id).length, achAll = Object.keys((MANIFEST.games[g.id] || {}).achievements || {}).length;
   const days = last ? Math.floor((Date.now() - last) / 864e5) : -1;
-  main.innerHTML = `<div class="lg-hero"><span class="lg-art" data-cover="${g.id}"></span><div class="lg-title"><button class="btn ghost mini" id="libBack" type="button">→ المكتبة</button><h1>${esc(g.title)}</h1></div></div>
+  main.innerHTML = `<div class="lg-hero"><span class="lg-art" data-cover="${g.id}"></span><div class="lg-title"><div class="row" style="gap:6px"><button class="btn ghost mini" id="libBack" type="button">→ المكتبة</button>
+      <button class="btn ghost mini" id="libFav" type="button">${(PREFS.fav || []).includes(g.id) ? "★ مفضلة" : "☆ أضف للمفضلة"}</button><button class="btn ghost mini" id="libHide" type="button">${(PREFS.hidden || []).includes(g.id) ? "إظهار" : "إخفاء"}</button><button class="btn ghost mini" id="libProps" type="button">⚙ خصائص</button></div><h1>${esc(g.title)}</h1></div></div>
     <div class="lg-bar">${best ? installBlock(g) : '<span class="muted">تقدر تلعب بعد تأكيد الدفع</span>'}
       <div class="lg-stats"><div><small>آخر تشغيل</small><b>${days < 0 ? "—" : days === 0 ? "اليوم" : days === 1 ? "أمس" : new Date(last).toLocaleDateString("ar-SA-u-nu-latn", {day:"numeric", month:"short"})}</b></div>
         <div><small>وقت اللعب</small><b class="num">${mins >= 60 ? (mins / 60).toFixed(1) + " ساعة" : mins + " دقيقة"}</b></div>
@@ -409,6 +414,16 @@ function renderLibGame(main, g){
       ${achAll ? `<div class="panel"><h3>الإنجازات</h3><div class="lg-achs">${Object.entries(MANIFEST.games[g.id].achievements).map(([id, d]) => { const got = ACH[g.id + "__" + id];
         return `<div class="badge${got ? " got" : ""}" title="${esc(d.desc || "")}"><span>🏆</span><b>${esc(d.name)}</b><small>${esc(d.desc || "")}</small></div>`; }).join("")}</div></div>` : ""}</div>`;
   $("#libBack").onclick = () => { LIBSEL = ""; renderLib(); };
+  $("#libFav").onclick = () => setPref("fav", g.id, !(PREFS.fav || []).includes(g.id));
+  $("#libHide").onclick = () => { const h = (PREFS.hidden || []).includes(g.id); setPref("hidden", g.id, !h); if (!h) { LIBSEL = ""; toast("انخفت من مكتبتك. تلقاها في «المخفية»"); } };
+  $("#libProps").onclick = () => gameProps(g);
+  if (PS && PS.screenshots) {   // screenshots taken with F12 while playing
+    const box = document.createElement("div"); box.className = "panel lg-shots"; box.innerHTML = `<h3>لقطات الشاشة <button class="linkbtn" type="button" data-shots>فتح المجلد</button></h3><div class="shots"><span class="muted">اضغط F12 وانت تلعب عشان تصوّر.</span></div>`;
+    main.querySelector(".lg-body").appendChild(box);
+    box.querySelector("[data-shots]").onclick = () => PS.openShots("");
+    PS.screenshots(g.id).then(l => { if (!l.length) return; box.querySelector(".shots").innerHTML = l.map((x, i) => `<button class="shot" type="button" data-i="${i}" title="${esc(x.name)}"><img src="${x.thumb}" alt=""></button>`).join("");
+      box.querySelectorAll(".shot").forEach(b => b.onclick = () => PS.openShots(l[+b.dataset.i].file)); }).catch(() => {});
+  }
 }
 function renderLib(){
   const box = $("#lib"), bar = $("#libBar"); bar.innerHTML = "";
@@ -416,7 +431,7 @@ function renderLib(){
   if (!PS && !isMobile) bar.innerHTML = `<span>عشان تثبّت ألعابك على الكمبيوتر تحتاج تطبيق Premium Studio.</span><a class="btn mini buy" href="#download">حمّل التطبيق</a>`;
   if (!box.querySelector("#libSide")) {
     box.innerHTML = `<div class="libwrap"><aside class="libside" id="libSide"><button class="ls-home" id="libHome" type="button">الرئيسية</button>
-      <div class="ls-tools"><input id="libQ" type="search" placeholder="ابحث في مكتبتك" autocomplete="off"><select id="libF" aria-label="فلتر"><option value="">الكل</option><option value="inst">مثبتة</option><option value="no">غير مثبتة</option></select></div>
+      <div class="ls-tools"><input id="libQ" type="search" placeholder="ابحث في مكتبتك" autocomplete="off"><select id="libF" aria-label="فلتر"><option value="">الكل</option><option value="fav">المفضلة ★</option><option value="inst">مثبتة</option><option value="no">غير مثبتة</option><option value="hidden">المخفية</option></select></div>
       <div class="ls-list"></div></aside><section class="libmain" id="libMain"></section></div>`;
     $("#libQ").oninput = e => { LIBQ = e.target.value; renderLibSide(); };
     $("#libF").onchange = e => { LIBF = e.target.value; renderLibSide(); };
@@ -481,6 +496,89 @@ function renderProfile(){
       return `<div class="badge got"><span>🏆</span><b>${esc(def.name || a.id)}</b><small>${esc(g ? (g.en || g.title) : a.game)}${def.desc ? " · " + esc(def.desc) : ""}</small></div>`; }).join("")}</div>` : ""}`;
 }
 
+/* ---------------- wishlist, reviews, news (store game page) ---------------- */
+async function toggleWish(gid){
+  if (!user) return showAuth("login");
+  try { if (WISH[gid]) await deleteDoc(doc(fs, "users", user.uid, "wishlist", gid)); else { await setDoc(doc(fs, "users", user.uid, "wishlist", gid), {at:serverTimestamp()}); toast("انضافت لقائمة أمنياتك ♥"); } }
+  catch(e) { toast("ما تم: " + (e.code || e.message)); }
+}
+const revUnsubs = {};
+function watchReviews(gid){ if (revUnsubs[gid]) return; revUnsubs[gid] = onSnapshot(collection(fs, "reviews", gid, "r"), s => { REVIEWS[gid] = s.docs.map(d => ({id:d.id, ...d.data()})); if (curView === "game" && location.hash.slice(1) === gid) renderGame(byId(gid)); }, () => {}); }
+async function loadNews(g){
+  if (NEWS[g.id]) return; NEWS[g.id] = [];
+  const m = MANIFEST.games[g.id]; if (!m || !m.gameManifest) return;
+  try { const j = await (await fetch(m.gameManifest + "?t=" + Date.now())).json(); NEWS[g.id] = (j.versions || []).slice(0, 6).map(v => ({id:v.id, title:v.title || "", notes:v.notes || [], at:v.releaseTime || v.time}));
+    if (curView === "game" && location.hash.slice(1) === g.id) renderGame(g); } catch(e) {}
+}
+function gameExtras(g, v, best){
+  watchReviews(g.id); loadNews(g);
+  const aside = v.querySelector(".eds");
+  if (aside && !best) { const w = document.createElement("button"); w.type = "button"; w.className = "btn wish" + (WISH[g.id] ? " on" : ""); w.textContent = WISH[g.id] ? "♥ في قائمة أمنياتك" : "♡ أضف لقائمة الأمنيات"; w.onclick = () => toggleWish(g.id); aside.appendChild(w); }
+  const rs = REVIEWS[g.id] || [], up = rs.filter(r => r.up).length, pct = rs.length ? Math.round(up / rs.length * 100) : 0;
+  const label = !rs.length ? "ما فيه تقييمات للحين" : pct >= 80 ? "إيجابية جدًا" : pct >= 70 ? "إيجابية في الغالب" : pct >= 40 ? "مختلطة" : "سلبية في الغالب";
+  const mine = user && rs.find(r => r.id === user.uid);
+  const sec = document.createElement("section"); sec.className = "gx";
+  sec.innerHTML = `${(NEWS[g.id] || []).length ? `<div class="gx-news"><div class="sec-h"><h2>ما الجديد</h2><small>NEWS</small></div>${NEWS[g.id].map(n => `<article><b>${esc(n.title || "تحديث")}</b> <span class="num muted">${esc(n.id)}</span><small class="muted">${n.at ? new Date(n.at).toLocaleDateString("ar-SA-u-nu-latn", {day:"numeric", month:"short", year:"numeric"}) : ""}</small>${n.notes.length ? `<ul>${n.notes.slice(0, 4).map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}</article>`).join("")}</div>` : ""}
+    <div class="gx-rev"><div class="sec-h"><h2>تقييمات اللاعبين</h2><small>REVIEWS</small></div>
+      <div class="rev-sum"><b class="${pct >= 70 ? "pos" : pct >= 40 ? "mix" : rs.length ? "neg" : ""}">${label}</b>${rs.length ? `<span class="muted num">${pct}% من ${rs.length} تقييم</span>` : ""}</div>
+      ${best ? `<form class="rev-form" id="revF"><div class="row" style="gap:8px"><b>${mine ? "تقييمك" : "قيّم اللعبة"}</b><button type="button" class="btn mini${mine && mine.up ? " buy" : ""}" data-up="1">👍 أنصح فيها</button><button type="button" class="btn mini${mine && !mine.up ? " danger" : ""}" data-up="0">👎 ما أنصح</button></div>
+        <textarea id="revT" maxlength="800" placeholder="اكتب رأيك (اختياري)">${esc(mine ? mine.text || "" : "")}</textarea><div class="err" id="revE"></div></form>` : `<p class="muted" style="font-size:13px">يقدر يقيّم اللي عنده اللعبة.</p>`}
+      <div class="rev-list">${rs.slice().sort((a, b) => tsMs(b.at) - tsMs(a.at)).slice(0, 20).map(r => `<div class="rev"><div class="rev-h"><span class="${r.up ? "pos" : "neg"}">${r.up ? "👍 ينصح فيها" : "👎 ما ينصح"}</span><b class="ltr">@${esc(r.username || "")}</b><small class="muted num">${r.hours || 0} ساعة لعب</small></div>${r.text ? `<p>${esc(r.text)}</p>` : ""}</div>`).join("")}</div></div>`;
+  v.appendChild(sec);
+  const f = $("#revF");
+  if (f) f.querySelectorAll("[data-up]").forEach(b => b.onclick = async () => {
+    if (!PROFILE || !PROFILE.username) return toast("اختر اسم مستخدم أول");
+    const mins = (PLAY[g.id] && PLAY[g.id].minutes) || 0;
+    try { await setDoc(doc(fs, "reviews", g.id, "r", user.uid), {username:PROFILE.username, up:b.dataset.up === "1", text:$("#revT").value.trim().slice(0, 800), hours:Math.floor(mins / 60), at:serverTimestamp()}); toast("انحفظ تقييمك ✓"); }
+    catch(e) { $("#revE").textContent = "ما انحفظ: " + (e.code || e.message); } });
+}
+
+/* ---------------- game properties (like Steam's) ---------------- */
+function gameProps(g){
+  const eds = ownedEds(g.id).map(ed => [ed, ...instOf(g.id, ed)]).filter(x => x[2]);
+  openModal(`<div class="eyebrow">PROPERTIES</div><h1 class="mbox-t">خصائص ${esc(g.en || g.title)}</h1>
+    ${!PS ? '<p class="muted">الخصائص في تطبيق Premium Studio.</p>' : !eds.length ? '<p class="muted">ما فيه نسخة مثبتة.</p>' : eds.map(([ed, key, inst]) => `<div class="prop"><b>${esc(edName(g, ed))}</b><span class="muted num" style="font-size:12px">${esc(inst.version || "")} · ${mb(inst.size || 0)}</span>
+      <div class="row" style="gap:6px;flex-wrap:wrap"><button class="btn mini" data-pv="${key}">تحقق من سلامة الملفات</button><button class="btn mini" data-ps="${key}">أيقونة على سطح المكتب</button><button class="btn mini" data-act="folder" data-g="${key}" data-gid="${g.id}" data-ed="${ed}">المجلد</button><button class="btn mini danger" data-act="uninstall" data-g="${key}" data-gid="${g.id}" data-ed="${ed}">حذف</button></div></div>`).join("")}
+    <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" type="button" data-close>إغلاق</button></div>`);
+  const box = $("#mbox");
+  box.querySelectorAll("[data-pv]").forEach(b => b.onclick = async () => { b.disabled = true; b.textContent = "يتحقق ويصلّح…"; try { await PS.verify(b.dataset.pv); b.textContent = "✓ الملفات سليمة"; } catch(e) { b.textContent = "ما تم: " + (e && e.message || e); b.disabled = false; } });
+  box.querySelectorAll("[data-ps]").forEach(b => b.onclick = async () => { try { await PS.shortcut(b.dataset.ps); b.textContent = "✓ انحطت"; } catch(e) { toast(String(e && e.message || e)); } });
+  box.querySelector("[data-close]").onclick = closeModal;
+}
+
+/* ---------------- favorites and hidden games (library), kept on the account ---------------- */
+async function setPref(kind, gid, on){
+  if (!user) return; const l = new Set(PREFS[kind] || []); on ? l.add(gid) : l.delete(gid);
+  PREFS = {...PREFS, [kind]:[...l]}; render();
+  try { await setDoc(doc(fs, "users", user.uid, "meta", "prefs"), {fav:PREFS.fav || [], hidden:PREFS.hidden || []}); } catch(e) {}
+}
+
+/* ---------------- your status (online / away / invisible), like Steam ---------------- */
+const STATUS_KEY = "ps-status";
+const myStatus = () => { try { return localStorage.getItem(STATUS_KEY) || "online"; } catch(e) { return "online"; } };
+function beat(){ if (!user) return; setDoc(doc(fs, "presence", user.uid), {state:myStatus(), at:serverTimestamp()}, {merge:true}).catch(() => {}); }
+setInterval(() => { if (user && !document.hidden) beat(); else if (user && myStatus() === "online") beat(); }, 3 * 60000);
+function setStatus(st){ try { localStorage.setItem(STATUS_KEY, st); } catch(e) {} beat(); renderAccount(); toast(st === "invisible" ? "صرت تبان غير متصل" : st === "away" ? "حالتك: بعيد" : "حالتك: متصل"); }
+
+/* ---------------- notifications (the bell) ---------------- */
+function notes(){
+  const out = [];
+  for (const [id, f] of Object.entries(FRIENDS)) if (f.status === "in") out.push({t:`@${f.username} يبي يضيفك صديق`, href:"#friends", i:"👤"});
+  for (const id of Object.keys(LASTMSG)) if (unread(id)) { const m = LASTMSG[id], f = FRIENDS[id]; out.push({t:m.kind === "invite" ? `@${f ? f.username : ""} يدعوك تلعب ${gameName(m.game)}` : `رسالة من @${f ? f.username : ""}`, href:"#friends", i:m.kind === "invite" ? "🎮" : "💬"}); }
+  for (const a of Object.values(ACH)) if (Date.now() - tsMs(a.at) < 864e5) { const d = ((MANIFEST.games[a.game] || {}).achievements || {})[a.id]; out.push({t:`إنجاز جديد: ${d ? d.name : a.id}`, href:"#account", i:"🏆"}); }
+  for (const [k, v] of pendingUpdates()) out.push({t:`تحديث متوفر: ${keyTitle(k)}`, href:"#downloads", i:"⬇"});
+  for (const [id, r] of Object.entries(REFUNDS)) if (r.status !== "pending" && Date.now() - tsMs(r.doneAt || r.at) < 7 * 864e5) out.push({t:r.status === "done" ? "تمت الموافقة على الاسترجاع" : "انرفض طلب الاسترجاع", href:"#library", i:"↩"});
+  for (const gid of Object.keys(WISH)) { const g = byId(gid); if (g && ent(gid).best) continue; }
+  return out;
+}
+document.addEventListener("click", e => { const l = $("#bellList"); if (!l) return;
+  if (e.target.closest("#bellBtn")) { l.hidden = !l.hidden; renderBell(); } else if (!e.target.closest("#bellList")) l.hidden = true; else if (e.target.closest("a")) l.hidden = true; });
+function renderBell(){
+  const b = $("#bell"); if (!b) return; b.hidden = !user;
+  const n = notes(); b.querySelector(".nb").textContent = n.length; b.querySelector(".nb").hidden = !n.length;
+  const l = $("#bellList"); if (l && !l.hidden) l.innerHTML = n.length ? n.map(x => `<a href="${x.href}"><span>${x.i}</span>${esc(x.t)}</a>`).join("") : '<p class="muted">ما فيه إشعارات</p>';
+}
+
 /* refunds: a paid edition can be returned within 14 days of purchase if played under 2 hours */
 const REFUND_DAYS = 14, REFUND_MIN = 120;
 function refundable(g){
@@ -504,6 +602,10 @@ document.addEventListener("click", e => {
 });
 function renderAccount(){
   renderProfile();
+  const sb = $("#statusBox");
+  if (sb && user) { const st = myStatus(); sb.innerHTML = `<h3>حالتك</h3><div class="row" style="gap:8px">${[["online","● متصل"],["away","◐ بعيد"],["invisible","○ أبان غير متصل"]].map(([k, n]) => `<button class="btn mini${st === k ? " buy" : ""}" type="button" data-st="${k}">${n}</button>`).join("")}</div>
+    ${Object.keys(WISH).length ? `<h3 style="margin-top:16px">قائمة أمنياتك</h3><div class="row" style="gap:8px;flex-wrap:wrap">${Object.keys(WISH).map(id => { const g = byId(id); return g ? `<a class="btn mini" href="#${id}">♥ ${esc(g.en || g.title)}</a>` : ""; }).join("")}</div>` : ""}`;
+    sb.querySelectorAll("[data-st]").forEach(b => b.onclick = () => setStatus(b.dataset.st)); }
   const a = $("#acct");
   if (!user) { a.innerHTML = '<div class="empty" style="grid-column:1/-1"><b style="color:var(--text)">ما سجّلت دخول</b><button class="btn buy" type="button" data-login>تسجيل الدخول</button></div>'; return; }
   a.innerHTML = `<div class="panel"><h3>معلوماتك</h3><dl class="kv"><dt>PS ID</dt><dd class="num ltr">${fmtPid(PROFILE && PROFILE.pid)}</dd><dt>PS COIN</dt><dd class="num ltr">${coins(PROFILE && PROFILE.coins)}</dd><dt>اسم المستخدم</dt><dd class="ltr" id="aUser"></dd><dt>الاسم</dt><dd id="aName"></dd><dt>الإيميل</dt><dd class="ltr" id="aMail"></dd><dt>التحقق</dt><dd>${user.emailVerified ? '<span class="st paid">الإيميل مؤكد</span>' : '<span class="st pending">غير مؤكد</span>'}</dd><dt>عضو من</dt><dd>${fdate(PROFILE && PROFILE.joined)}</dd></dl>
@@ -554,6 +656,8 @@ function watchPresence(){
   for (const id of ok) if (!presUnsubs["prof:" + id]) presUnsubs["prof:" + id] = onSnapshot(doc(fs, "profiles", id), s => { PROFS[id] = s.exists() ? s.data() : null; if (curView === "friends") renderFriendList(); }, () => {});
   for (const id of ok) if (!presUnsubs[id]) presUnsubs[id] = onSnapshot(doc(fs, "presence", id), s => { PRES[id] = s.exists() ? s.data() : null; if (curView === "friends") renderFriendList(); }, () => {});
 }
+// online = the app or the store is open (it says so every few minutes), unless they chose to look offline
+function isOnline(id){ const p = PRES[id]; return !!(p && p.at && p.at.toDate && Date.now() - p.at.toDate() < 6 * 60000 && p.state !== "invisible"); }
 function playingNow(id){ const p = PRES[id]; return p && p.game && p.at && p.at.toDate && Date.now() - p.at.toDate() < 10 * 60000 ? p.game : ""; }
 /* ---------------- chat with friends ----------------
    chats/<uidA_uidB>/msgs/<id> = {from, text, at, kind:"text"|"invite", game?}. Only friends can write. */
@@ -631,8 +735,8 @@ function renderFriendList(){
   const ok = all.filter(f => f.status === "ok").sort((a, b) => (unread(b.id) - unread(a.id)) || (!!playingNow(b.id) - !!playingNow(a.id)) || (msMs(LASTMSG[b.id] && LASTMSG[b.id].at) * !!LASTMSG[b.id] - msMs(LASTMSG[a.id] && LASTMSG[a.id].at) * !!LASTMSG[a.id]));
   const inc = all.filter(f => f.status === "in"), out = all.filter(f => f.status === "out");
   const row = (f, acts, chat) => { const pl = f.status === "ok" ? playingNow(f.id) : "", lm = chat && LASTMSG[f.id];
-    const sub = pl ? `<small class="plg">يلعب ${esc(pl)}</small>` : lm ? `<small class="muted last">${lm.from === user.uid ? "أنت: " : ""}${esc(lm.kind === "invite" ? "🎮 دعوة للعب" : lm.text)}</small>` : "";
-    return `<div class="fr${pl ? " playing" : ""}${chat ? " chatable" : ""}${CHAT_WITH === f.id ? " on" : ""}" ${chat ? `data-chat="${f.id}"` : ""}><span class="av">${esc(f.username.charAt(0).toUpperCase())}</span><div class="who"><b class="ltr">@${esc(f.username)}${PROFS[f.id] ? ` <span class="lvchip num" title="المستوى">${PROFS[f.id].level}</span>` : ""}</b>${sub}</div>${chat && unread(f.id) ? '<span class="dot"></span>' : ""}<div class="row">${acts}</div></div>`; };
+    const sub = pl ? `<small class="plg">يلعب ${esc(pl)}</small>` : f.status === "ok" && isOnline(f.id) && !lm ? `<small class="plg">${PRES[f.id] && PRES[f.id].state === "away" ? "بعيد" : "متصل"}</small>` : lm ? `<small class="muted last">${lm.from === user.uid ? "أنت: " : ""}${esc(lm.kind === "invite" ? "🎮 دعوة للعب" : lm.text)}</small>` : "";
+    return `<div class="fr${pl ? " playing" : ""}${f.status === "ok" && isOnline(f.id) ? " online" : ""}${chat ? " chatable" : ""}${CHAT_WITH === f.id ? " on" : ""}" ${chat ? `data-chat="${f.id}"` : ""}><span class="av">${esc(f.username.charAt(0).toUpperCase())}</span><div class="who"><b class="ltr">@${esc(f.username)}${PROFS[f.id] ? ` <span class="lvchip num" title="المستوى">${PROFS[f.id].level}</span>` : ""}</b>${sub}</div>${chat && unread(f.id) ? '<span class="dot"></span>' : ""}<div class="row">${acts}</div></div>`; };
   box.innerHTML = `<h3>أصدقائي <span class="tag num">${ok.length}</span></h3><div class="frlist">${ok.length ? ok.map(f => row(f, `<button class="btn mini ghost" data-fr-del="${f.id}" title="إزالة">✕</button>`, true)).join("") : '<span class="muted">ما عندك أصدقاء للحين. أضفهم باسم المستخدم حقهم.</span>'}</div>
     ${inc.length ? `<h3 style="margin-top:12px">طلبات الصداقة</h3><div class="frlist">${inc.map(f => row(f, `<button class="btn mini buy" data-fr-ok="${f.id}">قبول</button><button class="btn mini ghost" data-fr-del="${f.id}">رفض</button>`)).join("")}</div>` : ""}
     ${out.length ? `<h3 style="margin-top:12px">طلبات أرسلتها</h3><div class="frlist">${out.map(f => row(f, `<button class="btn mini ghost" data-fr-del="${f.id}">إلغاء</button>`)).join("")}</div>` : ""}`;
@@ -804,7 +908,9 @@ $("#signIn").onclick = () => showAuth("login");
 /* ---------------- routing ---------------- */
 let curView = "store";
 function route(){
-  const h = (location.hash || "#store").slice(1), g = byId(h);
+  const h0 = (location.hash || "#store").slice(1);
+  if (h0 === "bigpicture") { bigPicture().open(); return; }
+  const h = h0, g = byId(h);
   let v = g ? "game" : (["store", "library", "downloads", "friends", "studio", "download", "account", "coins"].includes(h) ? h : "store");
   if (v === "studio" && !isAdmin) v = "store";
   curView = v; $$(".view").forEach(s => s.hidden = s.dataset.view !== v);
@@ -817,8 +923,13 @@ function guestNote(){
   if (!show) { if (n) n.remove(); return; }
   if (!n) { n = document.createElement("div"); n.className = "guestnote"; n.innerHTML = '<span>أنت تتصفح كضيف. تقدر تتفرج بس، وللشراء والتثبيت لازم تسجّل دخولك.</span><button class="btn buy mini" type="button" data-login>تسجيل الدخول</button>'; v.prepend(n); }
 }
+let BP = null;
+function bigPicture(){ if (!BP) BP = makeBP({$, esc, GAMES, ownedEds, instOf, ED_TAG, PS, toast, cover, money, ent, keyTitle, pct, progText,
+  state:() => ({user, PROFILE, FRIENDS, PLAY, RUNNING, PROGRESS, online:isOnline, playing:playingNow})}); return BP; }
 function render(){
   try { publishProfile(); } catch(e) {}
+  try { renderBell(); } catch(e) {}
+  try { if (BP && BP.on) BP.refresh(); } catch(e) {}
   try { renderDlBar(); } catch(e) {}
   if (!authReady) return;
   guestNote();
@@ -949,7 +1060,7 @@ function applyChrome(){
   $("#coinChip").hidden = !user; if (user) $("#coinBal").textContent = coins(PROFILE && PROFILE.coins);
 }
 onAuthStateChanged(auth, async u => {
-  unsubs.forEach(f => { try { f(); } catch(e) {} }); unsubs = []; LIB = {}; PROFILE = null; FRIENDS = {}; watchPresence(); watchChats(); PLAY = {}; REFUNDS = {}; ACH = {}; lastPub = ""; frBadge(); USERS = {}; ORDERS = []; CODES = {}; MYCO = []; COINORDERS = [];
+  unsubs.forEach(f => { try { f(); } catch(e) {} }); unsubs = []; LIB = {}; PROFILE = null; FRIENDS = {}; watchPresence(); watchChats(); PLAY = {}; REFUNDS = {}; ACH = {}; WISH = {}; PREFS = {fav:[], hidden:[]}; lastPub = ""; frBadge(); USERS = {}; ORDERS = []; CODES = {}; MYCO = []; COINORDERS = [];
   user = u; authReady = true; setAdmin();
   if (u) {
     $("#gate").hidden = true; guest = false;
@@ -959,6 +1070,9 @@ onAuthStateChanged(auth, async u => {
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "library"), s => { LIB = {}; s.forEach(d => LIB[d.id] = d.data()); render(); autoInstall(); sendOwned(); }, e => toast("ما قدرت أقرأ مكتبتك: " + e.code)));
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "friends"), s => { FRIENDS = {}; s.forEach(d => FRIENDS[d.id] = d.data()); watchChats(); frBadge(); watchPresence(); if (curView === "friends") renderFriends(); }, () => {}));
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "achievements"), s => { ACH = {}; s.forEach(d => ACH[d.id] = d.data()); publishProfile(); if (curView === "account") renderProfile(); }, () => {}));
+    unsubs.push(onSnapshot(collection(fs, "users", u.uid, "wishlist"), s => { WISH = {}; s.forEach(d => WISH[d.id] = d.data()); render(); }, () => {}));
+    unsubs.push(onSnapshot(doc(fs, "users", u.uid, "meta", "prefs"), s => { PREFS = s.exists() ? {fav:[], hidden:[], ...s.data()} : {fav:[], hidden:[]}; render(); }, () => {}));
+    beat();
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "refunds"), s => { REFUNDS = {}; s.forEach(d => REFUNDS[d.id] = d.data()); render(); }, () => {}));
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "play"), s => { PLAY = {}; s.forEach(d => PLAY[d.id] = d.data()); render(); }, () => {}));
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "coinOrders"), s => { MYCO = s.docs.map(d => ({id:d.id, ...d.data()})); if (curView === "coins") renderCoins(); }, () => {}));

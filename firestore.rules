@@ -174,6 +174,18 @@ service cloud.firestore {
         }
       }
 
+      // Wishlist and library settings (favorites, hidden)
+      match /wishlist/{gid} {
+        allow read: if isMe(uid) || isAdmin();
+        allow create, update: if isMe(uid) && request.resource.data.keys().hasOnly(['at']) && request.resource.data.at == request.time;
+        allow delete: if isMe(uid);
+      }
+      match /meta/{d} {
+        allow read: if isMe(uid);
+        allow write: if isMe(uid) && d == 'prefs' && request.resource.data.keys().hasOnly(['fav', 'hidden'])
+          && request.resource.data.fav is list && request.resource.data.fav.size() <= 200 && request.resource.data.hidden is list && request.resource.data.hidden.size() <= 200;
+      }
+
       // Play time per game, written by the Premium Studio app when a game closes
       match /play/{gid} {
         allow read: if isMe(uid) || isAdmin();
@@ -299,6 +311,23 @@ service cloud.firestore {
       allow delete: if inChat(cid) && resource.data.from == request.auth.uid;
     }
 
+    // Reviews: only players who own the game; one per player per game
+    function ownsAny(g) {
+      return (exists(/databases/$(database)/documents/users/$(request.auth.uid)/library/$(g + '__demo')) && get(/databases/$(database)/documents/users/$(request.auth.uid)/library/$(g + '__demo')).data.status != 'pending')
+        || (exists(/databases/$(database)/documents/users/$(request.auth.uid)/library/$(g + '__std')) && get(/databases/$(database)/documents/users/$(request.auth.uid)/library/$(g + '__std')).data.status != 'pending')
+        || (exists(/databases/$(database)/documents/users/$(request.auth.uid)/library/$(g + '__gold')) && get(/databases/$(database)/documents/users/$(request.auth.uid)/library/$(g + '__gold')).data.status != 'pending')
+        || (exists(/databases/$(database)/documents/users/$(request.auth.uid)/library/$(g + '__dev')) && get(/databases/$(database)/documents/users/$(request.auth.uid)/library/$(g + '__dev')).data.status != 'pending');
+    }
+    match /reviews/{g}/r/{uid} {
+      allow read: if true;
+      allow create, update: if isMe(uid) && ownsAny(g)
+        && request.resource.data.keys().hasOnly(['username', 'up', 'text', 'hours', 'at'])
+        && request.resource.data.up is bool && request.resource.data.text is string && request.resource.data.text.size() <= 800
+        && request.resource.data.hours is int && request.resource.data.username is string && request.resource.data.username.size() <= 20
+        && request.resource.data.at == request.time;
+      allow delete: if isMe(uid) || isAdmin();
+    }
+
     // Public profile card (level, badges) that friends see
     match /profiles/{uid} {
       allow read: if signedIn();
@@ -314,9 +343,10 @@ service cloud.firestore {
     match /presence/{uid} {
       allow read: if signedIn();
       allow write: if isMe(uid)
-        && request.resource.data.keys().hasOnly(['game', 'gid', 'at'])
-        && request.resource.data.game is string && request.resource.data.game.size() <= 60
-        && request.resource.data.gid is string && request.resource.data.gid.size() <= 40
+        && request.resource.data.keys().hasOnly(['game', 'gid', 'at', 'state'])
+        && (!('state' in request.resource.data) || request.resource.data.state in ['online', 'away', 'invisible'])
+        && (!('game' in request.resource.data) || (request.resource.data.game is string && request.resource.data.gid is string))
+        && (!('game' in request.resource.data) || (request.resource.data.game.size() <= 60 && request.resource.data.gid.size() <= 40))
         && request.resource.data.at == request.time;
     }
 

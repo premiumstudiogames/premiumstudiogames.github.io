@@ -35,6 +35,14 @@ app.whenReady().then(async () => {
     await call('ps:launch', 'last-recording--std');
     ok('horror game runs', await waitFor(async () => !!(await call('ps:getRunning'))['last-recording--std'], 30000));
     await sleep(4000);
+    // F12 takes a screenshot; Shift+Tab opens the overlay
+    const gw = BrowserWindow.getAllWindows().find(w => w.webContents.getURL().startsWith('psgame'));
+    if (gw) { gw.focus(); gw.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F12' }); }
+    const shotDir = path.join(app.getPath('pictures'), 'Premium Studio');
+    ok('F12 saves a screenshot', await waitFor(() => { try { return fs.readdirSync(shotDir).some(d => fs.readdirSync(path.join(shotDir, d)).some(f => f.endsWith('.png'))); } catch (e) { return false; } }, 10000));
+    if (gw) gw.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab', modifiers: ['shift'] });
+    ok('Shift+Tab opens the overlay', await waitFor(() => BrowserWindow.getAllWindows().some(w => !w.isDestroyed() && w.webContents.getURL().startsWith('data:') && w.isVisible() && /%D8%A7%D9%84%D8%A5%D9%86%D8%AC%D8%A7%D8%B2%D8%A7%D8%AA|الإنجازات/.test(decodeURIComponent(w.webContents.getURL()).slice(0, 20000))), 10000));
+    if (gw) gw.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab', modifiers: ['shift'] });
     await call('ps:stop', 'last-recording--std');
     ok('horror game closes', await waitFor(async () => !(await call('ps:getRunning'))['last-recording--std'], 20000));
     // ---- BLOCKFALL

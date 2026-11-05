@@ -10,7 +10,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;700&family=Reem+Kufi:wght@500;700&family=Readex+Pro:wght@300;400;500;600&family=JetBrains+Mono:wght@500;700&display=swap">
-<link rel="stylesheet" href="style.css?v=13">
+<link rel="stylesheet" href="style.css?v=14">
 </head>
 <body>
 <header class="top"><div class="in">
@@ -23,6 +23,8 @@
     <a href="#download" data-v="download" id="tabDl">حمّل التطبيق</a>
     <a href="#studio" data-v="studio" id="tabStudio" hidden>لوحة الاستوديو</a>
   </nav>
+  <div class="bell" id="bell" hidden><button type="button" class="bellbtn" aria-label="الإشعارات" id="bellBtn">🔔<span class="nb" hidden>0</span></button><div class="belllist" id="bellList" hidden></div></div>
+  <a class="bpbtn" href="#bigpicture" title="الشاشة الكبيرة (وضع الكونسل)" aria-label="الشاشة الكبيرة">⛶</a>
   <a class="coinchip" id="coinChip" href="#coins" hidden><span class="coin" aria-hidden="true"></span><b class="num" id="coinBal">0</b><small>PS COIN</small></a>
   <div class="dlchip" id="dlChip" hidden><span class="spin"></span><span id="dlChipT"></span></div>
   <a class="me" id="me" href="#account" hidden><span class="av" id="meAv"></span><span class="mewho"><b id="meName"></b><small class="num ltr" id="mePid"></small></span></a>
@@ -83,6 +85,7 @@
 
   <section class="view" data-view="account" hidden>
     <div class="prof" id="prof"></div>
+    <div class="panel statusbox" id="statusBox"></div>
     <div class="sec-h"><h2>حسابي</h2><small>ACCOUNT</small></div>
     <div class="acct" id="acct"></div>
   </section>
@@ -113,6 +116,6 @@
 <div class="toast" id="toast" role="status"></div>
 <nav class="dlbar" id="dlBar" hidden></nav>
 
-<script type="module" src="app.js?v=22"></script>
+<script type="module" src="app.js?v=23"></script>
 </body>
 </html>

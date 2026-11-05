@@ -150,7 +150,7 @@ function pushPresence() {
   if (!currentUser || !currentUser.uid) return;
   const last = [...running.values()].pop();
   return fbCommit([{ update: { name: `${FB_DB}/presence/${currentUser.uid}`, fields: { game: { stringValue: last ? String(last.name).slice(0, 60) : '' }, gid: { stringValue: last ? String(last.game) : '' } } },
-    updateTransforms: [{ fieldPath: 'at', setToServerValue: 'REQUEST_TIME' }] }]);
+    updateMask: { fieldPaths: ['game', 'gid'] }, updateTransforms: [{ fieldPath: 'at', setToServerValue: 'REQUEST_TIME' }] }]);
 }
 setInterval(() => { if (running.size) pushPresence(); }, 4 * 60000);
 // play time per game, kept on the account
@@ -170,12 +170,14 @@ function markRunning(key) {
   const g = readReg()[key] || {};
   running.set(key, { since: Date.now(), game: g.game || key.split('--')[0], name: g.name || key });
   pushPresence(); runningChanged();
-  if (g.type === 'bf-launcher') watchBf();
+  if (g.type === 'bf-launcher') { watchBf(); gameKeys(true); }
 }
 function markStopped(key) {
   const r = running.get(key); if (!r) return;
   running.delete(key);
   addPlaytime(r, Date.now() - r.since); pushPresence(); runningChanged();
+  if (ovKey === key) closeOverlay();
+  if (![...running.keys()].some(k => (readReg()[k] || {}).type === 'bf-launcher')) gameKeys(false);
 }
 // BLOCKFALL runs as its own program: watch its process
 let bfTimer = null;
@@ -294,6 +296,7 @@ function updateTray() {
     { label: 'المتجر', click: () => createMain('store') },
     { label: 'المكتبة', click: () => createMain('library') },
     { label: 'الأصدقاء', click: () => createMain('friends') },
+    { label: 'الشاشة الكبيرة', click: () => createMain('bigpicture') },
     { type: 'separator' }
   ];
   if (running.size) for (const [k, r] of running) items.push({ label: `■ إغلاق ${r.name}`, click: () => stopGame(k) });
@@ -319,6 +322,118 @@ function playFromOutside(key) {
 function openExternal(url) { if (/^https?:\/\//.test(url)) shell.openExternal(url); }
 
 // Before starting a game that updates from its own manifest, pull the newest version (like the game's standalone app does).
+/* ---------------- screenshots (F12) and the in-game overlay (Shift+Tab), like Steam ---------------- */
+const SHOTS = () => path.join(app.getPath('pictures'), 'Premium Studio');
+const gameFolder = key => { const g = readReg()[key] || {}; return String(g.base || g.name || key).replace(/[\\/:*?"<>|]/g, '').trim() || 'Game'; };
+async function screenshot(key) {
+  try {
+    let img = null;
+    const w = gameWins.get(key);
+    if (w && !w.isDestroyed()) img = await w.webContents.capturePage();
+    else {   // a game in its own program (BLOCKFALL): the screen it's on
+      const { desktopCapturer, screen } = require('electron'), d = screen.getPrimaryDisplay();
+      const src = (await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: d.size.width * d.scaleFactor, height: d.size.height * d.scaleFactor } }))[0];
+      img = src && src.thumbnail;
+    }
+    if (!img || img.isEmpty()) return null;
+    const dir = path.join(SHOTS(), gameFolder(key)); await fsp.mkdir(dir, { recursive: true });
+    const t = new Date(), pad = n => String(n).padStart(2, '0');
+    const f = path.join(dir, `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())} ${pad(t.getHours())}.${pad(t.getMinutes())}.${pad(t.getSeconds())}.png`);
+    await fsp.writeFile(f, img.toPNG());
+    flash('📸 انحفظت اللقطة');
+    return f;
+  } catch (e) { return null; }
+}
+ipcMain.handle('ps:screenshots', guard(async gid => {
+  const out = [];
+  for (const [k, v] of Object.entries(installedNow())) { if ((v.game || k.split('--')[0]) !== gid) continue;
+    const dir = path.join(SHOTS(), gameFolder(k)); let files = []; try { files = (await fsp.readdir(dir)).filter(f => f.endsWith('.png')); } catch (e) {}
+    for (const f of files) out.push(path.join(dir, f)); }
+  const uniq = [...new Set(out)].sort().reverse().slice(0, 24);
+  const { nativeImage } = require('electron');
+  return uniq.map(f => { try { return { file: f, name: path.basename(f, '.png'), thumb: nativeImage.createFromPath(f).resize({ width: 360 }).toDataURL() }; } catch (e) { return null; } }).filter(Boolean);
+}));
+ipcMain.handle('ps:openShots', guard(async file => { if (typeof file === 'string' && path.resolve(file).startsWith(SHOTS())) shell.showItemInFolder(file); else { await fsp.mkdir(SHOTS(), { recursive: true }); shell.openPath(SHOTS()); } return true; }));
+
+// small notice at the bottom corner, above any game
+let flashWin = null, flashT = null;
+function flash(text) {
+  try {
+    const { screen } = require('electron'), wa = screen.getPrimaryDisplay().workArea;
+    if (!flashWin || flashWin.isDestroyed()) {
+      flashWin = new BrowserWindow({ width: 300, height: 64, x: wa.x + wa.width - 320, y: wa.y + wa.height - 84, frame: false, transparent: true, alwaysOnTop: true, focusable: false, skipTaskbar: true, show: false, resizable: false, webPreferences: { sandbox: true, contextIsolation: true } });
+      flashWin.setAlwaysOnTop(true, 'screen-saver'); flashWin.setIgnoreMouseEvents(true);
+    }
+    flashWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(`<html dir="rtl"><body style="margin:0;font:600 15px 'Segoe UI',Tahoma,sans-serif;color:#fff"><div style="margin:6px;padding:14px 16px;background:rgba(17,21,31,.94);border:1px solid #2c3446;border-inline-start:4px solid #ffcc1f">${text.replace(/</g, '&lt;')}</div></body></html>`));
+    flashWin.showInactive(); clearTimeout(flashT); flashT = setTimeout(() => { if (flashWin && !flashWin.isDestroyed()) flashWin.hide(); }, 2600);
+  } catch (e) {}
+}
+
+// the overlay: a see-through layer over the game with what Steam's has — time played, achievements, screenshot, friends, close the game
+let ovWin = null, ovKey = '';
+async function achievementsFor(game) {
+  try { const t = await fbToken(); if (!t || !currentUser) return [];
+    const r = await net.fetch(`https://firestore.googleapis.com/v1/${FB_DB}/users/${currentUser.uid}/achievements?pageSize=300`, { headers: { authorization: 'Bearer ' + t } });
+    const j = await r.json(); return (j.documents || []).map(d => d.fields).filter(f => f.game && f.game.stringValue === game).map(f => f.id.stringValue);
+  } catch (e) { return []; }
+}
+function ovHTML(d) {
+  const esc = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const all = Object.entries(d.defs || {}), got = new Set(d.got);
+  return `<!doctype html><html dir="rtl"><head><meta charset="utf-8"><style>
+  *{box-sizing:border-box;margin:0}body{font-family:"Segoe UI",Tahoma,sans-serif;color:#eef2f8;background:rgba(5,8,14,.78);height:100vh;display:flex;flex-direction:column;user-select:none}
+  header{display:flex;align-items:center;gap:22px;padding:22px 36px;background:rgba(10,14,22,.9);border-bottom:1px solid #2c3446}
+  .ps{background:#000;border:1px solid #2c3446;padding:3px 9px;font:800 20px sans-serif;direction:ltr}.ps i{font-style:normal}.ps i+i{color:#ffcc1f}
+  h1{font-size:22px;flex:1}.t{color:#9aa4b8;font-size:15px}
+  main{flex:1;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);gap:24px;padding:30px 36px;min-height:0}
+  .card{background:rgba(17,22,34,.95);border:1px solid #2c3446;padding:20px;overflow:auto}
+  .card h2{font-size:16px;margin-bottom:14px;color:#c9d2e3}
+  a{display:block;text-decoration:none;color:#eef2f8;background:#1d2638;padding:15px 18px;margin-bottom:10px;font-size:16px;border:1px solid #2c3446}
+  a:hover,a:focus{border-color:#ffcc1f;outline:none}a.red{background:#5a1d22;border-color:#7a2a30}
+  .ach{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+  .a{padding:12px;background:#1a2232;border:1px solid #2c3446;opacity:.35}.a.got{opacity:1;border-color:#6b5512}.a b{display:block;font-size:14px}.a small{font-size:12px;color:#9aa4b8}
+  footer{padding:14px;text-align:center;color:#8c96aa;font-size:14px}
+  </style></head><body><header><span class="ps"><i>P</i><i>S</i></span><h1>${esc(d.name)}</h1><span class="t">تلعب من ${d.mins} دقيقة · ${esc(d.clock)}</span></header>
+  <main><div class="card"><h2>اختصارات</h2><a href="#shot">📸 لقطة شاشة (F12)</a><a href="#shots">🖼 لقطاتي</a><a href="#friends">👥 الأصدقاء والدردشة</a><a href="#back">↩ ارجع للعبة</a><a class="red" href="#close">■ إغلاق اللعبة</a></div>
+  <div class="card"><h2>الإنجازات ${all.length ? `(${got.size}/${all.length})` : ''}</h2>${all.length ? `<div class="ach">${all.map(([id, v]) => `<div class="a${got.has(id) ? ' got' : ''}"><b>🏆 ${esc(v.name)}</b><small>${esc(v.desc || '')}</small></div>`).join('')}</div>` : '<p class="t">هذي اللعبة ما فيها إنجازات للحين.</p>'}</div></main>
+  <footer>Shift+Tab أو Esc يرجعك للعبة</footer></body></html>`;
+}
+async function toggleOverlay(key) {
+  if (ovWin && !ovWin.isDestroyed()) { closeOverlay(); return; }
+  const r = running.get(key); if (!r) return;
+  ovKey = key;
+  const { screen } = require('electron'), w = gameWins.get(key);
+  const b = w && !w.isDestroyed() ? w.getBounds() : screen.getPrimaryDisplay().bounds;
+  let defs = {}; try { defs = (((await fetchManifest()).games || {})[r.game] || {}).achievements || {}; } catch (e) {}
+  const got = await achievementsFor(r.game);
+  ovWin = new BrowserWindow({ ...b, frame: false, transparent: true, alwaysOnTop: true, skipTaskbar: true, resizable: false, show: false, parent: w && !w.isDestroyed() ? w : undefined, webPreferences: { sandbox: true, contextIsolation: true } });
+  ovWin.setAlwaysOnTop(true, 'screen-saver');
+  ovWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(ovHTML({ name: r.name, mins: Math.floor((Date.now() - r.since) / 60000), clock: new Date().toLocaleTimeString('ar-SA-u-nu-latn', { hour: 'numeric', minute: '2-digit' }), defs, got })));
+  ovWin.once('ready-to-show', () => { if (ovWin) { ovWin.show(); ovWin.focus(); } });
+  ovWin.webContents.on('before-input-event', (e, i) => { if (i.type === 'keyDown' && (i.key === 'Escape' || (i.key === 'Tab' && i.shift))) { e.preventDefault(); closeOverlay(); } });
+  ovWin.webContents.on('did-navigate-in-page', async (e, url) => {
+    const h = url.split('#')[1], k = ovKey;
+    if (h === 'shot') { closeOverlay(); setTimeout(() => screenshot(k), 250); }
+    else if (h === 'shots') { closeOverlay(); shell.openPath(path.join(SHOTS(), gameFolder(k))).catch(() => {}); }
+    else if (h === 'friends') { closeOverlay(); createMain('friends'); }
+    else if (h === 'close') { closeOverlay(); stopGame(k); }
+    else if (h === 'back') closeOverlay();
+  });
+  ovWin.on('closed', () => { ovWin = null; });
+}
+function closeOverlay() { if (ovWin && !ovWin.isDestroyed()) { const w = gameWins.get(ovKey); ovWin.destroy(); if (w && !w.isDestroyed()) w.focus(); } ovWin = null; }
+// games in their own program (BLOCKFALL) get F12 and Shift+Tab while they run
+function gameKeys(on) {
+  const { globalShortcut } = require('electron');
+  try {
+    if (on) {
+      const bf = () => [...running.keys()].find(k => (readReg()[k] || {}).type === 'bf-launcher');
+      if (!globalShortcut.isRegistered('F12')) globalShortcut.register('F12', () => { const k = bf(); if (k) screenshot(k); });
+      if (!globalShortcut.isRegistered('Shift+Tab')) globalShortcut.register('Shift+Tab', () => { const k = bf(); if (k) toggleOverlay(k); });
+    } else { globalShortcut.unregister('F12'); globalShortcut.unregister('Shift+Tab'); }
+  } catch (e) {}
+}
+
 /* ---------------- "Starting game" window (like Steam's) ---------------- */
 const COVERS = path.join(app.getPath('userData'), 'covers');
 let splash = null, splashKey = '';
@@ -406,7 +521,10 @@ function launchGame(id, edition) {
   w.once('ready-to-show', () => { w.maximize(); w.show(); if (splashKey === id) closeSplash(); });
   w.webContents.setWindowOpenHandler(({ url }) => { openExternal(url); return { action: 'deny' }; });
   w.webContents.on('before-input-event', (e, input) => {
-    if (input.type === 'keyDown' && input.key === 'F11') { w.setFullScreen(!w.isFullScreen()); e.preventDefault(); }
+    if (input.type !== 'keyDown') return;
+    if (input.key === 'F11') { w.setFullScreen(!w.isFullScreen()); e.preventDefault(); }
+    else if (input.key === 'F12') { e.preventDefault(); screenshot(id); }
+    else if (input.key === 'Tab' && input.shift) { e.preventDefault(); toggleOverlay(id); }
   });
   const q = g.edition === 'demo' ? '?demo=1' : '';
   w.loadURL(`psgame://${id}/${g.entry}${q}`);
@@ -497,7 +615,11 @@ async function getLatest() {
 }
 
 // Stream a URL to disk (or memory) with progress.
+// download speed limit (Downloads → settings), 0 = no limit; bytes per second
+const SETTINGS_FILE = () => path.join(app.getPath('userData'), 'settings.json');
+const settings = () => { try { return JSON.parse(fs.readFileSync(SETTINGS_FILE(), 'utf8')); } catch (e) { return {}; } };
 async function download(url, onBytes, toFile) {
+  const limit = +settings().limit || 0, t0 = Date.now(); let got = 0;
   const res = await net.fetch(url, { cache: 'no-store' });
   if (!res.ok || !res.body) throw new Error('فشل التحميل (' + res.status + ')');
   const reader = res.body.getReader(), parts = [];
@@ -505,7 +627,8 @@ async function download(url, onBytes, toFile) {
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
-    onBytes(value.length);
+    onBytes(value.length); got += value.length;
+    if (limit > 0) { const ahead = got / limit * 1000 - (Date.now() - t0); if (ahead > 15) await new Promise(r => setTimeout(r, ahead)); }
     if (out) { if (!out.write(Buffer.from(value))) await new Promise(r => out.once('drain', r)); } else parts.push(Buffer.from(value));
   }
   if (out) { await new Promise((r, j) => out.end(err => err ? j(err) : r())); return null; }
@@ -710,6 +833,13 @@ ipcMain.handle('ps:setOwned', guard(async o => {
   if (JSON.stringify(owned) === JSON.stringify(currentUser.owned || {})) return true;
   currentUser.owned = owned; try { fs.writeFileSync(USER_FILE, JSON.stringify(currentUser)); } catch (e) {} writeBfAccount(); return true;
 }));
+ipcMain.handle('ps:getSettings', guard(async () => settings()));
+ipcMain.handle('ps:setSettings', guard(async o => { const cur = settings(); if (o && typeof o === 'object') { if ('limit' in o) cur.limit = Math.max(0, Math.min(1e9, +o.limit || 0)); }
+  fs.writeFileSync(SETTINGS_FILE(), JSON.stringify(cur)); return cur; }));
+// game properties: check the files (download again what's wrong or missing), put the icon back on the desktop
+ipcMain.handle('ps:verify', guard(async id => { if (!validId(id) || !readReg()[id]) throw new Error('مو مثبتة'); if (running.has(id)) throw new Error('اقفل اللعبة أول'); await install(id, { force: true, edition: readReg()[id].edition }); return true; }));
+ipcMain.handle('ps:shortcut', guard(async id => { const g = readReg()[id]; if (!g) throw new Error('مو مثبتة'); makeShortcuts(id, g); return true; }));
+ipcMain.handle('ps:fullscreen', guard(async on => { if (mainWin && !mainWin.isDestroyed()) { mainWin.setFullScreen(!!on); if (on) { mainWin.show(); mainWin.focus(); } } return true; }));
 ipcMain.handle('ps:retryOnline', guard(async () => { if (mainWin) mainWin.loadURL(SITE); return true; }));
 // Game achievements: a game calls PREMIUM_STUDIO.achieve('id'); it's kept on the player's account
 ipcMain.on('game:achieve', (e, aid) => {
