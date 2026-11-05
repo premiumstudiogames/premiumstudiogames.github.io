@@ -20,6 +20,7 @@ if (ok) {
     launch: (id, edition) => ipcRenderer.invoke('ps:launch', id, edition),
     showFolder: id => ipcRenderer.invoke('ps:showFolder', id),
     setUser: u => ipcRenderer.invoke('ps:setUser', u),
+    setOwned: o => ipcRenderer.invoke('ps:setOwned', o),
     retryOnline: () => ipcRenderer.invoke('ps:retryOnline'),
     onProgress: cb => { const f = (e, p) => cb(p); ipcRenderer.on('ps:progress', f); return () => ipcRenderer.removeListener('ps:progress', f); },
     getRunning: () => ipcRenderer.invoke('ps:getRunning'),

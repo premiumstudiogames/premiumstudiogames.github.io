@@ -60,6 +60,7 @@ async function setUser(u) {
   const next = u && typeof u === 'object' ? { username: clip(u.username, 20), name: clip(u.name, 32), pid: clip(u.pid, 10), email: clip(u.email, 120), uid: clip(u.uid, 128), refreshToken: clip(u.refreshToken, 4096) } : null;
   // switched or signed out (like Steam): games running under the old account close first, saving to the old account
   if (before && before !== (next && next.uid)) await closeRunningGames();
+  if (next && currentUser && currentUser.uid === next.uid && currentUser.owned) next.owned = currentUser.owned;   // keep what they own until the store sends it again
   currentUser = next;
   try { if (currentUser) fs.writeFileSync(USER_FILE, JSON.stringify(currentUser)); else fs.rmSync(USER_FILE, { force: true }); } catch (e) {}
   writeBfAccount();
@@ -702,6 +703,13 @@ ipcMain.handle('ps:getRunning', guard(async () => runningList()));
 ipcMain.handle('ps:stop', guard(async id => { if (!validId(id)) throw new Error('bad id'); stopGame(id); return true; }));
 ipcMain.handle('ps:showFolder', guard(async id => { if (validId(id)) shell.openPath(gameDir(id, readReg()[id])); return true; }));
 ipcMain.handle('ps:setUser', guard(async u => { await setUser(u); return true; }));
+// the editions the player owns, per game (BLOCKFALL's launcher lets them pick among them)
+ipcMain.handle('ps:setOwned', guard(async o => {
+  if (!currentUser || !o || typeof o !== 'object') return false;
+  const owned = {}; for (const [g, eds] of Object.entries(o)) if (validId(g) && Array.isArray(eds)) owned[g] = eds.filter(e => EDITIONS.includes(e));
+  if (JSON.stringify(owned) === JSON.stringify(currentUser.owned || {})) return true;
+  currentUser.owned = owned; try { fs.writeFileSync(USER_FILE, JSON.stringify(currentUser)); } catch (e) {} writeBfAccount(); return true;
+}));
 ipcMain.handle('ps:retryOnline', guard(async () => { if (mainWin) mainWin.loadURL(SITE); return true; }));
 // Game achievements: a game calls PREMIUM_STUDIO.achieve('id'); it's kept on the player's account
 ipcMain.on('game:achieve', (e, aid) => {

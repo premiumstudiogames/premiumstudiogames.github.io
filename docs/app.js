@@ -27,7 +27,7 @@ const PACKS = [             // must match coinPacks() in firestore.rules (coins 
   {id:"u100000",coins:100000, price:1000000}
 ];
 const coins = n => ((n || 0) / COIN_UNIT).toLocaleString("en-US", {minimumFractionDigits:0, maximumFractionDigits:4});
-const SITE_VERSION = "00.00.21";
+const SITE_VERSION = "00.00.22";
 const APP_DL = "downloads/PremiumStudioSetup.exe";
 
 const fb = initializeApp(firebaseConfig);
@@ -939,8 +939,9 @@ async function ensureProfileOnce(u, name, un){
     try { await b.commit(); return; } catch(e) { if (i === 4) throw e; }   // a taken number fails the batch, so try another
   }
 }
+function sendOwned(){ if (!PS || !PS.setOwned || !user) return; const o = {}; for (const g of GAMES) o[g.id] = ownedEds(g.id); PS.setOwned(o).catch(() => {}); }
 function sendUserToApp(){ if (!PS || !PS.setUser || !user) return;
-  PS.setUser({username:(PROFILE && PROFILE.username) || "", name:(PROFILE && PROFILE.name) || user.displayName || "", pid:(PROFILE && PROFILE.pid) || "", email:user.email || "", uid:user.uid, refreshToken:user.refreshToken || ""}); }
+  PS.setUser({username:(PROFILE && PROFILE.username) || "", name:(PROFILE && PROFILE.name) || user.displayName || "", pid:(PROFILE && PROFILE.pid) || "", email:user.email || "", uid:user.uid, refreshToken:user.refreshToken || ""}).then(sendOwned, () => {}); }
 function setAdmin(){ isAdmin = !!(user && user.email && user.email.toLowerCase() === ADMIN_EMAIL && user.emailVerified); $("#tabStudio").hidden = !isAdmin; }
 function applyChrome(){
   $("#me").hidden = !user; $("#guestBar").hidden = !!user || !authReady;
@@ -955,7 +956,7 @@ onAuthStateChanged(auth, async u => {
     try { await ensureProfile(u, pendingName, pendingUname); } catch(e) { toast("ما قدرت أفتح حسابك في قاعدة البيانات: " + (e.code || e.message)); }
     unsubs.push(onSnapshot(doc(fs, "users", u.uid), s => { PROFILE = s.exists() ? s.data() : null; applyChrome(); sendUserToApp();
       if (PROFILE && PROFILE.pid && !PROFILE.username && !$("#uf")) askUsername(u); if (curView === "account") renderAccount(); if (curView === "coins") renderCoins(); }));
-    unsubs.push(onSnapshot(collection(fs, "users", u.uid, "library"), s => { LIB = {}; s.forEach(d => LIB[d.id] = d.data()); render(); autoInstall(); }, e => toast("ما قدرت أقرأ مكتبتك: " + e.code)));
+    unsubs.push(onSnapshot(collection(fs, "users", u.uid, "library"), s => { LIB = {}; s.forEach(d => LIB[d.id] = d.data()); render(); autoInstall(); sendOwned(); }, e => toast("ما قدرت أقرأ مكتبتك: " + e.code)));
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "friends"), s => { FRIENDS = {}; s.forEach(d => FRIENDS[d.id] = d.data()); watchChats(); frBadge(); watchPresence(); if (curView === "friends") renderFriends(); }, () => {}));
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "achievements"), s => { ACH = {}; s.forEach(d => ACH[d.id] = d.data()); publishProfile(); if (curView === "account") renderProfile(); }, () => {}));
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "refunds"), s => { REFUNDS = {}; s.forEach(d => REFUNDS[d.id] = d.data()); render(); }, () => {}));

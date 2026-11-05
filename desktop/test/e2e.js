@@ -63,6 +63,18 @@ app.whenReady().then(async () => {
     await call('ps:stop', 'blockfall--gold');
     ok('BLOCKFALL closes from the Close button', await waitFor(async () => !(await call('ps:getRunning'))['blockfall--gold'], 40000));
     ok('BLOCKFALL process gone', await waitFor(() => !procAlive(), 15000));
+    // ---- the Developer edition and the editions the launcher can switch between
+    await call('ps:setOwned', { blockfall: ['demo', 'gold', 'dev'] });
+    let acc = {}; try { acc = JSON.parse(fs.readFileSync(path.join(bfData, 'premium_account.json'), 'utf8')); } catch (e) {}
+    ok('launcher knows the owned editions', JSON.stringify((acc.owned || {}).blockfall) === '["demo","gold","dev"]', JSON.stringify(acc.owned));
+    await call('ps:install', 'blockfall--dev', { edition: 'dev' });
+    await call('ps:launch', 'blockfall--dev');
+    let lic2 = null; try { lic2 = JSON.parse(fs.readFileSync(path.join(bfData, 'license.json'), 'utf8')); } catch (e) {}
+    ok('Developer edition handed to the launcher', lic2 && lic2.ed === 'dev', lic2 && lic2.ed);
+    ok('BLOCKFALL Developer opens', await waitFor(() => { const s = state(); return s && s.open && Date.now() - s.at < 15000; }, 90000));
+    await call('ps:stop', 'blockfall--dev');
+    ok('BLOCKFALL Developer closes', await waitFor(async () => !(await call('ps:getRunning'))['blockfall--dev'], 40000));
+    await waitFor(() => !procAlive(), 15000);
     // ---- started outside Premium Studio: must hand over and come back through the app (like Steam)
     app.on('second-instance', (e, argv) => console.log('second-instance argv:', JSON.stringify(argv)));
     const { app: _a, shell } = require('electron');
@@ -70,9 +82,9 @@ app.whenReady().then(async () => {
     const dcp = require('child_process').spawn(path.join(process.env.LOCALAPPDATA, 'Programs', 'TERRAVOLT', 'BLOCKFALL3001.exe'), ['--enable-logging'], { env: { ...process.env, ELECTRON_ENABLE_LOGGING: '1' } });
     let dout = ''; dcp.stdout.on('data', d => dout += d); dcp.stderr.on('data', d => dout += d); dcp.on('exit', c => console.log('direct launcher exited:', c, dout.slice(-3000)));
     setTimeout(() => console.log('after 20s: handoff file?', fs.existsSync(path.join(bfData, 'premium_handoff.json')), 'alive?', procAlive()), 20000);
-    ok('BLOCKFALL started directly goes through Premium Studio', await waitFor(async () => !!(await call('ps:getRunning'))['blockfall--gold'], 90000));
-    await call('ps:stop', 'blockfall--gold');
-    await waitFor(async () => !(await call('ps:getRunning'))['blockfall--gold'], 40000);
+    const bfRun = async () => Object.keys(await call('ps:getRunning')).find(k => k.startsWith('blockfall'));
+    ok('BLOCKFALL started directly goes through Premium Studio', await waitFor(bfRun, 90000), await bfRun());
+    const k = await bfRun(); if (k) { await call('ps:stop', k); await waitFor(async () => !(await bfRun()), 40000); }
   } catch (e) { ok('no crash', false, e && e.stack || String(e)); }
   fs.writeFileSync(path.join(__dirname, 'e2e-result.txt'), results.join('\n') + '\n');
   console.log('\n' + results.join('\n') + `\n${failed ? failed + ' FAILED' : 'ALL PASSED'}`);
