@@ -5,9 +5,10 @@ const { app, ipcMain, BrowserWindow } = require('electron');
 const tmp = path.join(os.tmpdir(), 'pse2e');
 const FIRST = app.requestSingleInstanceLock();   // a premiumstudio:// link starts a second copy; it only passes the link on
 if (FIRST) fs.rmSync(tmp, { recursive: true, force: true });
-process.env.LOCALAPPDATA = path.join(tmp, 'Local'); process.env.APPDATA = path.join(tmp, 'Roaming');
-fs.mkdirSync(process.env.APPDATA, { recursive: true });
-app.setPath('appData', process.env.APPDATA); app.setPath('userData', path.join(tmp, 'ud'));
+// the launcher finds %APPDATA% itself (not from the environment), so both use the machine's real one, like on a player's PC
+process.env.LOCALAPPDATA = path.join(tmp, 'Local');
+app.setPath('userData', path.join(tmp, 'ud'));
+if (FIRST) fs.rmSync(path.join(app.getPath('appData'), '.terravolt'), { recursive: true, force: true });
 require('../main.js');
 const ev = { senderFrame: { url: 'https://premiumstudiogames.github.io/' } };
 const call = (ch, ...a) => ipcMain._invokeHandlers.get(ch)(ev, ...a);
@@ -16,7 +17,7 @@ const results = []; let failed = 0;
 const ok = (name, cond, extra) => { results.push(`${cond ? 'PASS' : 'FAIL'}  ${name}${extra ? '  (' + extra + ')' : ''}`); if (!cond) failed++; console.log(results[results.length - 1]); };
 async function waitFor(fn, ms) { const t0 = Date.now(); while (Date.now() - t0 < ms) { try { if (await fn()) return true; } catch (e) {} await sleep(1000); } return false; }
 const desk = path.join(os.homedir(), 'Desktop'), lnk = path.join(desk, 'BLOCKFALL 3001.lnk');
-const bfData = path.join(process.env.APPDATA, '.terravolt');
+const bfData = path.join(app.getPath('appData'), '.terravolt');
 const state = () => { try { return JSON.parse(fs.readFileSync(path.join(bfData, 'premium_state.json'), 'utf8')); } catch (e) { return null; } };
 const procAlive = () => require('child_process').execSync('tasklist /FI "IMAGENAME eq BLOCKFALL3001.exe" /NH').toString().includes('BLOCKFALL3001.exe');
 
