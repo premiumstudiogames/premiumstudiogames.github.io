@@ -27,7 +27,7 @@ const PACKS = [             // must match coinPacks() in firestore.rules (coins 
   {id:"u100000",coins:100000, price:1000000}
 ];
 const coins = n => ((n || 0) / COIN_UNIT).toLocaleString("en-US", {minimumFractionDigits:0, maximumFractionDigits:4});
-const SITE_VERSION = "00.00.14";
+const SITE_VERSION = "00.00.15";
 const APP_DL = "downloads/PremiumStudioSetup.exe";
 
 const fb = initializeApp(firebaseConfig);
@@ -205,8 +205,9 @@ function edInstall(g, ed){
   if (prog) return `<div class="edinst">${head}<span class="num" data-progt>${progText(prog)}</span></div><div class="bar" data-prog="${key}"><i style="width:${pct(prog)}%"></i></div></div>`;
   if (inst && RUNNING[key]) {
     const mins = Math.max(0, Math.floor((Date.now() - RUNNING[key].since) / 60000));
-    return `<div class="edinst running">${head}<span class="st run">● شغالة</span><span class="num muted" style="font-size:12px">${mins ? mins + " د" : "الحين"}</span></div>
-      <div class="row"><button class="btn play" data-act="launch" ${a}>إظهار</button><button class="btn danger mini" data-act="stop" ${a}>إيقاف</button></div></div>`;
+    const cl = RUNNING[key].closing;
+    return `<div class="edinst running">${head}<span class="st run">● ${cl ? "يتقفل…" : "شغالة"}</span><span class="num muted" style="font-size:12px">${mins ? mins + " د" : "الحين"}</span></div>
+      <div class="row"><button class="btn danger" data-act="stop" ${a} ${cl ? "disabled" : ""}>${cl ? "جاري الإغلاق…" : "إغلاق"}</button></div></div>`;
   }
   if (inst) {
     const L = LATEST[g.id], bf = m && m.type === "bf-launcher";
@@ -233,7 +234,7 @@ document.addEventListener("click", async e => {
     try { await PS.launch(key, ed); } catch(err) { toast("ما اشتغلت اللعبة: " + (err && err.message || err)); }
     b.disabled = false; b.textContent = t; }
   else if (act === "folder") { PS.showFolder(key); }
-  else if (act === "stop") { b.disabled = true; try { await PS.stop(key); } catch(err) { toast("ما وقفت: " + (err && err.message || err)); b.disabled = false; } }
+  else if (act === "stop") { b.disabled = true; b.textContent = "جاري الإغلاق…"; try { await PS.stop(key); } catch(err) { toast("ما انقفلت: " + (err && err.message || err)); b.disabled = false; b.textContent = "إغلاق"; } }
   else if (act === "uninstall") { const nm = (g.en || g.title) + (ED_TAG[ed] ? " " + ED_TAG[ed] : "");
     confirmModal(`حذف ${nm}؟`, "تنحذف اللعبة وأيقونتها من سطح المكتب. تقدر تثبّتها مرة ثانية من مكتبتك أي وقت.", "حذف", async () => { try { await PS.uninstall(key); toast("انحذفت " + nm); } catch(err) { toast("ما انحذفت: " + (err && err.message || err)); } refreshInstalled(); }); }
 });

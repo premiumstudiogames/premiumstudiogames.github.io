@@ -68,8 +68,7 @@ async function setUser(u) {
 function closeRunningGames() {
   if (process.platform === 'win32') { try { require('child_process').execSync('taskkill /IM BLOCKFALL3001.exe /F', { stdio: 'ignore' }); } catch (e) {} }
   for (const k of [...running.keys()]) if (!gameWins.has(k)) markStopped(k);
-  const wins = [...gameWins.values()].filter(w => !w.isDestroyed());
-  return Promise.all(wins.map(w => new Promise(res => { const t = setTimeout(res, 6000); w.once('closed', () => { clearTimeout(t); res(); }); try { w.close(); } catch (e) { res(); } })));
+  return Promise.all([...gameWins.keys()].map(closeWebGame));
 }
 const playerName = () => (currentUser && (currentUser.username || currentUser.name)) || '';
 // BLOCKFALL's launcher: the Premium Studio account it should play under
@@ -153,7 +152,7 @@ function addPlaytime(r, ms) {
   return fbCommit([{ update: { name: `${FB_DB}/users/${currentUser.uid}/play/${r.game}`, fields: { game: { stringValue: r.game } } }, updateMask: { fieldPaths: ['game'] },
     updateTransforms: [{ fieldPath: 'minutes', increment: { integerValue: String(min) } }, { fieldPath: 'last', setToServerValue: 'REQUEST_TIME' }] }]);
 }
-const runningList = () => Object.fromEntries([...running].map(([k, v]) => [k, { since: v.since, game: v.game }]));
+const runningList = () => Object.fromEntries([...running].map(([k, v]) => [k, { since: v.since, game: v.game, closing: stopping.has(k) || !!v.closing }]));
 function runningChanged() {
   if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('ps:running', runningList());
   updateTray();
@@ -173,6 +172,11 @@ function markStopped(key) {
 // BLOCKFALL runs as its own program: watch its process
 let bfTimer = null;
 function bfAlive() {
+  // newer launchers say whether a window is open (it may stay in the tray after you close it)
+  try { const st = JSON.parse(fs.readFileSync(path.join(BF_DATA, 'premium_state.json'), 'utf8'));
+    if (Date.now() - st.at < 15000) return Promise.resolve(!!st.open);
+    if (Date.now() - st.at < 600000) return Promise.resolve(false);   // it was reporting and stopped: closed
+  } catch (e) {}
   return new Promise(res => {
     if (process.platform !== 'win32') return res(false);
     require('child_process').execFile('tasklist', ['/FI', 'IMAGENAME eq BLOCKFALL3001.exe', '/NH'], { windowsHide: true }, (e, out) => res(!e && /BLOCKFALL3001\.exe/i.test(out || '')));
@@ -184,8 +188,10 @@ function watchBf() {
   bfTimer = setInterval(async () => {
     const bfKeys = [...running.keys()].filter(k => (readReg()[k] || {}).type === 'bf-launcher');
     if (!bfKeys.length) { clearInterval(bfTimer); bfTimer = null; return; }
+    if (bfKeys.some(k => stopping.has(k))) return;
+    if (bfKeys.some(k => Date.now() - running.get(k).since < 45000) && !(await bfAlive())) return;   // still starting (or updating itself)
     if (await bfAlive()) { misses = 0; return; }
-    if (++misses >= 2) { bfKeys.forEach(markStopped); clearInterval(bfTimer); bfTimer = null; }
+    if (++misses >= 3) { bfKeys.forEach(markStopped); clearInterval(bfTimer); bfTimer = null; }
   }, 5000);
 }
 /* ---------------- cloud saves (like Steam Cloud) ----------------
@@ -220,16 +226,46 @@ async function cloudPush(key, json) {
     updateTransforms: [{ fieldPath: 'at', setToServerValue: 'REQUEST_TIME' }] }]);
   const reg = readReg(); if (reg[key]) { reg[key].cloudUid = currentUser.uid; reg[key].cloudAt = Date.now() + 5000; await writeReg(reg); }
 }
+const lastSave = new Map();   // install key -> localStorage JSON from the game page (latest)
+async function snapshot(key) {
+  const w = gameWins.get(key); if (!w || w.isDestroyed()) return;
+  try { const json = await Promise.race([w.webContents.executeJavaScript('JSON.stringify(Object.assign({}, localStorage))'), new Promise(r => setTimeout(() => r(null), 2000))]);
+    if (typeof json === 'string') lastSave.set(key, json); } catch (e) {}
+}
+setInterval(() => { for (const k of gameWins.keys()) snapshot(k); }, 60000);
+// close a web game: take its saves first, then close; resolves after it's closed and the saves went up
+function closeWebGame(key) {
+  const w = gameWins.get(key); if (!w || w.isDestroyed()) return Promise.resolve();
+  return snapshot(key).then(() => new Promise(res => { const t = setTimeout(res, 6000); w.once('closed', () => { clearTimeout(t); res(); }); w.close(); }))
+    .then(() => pushing.get(key)).catch(() => {});
+}
+const pushing = new Map();
+ipcMain.on('game:save', (e, json) => {
+  const k = [...gameWins].find(([, w]) => !w.isDestroyed() && w.webContents === e.sender);
+  if (k && typeof json === 'string') lastSave.set(k[0], json);
+  e.returnValue = true;
+});
 ipcMain.on('game:cloud', e => {
   const k = [...gameWins].find(([, w]) => !w.isDestroyed() && w.webContents === e.sender);
   const r = k && cloudRestore.get(k[0]); if (k) cloudRestore.delete(k[0]);
   e.returnValue = r || null;
 });
 
-function stopGame(key) {
+const stopping = new Set();
+async function stopGame(key) {
   const g = readReg()[key];
-  if (g && g.type === 'bf-launcher') { if (process.platform === 'win32') { try { require('child_process').execSync('taskkill /IM BLOCKFALL3001.exe /F', { stdio: 'ignore' }); } catch (e) {} } markStopped(key); return; }
-  const w = gameWins.get(key); if (w && !w.isDestroyed()) w.close(); else markStopped(key);
+  if (g && g.type === 'bf-launcher') {
+    if (stopping.has(key)) return; stopping.add(key); runningChanged();
+    // ask the launcher to save and close; if it doesn't, close it
+    try { fs.writeFileSync(path.join(BF_DATA, 'premium_cmd.json'), JSON.stringify({ cmd: 'close', at: Date.now() })); } catch (e) {}
+    const t0 = Date.now();
+    while (Date.now() - t0 < 25000) { await new Promise(r => setTimeout(r, 1000)); if (!(await bfAlive())) break; }
+    if (process.platform === 'win32') { try { require('child_process').execSync('taskkill /IM BLOCKFALL3001.exe /F', { stdio: 'ignore' }); } catch (e) {} }
+    try { fs.rmSync(path.join(BF_DATA, 'premium_cmd.json'), { force: true }); } catch (e) {}
+    stopping.delete(key); markStopped(key); return;
+  }
+  const w = gameWins.get(key);
+  if (w && !w.isDestroyed()) { const r = running.get(key); if (r) r.closing = true; runningChanged(); await closeWebGame(key); } else markStopped(key);
 }
 
 /* ---------------- tray: the app keeps running in the background, like Steam ---------------- */
@@ -243,7 +279,7 @@ function updateTray() {
     { label: 'الأصدقاء', click: () => createMain('friends') },
     { type: 'separator' }
   ];
-  if (running.size) for (const [k, r] of running) items.push({ label: `▶ ${r.name} — إيقاف`, click: () => stopGame(k) });
+  if (running.size) for (const [k, r] of running) items.push({ label: `■ إغلاق ${r.name}`, click: () => stopGame(k) });
   else for (const [k, v] of games.slice(0, 8)) items.push({ label: v.name, click: () => playFromOutside(k) });
   items.push({ type: 'separator' }, { label: 'خروج من Premium Studio', click: () => { quitting = true; app.quit(); } });
   tray.setContextMenu(Menu.buildFromTemplate(items));
@@ -288,6 +324,7 @@ function launchGame(id, edition) {
     if (curEd !== 'own' && curEd !== g.edition && process.platform === 'win32') { try { require('child_process').execSync('taskkill /IM BLOCKFALL3001.exe /F', { stdio: 'ignore' }); } catch (e) {} }
     writeBfLicense(g.edition, g.unlock);
     writeBfAccount();
+    try { fs.rmSync(path.join(BF_DATA, 'premium_cmd.json'), { force: true }); } catch (e) {}
     const { spawn } = require('child_process');
     const child = spawn(BF_EXE, [], { cwd: BF_DIR, detached: true, stdio: 'ignore' });
     child.unref();
@@ -311,16 +348,10 @@ function launchGame(id, edition) {
   });
   const q = g.edition === 'demo' ? '?demo=1' : '';
   w.loadURL(`psgame://${id}/${g.entry}${q}`);
-  let saved = false;
-  w.on('close', ev => {
-    if (saved || w.webContents.isDestroyed()) return;
-    ev.preventDefault(); saved = true;
-    const done = () => { if (!w.isDestroyed()) w.destroy(); };
-    const t = setTimeout(done, 4000);
-    w.webContents.executeJavaScript('JSON.stringify(Object.assign({}, localStorage))', true)
-      .then(json => cloudPush(id, json)).catch(() => {}).finally(() => { clearTimeout(t); done(); });
-  });
-  w.on('closed', () => { gameWins.delete(id); markStopped(id); });
+  // the game page hands over its saved data as it unloads (game-preload.js); it goes to the account after the window closes
+  w.on('closed', () => { gameWins.delete(id); const snap = lastSave.get(id); lastSave.delete(id);
+    if (snap) { const p = cloudPush(id, snap).catch(() => {}); pushing.set(id, p); p.finally(() => pushing.delete(id)); }
+    markStopped(id); });
   gameWins.set(id, w);
   markRunning(id);
 }

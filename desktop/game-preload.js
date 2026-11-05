@@ -14,3 +14,6 @@ try {
   const c = ipcRenderer.sendSync('game:cloud');
   if (c) { if (c.clear) localStorage.clear(); for (const [k, v] of Object.entries(c.data || {})) localStorage.setItem(k, String(v)); }
 } catch (e) {}
+// as the game closes, hand its saved data to the app (it goes to your account)
+const handOver = () => { try { ipcRenderer.sendSync('game:save', JSON.stringify(Object.assign({}, localStorage))); } catch (e) {} };
+window.addEventListener('beforeunload', handOver); window.addEventListener('pagehide', handOver);
