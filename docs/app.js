@@ -27,7 +27,7 @@ const PACKS = [             // must match coinPacks() in firestore.rules (coins 
   {id:"u100000",coins:100000, price:1000000}
 ];
 const coins = n => ((n || 0) / COIN_UNIT).toLocaleString("en-US", {minimumFractionDigits:0, maximumFractionDigits:4});
-const SITE_VERSION = "00.00.18";
+const SITE_VERSION = "00.00.19";
 const APP_DL = "downloads/PremiumStudioSetup.exe";
 
 const fb = initializeApp(firebaseConfig);
@@ -59,7 +59,7 @@ const GAMES = [
           "اجمع بلوكات بأحجام مختلفة من 20 سم إلى متر كامل، اصنع أدواتك وأسلحتك، وابنِ مركباتك فوق منصة الرفع."],
    feat:["قصة من 5 فصول تغطي 2998 إلى 3001","بلوكات بأحجام مختلفة ومركبات تبنيها بنفسك","صناعة مثل ماينكرافت وأكثر من 100 سلاح واقعي","زومبي بستة أنواع ومرتزقة بالـ AK-47","دعم يد PS5 و Xbox"],
    tags:["بناء","نجاة","قصة","أكشن"],
-   editions:[{id:"demo",name:"Demo",price:0,d:"جرّب أول العالم مجانًا"},{id:"std",name:"BLOCKFALL 3001",price:39.99,d:"اللعبة كاملة"},{id:"gold",name:"BLOCKFALL 3001 Gold",price:99.99,d:"الإصدار الذهبي",gold:true}]},
+   editions:[{id:"demo",name:"Demo",price:0,d:"جرّب أول العالم مجانًا"},{id:"std",name:"BLOCKFALL 3001",price:39.99,d:"اللعبة كاملة"},{id:"gold",name:"BLOCKFALL 3001 Gold",price:99.99,d:"الإصدار الذهبي",gold:true},{id:"dev",name:"BLOCKFALL 3001 المبرمج",price:null,studio:true,d:"فيه «المبرمج»: تعديل خلفية القائمة ومشهدها"}]},
   {id:"last-recording", title:"التسجيل الأخير", en:"THE LAST RECORDING", ar:true, sub:"رعب نفسي · قصة · أونلاين",
    tagline:"شريط واحد. ليلة واحدة. مول ما يطلع منه أحد.",
    about:["ليلة 3 نوفمبر 1999، الساعة 3:33 الفجر. مول متعدد الطوابق بإضاءة نيون، وكاميرا فيديو قديمة في يدك ما زالت تسجّل.",
@@ -68,7 +68,7 @@ const GAMES = [
    tags:["رعب نفسي","قصة","أونلاين"],
    editions:[{id:"demo",name:"Demo",price:0,d:"جرّب أول جزء مجانًا"},{id:"std",name:"التسجيل الأخير",price:69.99,d:"اللعبة كاملة"},{id:"gold",name:"التسجيل الأخير · الذهبي",price:999999.99,d:"الإصدار الذهبي مع البيضة الذهبية",gold:true,egg:true}]}
 ];
-const RANK = {demo:0, std:1, gold:2};
+const RANK = {demo:0, std:1, gold:2, dev:3};
 const byId = id => GAMES.find(g => g.id === id);
 const edName = (g, id) => (g.editions.find(e => e.id === id) || {name:id}).name;
 GAMES.forEach(g => { for (const sel of ["#fGame", "#cGame"]) { const o = document.createElement("option"); o.value = g.id; o.textContent = g.en || g.title; $(sel).appendChild(o); } });
@@ -238,7 +238,7 @@ const pct = p => p.total ? Math.min(100, Math.round(p.received / p.total * 100))
 const progText = p => p.phase === "extract" ? "جاري فك الملفات…" : `${mb(p.received||0)} / ${mb(p.total||0)}`;
 
 /* the install / play block, Steam style. Every owned edition installs and plays as its own game. */
-const ED_TAG = {demo:"Demo", std:"Standard", gold:"Gold"};
+const ED_TAG = {demo:"Demo", std:"Standard", gold:"Gold", dev:"المبرمج"};
 const ownedEds = gid => Object.values(LIB).filter(v => v.game === gid && v.status !== "pending").map(v => v.edition).sort((a, b) => RANK[a] - RANK[b]);
 const instOf = (gid, ed) => { for (const [k, v] of Object.entries(INSTALLED)) if (v.game === gid && v.edition === ed) return [k, v]; return [`${gid}--${ed}`, null]; };
 const anyInstalled = gid => Object.values(INSTALLED).some(v => v.game === gid);
@@ -347,8 +347,8 @@ function renderGame(g){
     ${best ? `<div class="ownbox"><div class="row" style="justify-content:space-between"><b>في مكتبتك</b>${stPill(best.status)}</div><div class="muted" style="font-size:13px">${esc(edName(g, best.edition))} · ${fdate(best.at)}</div>${installBlock(g)}</div>` : ""}
     ${pending ? `<div class="ownbox pend"><div class="row" style="justify-content:space-between"><b>${esc(edName(g, pending.edition))}</b>${stPill("pending")}</div><div class="muted" style="font-size:13px">طلبك وصل للاستوديو. تقدر تلعب بعد تأكيد الدفع.</div></div>` : ""}
     ${g.editions.map(e => { const has = (LIB[`${g.id}__${e.id}`] && LIB[`${g.id}__${e.id}`].status !== "pending") || (e.price > 0 && RANK[e.id] <= mineRank), isPend = pending && pending.edition === e.id;
-      return `<div class="ed ${e.gold ? "gold" : ""}"><div class="h"><span class="n">${esc(e.name)}${e.egg ? '<span class="egg" aria-hidden="true"></span>' : ""}</span><span class="price" style="font-size:18px">${money(e.price)}</span></div><div class="d">${esc(e.d)}</div>
-      ${has ? '<button class="btn" disabled>عندك هذا الإصدار</button>' : isPend ? '<button class="btn" disabled>بانتظار الدفع</button>' : `<button class="btn ${e.price ? "buy" : ""}" data-ed="${e.id}">${e.price ? (best ? "ترقية إلى هذا الإصدار" : "شراء") : "أضف الديمو للمكتبة"}</button>`}</div>`; }).join("")}
+      return `<div class="ed ${e.gold ? "gold" : ""}${e.studio ? " studio" : ""}"><div class="h"><span class="n">${esc(e.name)}${e.egg ? '<span class="egg" aria-hidden="true"></span>' : ""}</span><span class="price" style="font-size:${e.studio ? 13 : 18}px">${e.studio ? "من الاستوديو" : money(e.price)}</span></div><div class="d">${esc(e.d)}</div>
+      ${has ? '<button class="btn" disabled>عندك هذا الإصدار</button>' : e.studio ? '<button class="btn" disabled>يعطيها الاستوديو للمطورين</button>' : isPend ? '<button class="btn" disabled>بانتظار الدفع</button>' : `<button class="btn ${e.price ? "buy" : ""}" data-ed="${e.id}">${e.price ? (best ? "ترقية إلى هذا الإصدار" : "شراء") : "أضف الديمو للمكتبة"}</button>`}</div>`; }).join("")}
   </aside></div>`;
   cover(v.querySelector(".banner"), g.id);
   v.querySelectorAll("[data-ed]:not([data-act])").forEach(b => b.onclick = () => buy(g, g.editions.find(e => e.id === b.dataset.ed)));
@@ -671,10 +671,13 @@ function renderStudio(){
   const coBy = {}; COINORDERS.forEach(o => (coBy[o.uid] = coBy[o.uid] || []).push(o));
   if (!list.length) tb.innerHTML = `<tr><td colspan="6" class="muted" style="text-align:center;padding:24px">${Object.keys(USERS).length ? "ما فيه نتائج تطابق البحث" : "ما سجّل أحد للحين."}</td></tr>`;
   list.forEach(p => { const tr = document.createElement("tr");
-    tr.innerHTML = `<td class="pidtag">${fmtPid(p.pid)}</td><td><b></b></td><td class="ltr"></td><td><div class="row" style="gap:6px;flex-wrap:nowrap"><span class="coin" aria-hidden="true"></span><b class="num">${coins(p.coins)}</b><button class="btn mini" data-coins>تعديل</button></div></td><td>${fdate(p.joined)}</td><td><div class="gl">${(coBy[p.id] || []).filter(o => o.status === "pending").map(o => `<div class="gi"><span class="num">${coins(o.coins)} PS COIN</span><span class="num muted">${money(o.price)}</span>${stPill("pending")}<button class="btn mini" data-copay="${esc(o.ref.id)}">تأكيد الدفع</button><button class="btn mini danger" data-corej="${esc(o.ref.id)}">رفض</button></div>`).join("")}${p.orders.length ? p.orders.map((o, i) => { const g = byId(o.game);
+    tr.innerHTML = `<td class="pidtag">${fmtPid(p.pid)}</td><td><b></b></td><td class="ltr"></td><td><div class="row" style="gap:6px;flex-wrap:nowrap"><span class="coin" aria-hidden="true"></span><b class="num">${coins(p.coins)}</b><button class="btn mini" data-coins>تعديل</button></div><div class="row" style="gap:4px;margin-top:6px;flex-wrap:nowrap"><select data-gsel aria-label="نسخة">${GAMES.map(g => g.editions.map(e => `<option value="${g.id}__${e.id}">${esc(e.name)}</option>`).join("")).join("")}</select><button class="btn mini" data-grant>منح</button></div></td><td>${fdate(p.joined)}</td><td><div class="gl">${(coBy[p.id] || []).filter(o => o.status === "pending").map(o => `<div class="gi"><span class="num">${coins(o.coins)} PS COIN</span><span class="num muted">${money(o.price)}</span>${stPill("pending")}<button class="btn mini" data-copay="${esc(o.ref.id)}">تأكيد الدفع</button><button class="btn mini danger" data-corej="${esc(o.ref.id)}">رفض</button></div>`).join("")}${p.orders.length ? p.orders.map((o, i) => { const g = byId(o.game);
       return `<div class="gi"><span>${esc(g ? (g.en || g.title) : o.game)} · ${esc(g ? edName(g, o.edition) : o.edition)}</span><span class="num muted">${money(o.price || 0)}</span>${o.code ? `<span class="tag ltr">${esc(o.code)}</span>` : ""}${stPill(o.status)}${o.status === "pending" ? `<button class="btn mini" data-pay="${i}">تأكيد الدفع</button><button class="btn mini" data-gift="${i}">منح مجاني</button><button class="btn mini danger" data-rej="${i}">رفض</button>` : ""}${(() => { const r = ALLREFUNDS[p.id + "/" + o.ref.id]; return r && r.status === "pending" ? `<span class="st pending">يطلب استرجاع · لعب ${r.minutes} د</span><button class="btn mini" data-rfok="${i}">وافق وارجع ${money(r.price)}</button><button class="btn mini danger" data-rfno="${i}">ارفض</button>` : ""; })()}</div>`; }).join("") : '<span class="muted">ما عنده ألعاب</span>'}</div></td>`;
     tr.children[1].firstChild.textContent = p.name || "—"; if (p.username) { const sm = document.createElement("div"); sm.className = "muted ltr"; sm.style.fontSize = "12px"; sm.textContent = "@" + p.username; tr.children[1].appendChild(sm); } tr.children[2].textContent = p.email || "—";
     tr.querySelector("[data-coins]").onclick = () => coinAdjust(p);
+    tr.querySelector("[data-grant]").onclick = async ev => { const v = tr.querySelector("[data-gsel]").value, [game, edition] = v.split("__"), b = ev.target; b.disabled = true;
+      try { await setDoc(doc(fs, "users", p.id, "library", v), {game, edition, price:0, status:"granted", at:serverTimestamp()}); toast(`انمنحت ${edName(byId(game), edition)} لـ ${p.name || "اللاعب"} ✓`); }
+      catch(e) { toast("ما انمنحت: " + (e.code || e.message)); } b.disabled = false; };
     tr.querySelectorAll("[data-copay]").forEach(b => b.onclick = async () => { const o = (coBy[p.id] || []).find(x => x.ref.id === b.dataset.copay); if (!o) return; b.disabled = true;
       try { const bt = writeBatch(fs); bt.update(o.ref, {status:"paid", paidAt:serverTimestamp()}); bt.update(doc(fs, "users", p.id), {coins:increment(o.coins)}); await bt.commit(); toast(`انضاف ${coins(o.coins)} PS COIN لـ ${p.name || "اللاعب"} ✓`); }
       catch(e) { b.disabled = false; toast("ما تحدّث الطلب: " + e.code); } });

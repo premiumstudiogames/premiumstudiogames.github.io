@@ -377,3 +377,6 @@ body.hasbar .toast{bottom:calc(48px + env(safe-area-inset-bottom,0px))}
 @media (max-width:640px){.dlbar-l,.dlbar-r,.dlbar-p{display:none}}
 body.hasbar .dlchip{display:none!important}
 @media (max-width:640px){.brand b{display:none}.top .in{gap:10px}.coinchip small{display:none}.me .mewho{display:none}}
+
+.ed.studio{border-color:#1f6b45;background:linear-gradient(135deg,rgba(60,220,130,.10),transparent)}
+.ed.studio .n{color:#7dffb2}

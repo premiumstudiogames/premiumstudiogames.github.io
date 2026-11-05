@@ -22,7 +22,7 @@ const LOCAL = process.env.LOCALAPPDATA || app.getPath('userData');
 const GAMES_DIR = path.join(LOCAL, 'PremiumStudio', 'games');
 const REG_FILE = path.join(GAMES_DIR, 'installed.json');
 const validId = id => typeof id === 'string' && /^[a-z0-9-]{1,40}$/.test(id);
-const EDITIONS = ['demo', 'std', 'gold'];
+const EDITIONS = ['demo', 'std', 'gold', 'dev'];
 
 // Where each kind of game lives on disk.
 // bf-launcher: BLOCKFALL's own Windows launcher, in the folder it expects (it updates itself and the game from its CDN).
@@ -31,7 +31,7 @@ const BF_EXE = path.join(BF_DIR, 'BLOCKFALL3001.exe');
 const BF_DATA = path.join(app.getPath('appData'), '.terravolt');
 function gameDir(id, m) { return m && m.type === 'bf-launcher' ? BF_DIR : path.join(GAMES_DIR, id); }
 // Every owned edition installs as its own game. Install key = "<game>--<edition>" (older installs keep the plain game id).
-const ED_LABEL = { demo: 'Demo', std: 'Standard', gold: 'Gold' };
+const ED_LABEL = { demo: 'Demo', std: 'Standard', gold: 'Gold', dev: 'المبرمج' };
 const edTitle = (name, ed) => name + (ED_LABEL[ed] ? ' ' + ED_LABEL[ed] : '');
 function keyInfo(key) {
   const r = readReg()[key];
@@ -275,6 +275,15 @@ async function stopGame(key) {
   if (w && !w.isDestroyed()) { const r = running.get(key); if (r) r.closing = true; runningChanged(); await closeWebGame(key); } else markStopped(key);
 }
 
+async function quitApp() {
+  if (running.size) {
+    const { dialog } = require('electron');
+    const r = await dialog.showMessageBox({ type: 'question', title: 'Premium Studio', icon: ICON, message: 'فيه لعبة شغالة', detail: [...running.values()].map(x => x.name).join('، ') + '\nتنقفل اللعبة (بعد ما تحفظ) ويطلع Premium Studio.', buttons: ['أقفلها واطلع', 'إلغاء'], defaultId: 0, cancelId: 1 });
+    if (r.response !== 0) return;
+    await Promise.all([...running.keys()].map(k => stopGame(k)));
+  }
+  quitting = true; app.quit();
+}
 /* ---------------- tray: the app keeps running in the background, like Steam ---------------- */
 let tray = null, quitting = false;
 function updateTray() {
@@ -288,7 +297,7 @@ function updateTray() {
   ];
   if (running.size) for (const [k, r] of running) items.push({ label: `■ إغلاق ${r.name}`, click: () => stopGame(k) });
   else for (const [k, v] of games.slice(0, 8)) items.push({ label: v.name, click: () => playFromOutside(k) });
-  items.push({ type: 'separator' }, { label: 'خروج من Premium Studio', click: () => { quitting = true; app.quit(); } });
+  items.push({ type: 'separator' }, { label: 'خروج من Premium Studio', click: () => quitApp() });
   tray.setContextMenu(Menu.buildFromTemplate(items));
   tray.setToolTip(running.size ? 'Premium Studio — ' + [...running.values()].map(r => r.name).join('، ') : 'Premium Studio');
 }
@@ -360,8 +369,10 @@ async function launchWithUpdate(id, edition) {
       if (m) { const l = await latestOf(m); if (l.version && l.version !== g.version) { splashStatus('يحمّل التحديث ' + l.version + '…'); await install(id); } }
     } catch (e) { /* offline: play the copy we have */ }
   }
+  if (g && g.type === 'bf-launcher' && !running.has(id)) { splashStatus('يتحقق من التحديثات…'); try { await Promise.race([bfAppUpdate(((await fetchManifest()).games || {}).blockfall), new Promise(r => setTimeout(r, 15000))]); } catch (e) {} }
   if (g && g.type === 'manifest' && !running.has(id)) { splashStatus('يجيب حفظك من السحابة…'); try { await cloudPull(id); } catch (e) {} }
   splashStatus('جاري التشغيل');
+  try { const reg = readReg(); if (reg[id]) { reg[id].lastPlayed = Date.now(); await writeReg(reg); } } catch (e) {}
   try { launchGame(id, edition); } catch (e) { closeSplash(); throw e; }
 }
 function launchGame(id, edition) {
@@ -376,15 +387,12 @@ function launchGame(id, edition) {
     writeBfAccount();
     try { fs.rmSync(path.join(BF_DATA, 'premium_cmd.json'), { force: true }); } catch (e) {}
     const { spawn } = require('child_process');
-    guardBfShortcut(90000);
     const child = spawn(BF_EXE, ['--premium'], { cwd: BF_DIR, detached: true, stdio: 'ignore' });
     // the starting window stays until BLOCKFALL shows up
     (async () => { const t0 = Date.now(); while (splashKey === id && Date.now() - t0 < 30000) { await new Promise(r => setTimeout(r, 700)); if (await bfAlive()) break; } if (splashKey === id) closeSplash(); })();
     child.unref();
     for (const k of [...running.keys()]) if ((readReg()[k] || {}).type === 'bf-launcher' && k !== id) markStopped(k);
     markRunning(id);
-    // the launcher re-adds its own "BLOCKFALL 3001" shortcuts each start; put ours (one per edition) back
-    setTimeout(fixBfShortcuts, 1500); setTimeout(fixBfShortcuts, 6000);
     return;
   }
   if (gameWins.has(id) && !gameWins.get(id).isDestroyed()) { const w = gameWins.get(id); w.show(); w.focus(); return; }
@@ -424,22 +432,25 @@ function migrateReg() {
     if (changed) writeReg(reg).catch(() => {});
   } catch (e) {}
 }
-// BLOCKFALL's own launcher adds a "BLOCKFALL 3001" icon when it starts; Premium Studio makes its own (one per edition),
-// so that extra icon is removed the moment it appears
-const BF_LAUNCHER_LNK = () => [path.join(app.getPath('desktop'), 'BLOCKFALL 3001.lnk'), path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'BLOCKFALL 3001.lnk')];
-let bfWatch = null, bfWatchT = null;
-function guardBfShortcut(ms) {
-  const kill = () => { for (const f of BF_LAUNCHER_LNK()) { try { fs.rmSync(f, { force: true }); } catch (e) {} } };
-  kill();
-  clearTimeout(bfWatchT);
-  if (!bfWatch) {
-    bfWatch = [];
-    for (const f of BF_LAUNCHER_LNK()) {
-      try { const w = fs.watch(path.dirname(f), (ev, name) => { if (name && name.toLowerCase() === 'blockfall 3001.lnk') setTimeout(kill, 30); }); bfWatch.push(w); } catch (e) {}
-    }
-  }
-  bfWatchT = setTimeout(() => { for (const w of bfWatch || []) { try { w.close(); } catch (e) {} } bfWatch = null; kill(); }, ms || 60000);
+/* BLOCKFALL's launcher program: Premium Studio brings its app files up to date before starting it
+   (the same files the launcher would fetch for itself), so an older launcher never runs. */
+const vnum = v => String(v || '0').split('.').map(n => +n || 0);
+const vgt = (a, b) => { const x = vnum(a), y = vnum(b); for (let i = 0; i < Math.max(x.length, y.length); i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; };
+async function bfAppUpdate(m) {
+  try {
+    const site = (m && m.site) || 'https://abdullra7manx-cmyk.github.io/terravolt/', dir = path.join(BF_DIR, 'resources', 'app');
+    if (!fs.existsSync(dir)) return;
+    const L = await fetchJSON(new URL('launcher/launcher.json', site).href), A = L && L.app; if (!A || !A.files) return;
+    let cur = '0'; try { cur = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).version; } catch (e) {}
+    if (!vgt(A.version, cur)) return;
+    const bufs = [];
+    for (const f of A.files) { const r = await net.fetch(new URL(f.url, site).href); if (!r.ok) throw new Error('download ' + f.path);
+      const b = Buffer.from(await r.arrayBuffer()); if (crypto.createHash('sha1').update(b).digest('hex') !== f.sha1) throw new Error('sha1 ' + f.path); bufs.push([f.path, b]); }
+    for (const [p, b] of bufs) { const dest = path.join(dir, p); if (!dest.startsWith(dir)) continue; fs.writeFileSync(dest + '.new', b); fs.renameSync(dest + '.new', dest); }
+    try { const pj = path.join(dir, 'package.json'), j = JSON.parse(fs.readFileSync(pj, 'utf8')); j.version = A.version; fs.writeFileSync(pj, JSON.stringify(j, null, 2)); } catch (e) {}
+  } catch (e) { /* offline: the launcher updates itself next time */ }
 }
+// BLOCKFALL's own "BLOCKFALL 3001" icon (from installs made before Premium Studio managed it) is replaced by ours, one per edition
 function fixBfShortcuts() {
   const own = Object.entries(installedNow()).filter(([, v]) => v.type === 'bf-launcher');
   try { fs.rmSync(path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'BLOCKFALL 3001.lnk'), { force: true }); } catch (e) {}
@@ -537,6 +548,7 @@ async function install(id, opts) {
       const inner = path.join(stage, m.zipRoot || '');
       await fsp.rm(BF_DIR, { recursive: true, force: true });
       await fsp.rename(inner, BF_DIR);
+      await bfAppUpdate(m);   // the launcher program is current before it ever runs
       await fsp.rm(stage, { recursive: true, force: true }); stage = null;
       entry = 'BLOCKFALL3001.exe';
     } else if (m.type === 'manifest') {
@@ -711,6 +723,12 @@ function handleDeepLink(url) {
   try {
     const u = new URL(url), kind = u.hostname, id = u.pathname.replace(/^\/+/, '').split('/')[0];
     if (kind === 'launch' && validId(id) && installedNow()[id]) return playFromOutside(id);
+    if (kind === 'play' && validId(id)) {
+      const mine = Object.entries(installedNow()).filter(([k, v]) => (v.game || k.split('--')[0]) === id)
+        .sort((a, b) => ((b[1].lastPlayed || 0) - (a[1].lastPlayed || 0)) || (EDITIONS.indexOf(b[1].edition) - EDITIONS.indexOf(a[1].edition)));
+      if (mine.length) return playFromOutside(mine[0][0]);
+      return createMain(id);
+    }
     if (kind === 'install' && validId(id)) return createMain(id.split('--')[0], 'install=' + encodeURIComponent(id));
     createMain(validId(id) ? id : (kind === 'library' ? 'library' : ''));
   } catch (e) { createMain(); }
@@ -735,7 +753,7 @@ if (!app.requestSingleInstanceLock()) {
     Menu.setApplicationMenu(null);
     registerGameProtocol();
     migrateReg();
-    if (Object.values(installedNow()).some(v => v.type === 'bf-launcher')) guardBfShortcut(5000);
+    if (Object.values(installedNow()).some(v => v.type === 'bf-launcher')) fixBfShortcuts();   // leftover icon from older installs
     makeTray();
     handleArgv(process.argv, true);
     // start with Windows, quietly in the tray (like Steam)

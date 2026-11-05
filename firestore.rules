@@ -208,6 +208,12 @@ service cloud.firestore {
               && ((request.resource.data.price == 0 && request.resource.data.status == 'granted')
                   || (request.resource.data.price > 0 && request.resource.data.status == 'pending')))
           );
+        // the studio can give any edition (also the Developer edition, which isn't sold)
+        allow create: if isAdmin()
+          && itemId.matches('^[a-z0-9-]+__(demo|std|gold|dev)$')
+          && request.resource.data.keys().hasOnly(['game', 'edition', 'price', 'status', 'at'])
+          && request.resource.data.game + '__' + request.resource.data.edition == itemId
+          && request.resource.data.status == 'granted' && request.resource.data.price == 0;
         allow update: if isAdmin()
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'paidAt'])
           && request.resource.data.status in ['paid', 'pending', 'free', 'granted'];
