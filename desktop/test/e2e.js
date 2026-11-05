@@ -23,6 +23,9 @@ const procAlive = () => require('child_process').execSync('tasklist /FI "IMAGENA
 
 app.whenReady().then(async () => {
   if (!FIRST) return;
+  // the store page here has nobody signed in, and would sign the app out; the test signs in through the app directly
+  require('electron').session.defaultSession.webRequest.onBeforeRequest({ urls: ['https://premiumstudiogames.github.io/app.js*'] }, (d, cb) => cb({ cancel: true }));
+  for (const w of BrowserWindow.getAllWindows()) w.webContents.reload();
   await sleep(2000);
   try {
     await call('ps:setUser', { username: 'e2etest', name: 'E2E', pid: '0000000001', email: 'e2e@test.local', uid: 'E2E', refreshToken: '' });
