@@ -129,6 +129,43 @@ service cloud.firestore {
         allow delete: if isMe(uid) || (signedIn() && request.auth.uid == fid) || isAdmin();
       }
 
+      // Refunds: a paid edition, within 14 days of payment, played under 2 hours. The studio approves.
+      match /refunds/{itemId} {
+        allow read: if isMe(uid) || isAdmin();
+        allow create: if isMe(uid)
+          && request.resource.data.keys().hasOnly(['game', 'edition', 'price', 'minutes', 'status', 'at'])
+          && request.resource.data.game + '__' + request.resource.data.edition == itemId
+          && request.resource.data.status == 'pending' && request.resource.data.at == request.time
+          && exists(/databases/$(database)/documents/users/$(uid)/library/$(itemId))
+          && get(/databases/$(database)/documents/users/$(uid)/library/$(itemId)).data.status == 'paid'
+          && get(/databases/$(database)/documents/users/$(uid)/library/$(itemId)).data.paidAt > request.time - duration.value(14, 'd')
+          && request.resource.data.price == get(/databases/$(database)/documents/users/$(uid)/library/$(itemId)).data.price
+          && (!exists(/databases/$(database)/documents/users/$(uid)/play/$(request.resource.data.game))
+              || get(/databases/$(database)/documents/users/$(uid)/play/$(request.resource.data.game)).data.minutes < 120);
+        allow update, delete: if isAdmin();
+      }
+
+      // Game achievements (a game unlocks them through the Premium Studio app). Once unlocked they stay.
+      match /achievements/{aid} {
+        allow read: if isMe(uid) || isAdmin();
+        allow create: if isMe(uid)
+          && request.resource.data.keys().hasOnly(['game', 'id', 'at'])
+          && request.resource.data.game is string && request.resource.data.id is string
+          && aid == request.resource.data.game + '__' + request.resource.data.id
+          && aid.size() <= 100 && request.resource.data.at == request.time;
+        allow update: if false;
+        allow delete: if isAdmin();
+      }
+
+      // Cloud saves: a game's saved data, synced by the Premium Studio app
+      match /cloud/{game} {
+        allow read, delete: if isMe(uid) || isAdmin();
+        allow create, update: if isMe(uid)
+          && request.resource.data.keys().hasOnly(['data', 'size', 'at'])
+          && request.resource.data.data is string && request.resource.data.data.size() <= 900000
+          && request.resource.data.size is int && request.resource.data.at == request.time;
+      }
+
       // Play time per game, written by the Premium Studio app when a game closes
       match /play/{gid} {
         allow read: if isMe(uid) || isAdmin();
@@ -228,6 +265,37 @@ service cloud.firestore {
       }
     }
 
+    // Chat between friends: chats/<uidA_uidB>/msgs (ids sorted). Only the two friends read and write.
+    function chatPart(cid, i) { return cid.split('_')[i]; }
+    function inChat(cid) { return signedIn() && cid.split('_').size() == 2 && chatPart(cid, 0) < chatPart(cid, 1)
+      && (request.auth.uid == chatPart(cid, 0) || request.auth.uid == chatPart(cid, 1)); }
+    function chatOther(cid) { return request.auth.uid == chatPart(cid, 0) ? chatPart(cid, 1) : chatPart(cid, 0); }
+    match /chats/{cid}/msgs/{mid} {
+      allow read: if inChat(cid);
+      allow create: if inChat(cid)
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid)/friends/$(chatOther(cid)))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)/friends/$(chatOther(cid))).data.status == 'ok'
+        && request.resource.data.keys().hasOnly(['from', 'text', 'at', 'kind', 'game'])
+        && request.resource.data.from == request.auth.uid
+        && request.resource.data.at == request.time
+        && request.resource.data.kind in ['text', 'invite']
+        && request.resource.data.text is string && request.resource.data.text.size() >= 1 && request.resource.data.text.size() <= 1000
+        && (!('game' in request.resource.data) || (request.resource.data.game is string && request.resource.data.game.size() <= 40));
+      allow update: if false;
+      allow delete: if inChat(cid) && resource.data.from == request.auth.uid;
+    }
+
+    // Public profile card (level, badges) that friends see
+    match /profiles/{uid} {
+      allow read: if signedIn();
+      allow write: if isMe(uid)
+        && request.resource.data.keys().hasOnly(['username', 'level', 'xp', 'hours', 'badges', 'at'])
+        && request.resource.data.username is string && request.resource.data.username.size() <= 20
+        && request.resource.data.level is int && request.resource.data.xp is int && request.resource.data.hours is int
+        && request.resource.data.badges is list && request.resource.data.badges.size() <= 30
+        && request.resource.data.at == request.time;
+    }
+
     // What each player is playing right now (friends see it). Written by the Premium Studio app.
     match /presence/{uid} {
       allow read: if signedIn();
@@ -236,6 +304,10 @@ service cloud.firestore {
         && request.resource.data.game is string && request.resource.data.game.size() <= 60
         && request.resource.data.gid is string && request.resource.data.gid.size() <= 40
         && request.resource.data.at == request.time;
+    }
+
+    match /{path=**}/refunds/{rid} {
+      allow read: if isAdmin();
     }
 
     match /{path=**}/coinOrders/{oid} {

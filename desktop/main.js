@@ -54,19 +54,22 @@ function installedNow() {
 /* ---------------- the signed-in Premium Studio account (games play under it) ---------------- */
 const USER_FILE = path.join(app.getPath('userData'), 'ps-user.json');
 let currentUser = (() => { try { return JSON.parse(fs.readFileSync(USER_FILE, 'utf8')); } catch (e) { return null; } })();
-function setUser(u) {
+async function setUser(u) {
   const clip = (v, n) => String(v || '').slice(0, n);
   const before = currentUser && currentUser.uid;
-  currentUser = u && typeof u === 'object' ? { username: clip(u.username, 20), name: clip(u.name, 32), pid: clip(u.pid, 10), email: clip(u.email, 120), uid: clip(u.uid, 128), refreshToken: clip(u.refreshToken, 4096) } : null;
+  const next = u && typeof u === 'object' ? { username: clip(u.username, 20), name: clip(u.name, 32), pid: clip(u.pid, 10), email: clip(u.email, 120), uid: clip(u.uid, 128), refreshToken: clip(u.refreshToken, 4096) } : null;
+  // switched or signed out (like Steam): games running under the old account close first, saving to the old account
+  if (before && before !== (next && next.uid)) await closeRunningGames();
+  currentUser = next;
   try { if (currentUser) fs.writeFileSync(USER_FILE, JSON.stringify(currentUser)); else fs.rmSync(USER_FILE, { force: true }); } catch (e) {}
   writeBfAccount();
   updateTray();
-  // switched or signed out (like Steam): games running under the old account close
-  if (before && before !== (currentUser && currentUser.uid)) closeRunningGames();
 }
 function closeRunningGames() {
-  for (const w of gameWins.values()) { try { if (!w.isDestroyed()) w.close(); } catch (e) {} }
   if (process.platform === 'win32') { try { require('child_process').execSync('taskkill /IM BLOCKFALL3001.exe /F', { stdio: 'ignore' }); } catch (e) {} }
+  for (const k of [...running.keys()]) if (!gameWins.has(k)) markStopped(k);
+  const wins = [...gameWins.values()].filter(w => !w.isDestroyed());
+  return Promise.all(wins.map(w => new Promise(res => { const t = setTimeout(res, 6000); w.once('closed', () => { clearTimeout(t); res(); }); try { w.close(); } catch (e) { res(); } })));
 }
 const playerName = () => (currentUser && (currentUser.username || currentUser.name)) || '';
 // BLOCKFALL's launcher: the Premium Studio account it should play under
@@ -185,6 +188,44 @@ function watchBf() {
     if (++misses >= 2) { bfKeys.forEach(markStopped); clearInterval(bfTimer); bfTimer = null; }
   }, 5000);
 }
+/* ---------------- cloud saves (like Steam Cloud) ----------------
+   A web game's saved data (its localStorage) goes to the player's account when the game closes,
+   and comes back before it starts, on any PC. Kept at users/<uid>/cloud/<game>. */
+const cloudRestore = new Map();   // install key -> {clear, data}
+async function fbGet(docPath) {
+  const t = await fbToken(); if (!t) return undefined;
+  const r = await net.fetch(`https://firestore.googleapis.com/v1/${FB_DB}/${docPath}`, { headers: { authorization: 'Bearer ' + t } });
+  if (r.status === 404) return null;
+  if (!r.ok) return undefined;
+  return r.json();
+}
+async function cloudPull(key) {
+  cloudRestore.delete(key);
+  const g = readReg()[key]; if (!g || g.type !== 'manifest' || !currentUser || !currentUser.uid) return;
+  const game = g.game || key.split('--')[0], uid = currentUser.uid;
+  let d; try { d = await fbGet(`users/${uid}/cloud/${game}`); } catch (e) { d = undefined; }
+  if (d === undefined) return;   // offline: play with what's on this PC
+  const at = d && d.fields && d.fields.at ? Date.parse(d.fields.at.timestampValue) : 0;
+  const otherUser = g.cloudUid && g.cloudUid !== uid;
+  if (d && (otherUser || !g.cloudAt || at > g.cloudAt)) {
+    let data = {}; try { data = JSON.parse(d.fields.data.stringValue || '{}'); } catch (e) {}
+    cloudRestore.set(key, { clear: true, data });
+  } else if (!d && otherUser) cloudRestore.set(key, { clear: true, data: {} });   // another account played here before: start clean
+  const reg = readReg(); if (reg[key]) { reg[key].cloudUid = uid; if (d) reg[key].cloudAt = at; await writeReg(reg); }
+}
+async function cloudPush(key, json) {
+  const g = readReg()[key]; if (!g || !currentUser || !currentUser.uid || typeof json !== 'string' || json.length > 900000) return;
+  const game = g.game || key.split('--')[0];
+  await fbCommit([{ update: { name: `${FB_DB}/users/${currentUser.uid}/cloud/${game}`, fields: { data: { stringValue: json }, size: { integerValue: String(json.length) } } },
+    updateTransforms: [{ fieldPath: 'at', setToServerValue: 'REQUEST_TIME' }] }]);
+  const reg = readReg(); if (reg[key]) { reg[key].cloudUid = currentUser.uid; reg[key].cloudAt = Date.now() + 5000; await writeReg(reg); }
+}
+ipcMain.on('game:cloud', e => {
+  const k = [...gameWins].find(([, w]) => !w.isDestroyed() && w.webContents === e.sender);
+  const r = k && cloudRestore.get(k[0]); if (k) cloudRestore.delete(k[0]);
+  e.returnValue = r || null;
+});
+
 function stopGame(key) {
   const g = readReg()[key];
   if (g && g.type === 'bf-launcher') { if (process.platform === 'win32') { try { require('child_process').execSync('taskkill /IM BLOCKFALL3001.exe /F', { stdio: 'ignore' }); } catch (e) {} } markStopped(key); return; }
@@ -234,6 +275,7 @@ async function launchWithUpdate(id, edition) {
       if (m) { const l = await latestOf(m); if (l.version && l.version !== g.version) await install(id); }
     } catch (e) { /* offline: play the copy we have */ }
   }
+  if (g && g.type === 'manifest' && !running.has(id)) { try { await cloudPull(id); } catch (e) {} }
   launchGame(id, edition);
 }
 function launchGame(id, edition) {
@@ -269,6 +311,15 @@ function launchGame(id, edition) {
   });
   const q = g.edition === 'demo' ? '?demo=1' : '';
   w.loadURL(`psgame://${id}/${g.entry}${q}`);
+  let saved = false;
+  w.on('close', ev => {
+    if (saved || w.webContents.isDestroyed()) return;
+    ev.preventDefault(); saved = true;
+    const done = () => { if (!w.isDestroyed()) w.destroy(); };
+    const t = setTimeout(done, 4000);
+    w.webContents.executeJavaScript('JSON.stringify(Object.assign({}, localStorage))', true)
+      .then(json => cloudPush(id, json)).catch(() => {}).finally(() => { clearTimeout(t); done(); });
+  });
   w.on('closed', () => { gameWins.delete(id); markStopped(id); });
   gameWins.set(id, w);
   markRunning(id);
@@ -538,8 +589,16 @@ ipcMain.handle('ps:features', guard(async () => ({ editions: true, running: true
 ipcMain.handle('ps:getRunning', guard(async () => runningList()));
 ipcMain.handle('ps:stop', guard(async id => { if (!validId(id)) throw new Error('bad id'); stopGame(id); return true; }));
 ipcMain.handle('ps:showFolder', guard(async id => { if (validId(id)) shell.openPath(gameDir(id, readReg()[id])); return true; }));
-ipcMain.handle('ps:setUser', guard(async u => { setUser(u); return true; }));
+ipcMain.handle('ps:setUser', guard(async u => { await setUser(u); return true; }));
 ipcMain.handle('ps:retryOnline', guard(async () => { if (mainWin) mainWin.loadURL(SITE); return true; }));
+// Game achievements: a game calls PREMIUM_STUDIO.achieve('id'); it's kept on the player's account
+ipcMain.on('game:achieve', (e, aid) => {
+  const key = [...gameWins].find(([, w]) => !w.isDestroyed() && w.webContents === e.sender);
+  if (!key || !currentUser || !currentUser.uid || typeof aid !== 'string' || !/^[a-z0-9_-]{1,40}$/i.test(aid)) return;
+  const game = (readReg()[key[0]] || {}).game || key[0].split('--')[0];
+  fbCommit([{ update: { name: `${FB_DB}/users/${currentUser.uid}/achievements/${game}__${aid}`, fields: { game: { stringValue: game }, id: { stringValue: aid } } },
+    currentDocument: { exists: false }, updateTransforms: [{ fieldPath: 'at', setToServerValue: 'REQUEST_TIME' }] }]);
+});
 ipcMain.on('game:exit', e => { const w = BrowserWindow.fromWebContents(e.sender); if (w) w.close(); });
 ipcMain.on('game:nick', e => { e.returnValue = playerName(); });
 ipcMain.on('game:user', e => { e.returnValue = currentUser && currentUser.username ? { username: currentUser.username, name: currentUser.name, pid: currentUser.pid, email: currentUser.email } : null; });
