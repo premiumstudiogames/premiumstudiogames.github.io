@@ -380,3 +380,6 @@ body.hasbar .dlchip{display:none!important}
 
 .ed.studio{border-color:#1f6b45;background:linear-gradient(135deg,rgba(60,220,130,.10),transparent)}
 .ed.studio .n{color:#7dffb2}
+
+.updbar{background:#ffcc1f;color:#1a1300;padding:10px 16px;font-size:14px;text-align:center}
+.updbar a{color:#1a1300;font-weight:700}

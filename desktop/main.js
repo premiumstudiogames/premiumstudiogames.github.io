@@ -738,8 +738,55 @@ function handleArgv(argv, firstRun) {
   const link = argv.find(a => a.startsWith('premiumstudio://'));
   if (launch && validId(launch) && installedNow()[launch]) { playFromOutside(launch); return true; }
   if (link) { handleDeepLink(link); return true; }
-  if (firstRun && argv.includes('--hidden')) return true;   // started with Windows: stay in the tray
+  if (firstRun && argv.includes('--hidden') && !argv.includes('--show')) return true;   // started with Windows: stay in the tray
   createMain(); return true;
+}
+
+/* ---------------- updates (like Steam) ----------------
+   On start: check; if there's a new version, a small window shows the download, then it installs and restarts by itself.
+   While running: checks every 30 minutes and installs as soon as no game is running or installing. */
+const PENDING = path.join(app.getPath('userData'), 'pending-start.json');
+function updaterWindow() {
+  const w = new BrowserWindow({ width: 420, height: 170, frame: false, resizable: false, alwaysOnTop: true, show: false, backgroundColor: '#11151f', title: 'Premium Studio', icon: ICON, webPreferences: { sandbox: true, contextIsolation: true } });
+  w.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(`<!doctype html><html dir="rtl"><head><meta charset="utf-8"><style>
+    *{box-sizing:border-box;margin:0}body{font-family:"Segoe UI",Tahoma,sans-serif;background:#11151f;color:#e8ecf3;height:100vh;padding:22px;border:1px solid #2c3446;-webkit-app-region:drag;user-select:none}
+    .ps{display:inline-block;background:#000;border:1px solid #2c3446;border-radius:5px;padding:3px 8px;font:700 20px sans-serif;direction:ltr}.ps i{font-style:normal;color:#fff}.ps i+i{color:#ffcc1f}
+    h1{font-size:17px;margin:14px 0 6px}#t{color:#9aa4b8;font-size:13px}.bar{height:5px;background:#0b0f16;margin-top:14px}.bar i{display:block;height:100%;width:0;background:#ffcc1f;transition:width .3s}
+    </style></head><body><span class="ps"><i>P</i><i>S</i></span><h1>يتحدّث Premium Studio</h1><div id="t">يتحقق من التحديثات…</div><div class="bar"><i id="b"></i></div></body></html>`));
+  w.once('ready-to-show', () => { if (!w.isDestroyed()) w.show(); });
+  const set = (t, pct) => { if (!w.isDestroyed()) w.webContents.executeJavaScript(`document.getElementById('t').textContent=${JSON.stringify(t)};${pct != null ? `document.getElementById('b').style.width='${pct}%'` : ''}`).catch(() => {}); };
+  return { w, set };
+}
+async function startupUpdate(argv) {
+  let autoUpdater; try { ({ autoUpdater } = require('electron-updater')); } catch (e) { return false; }
+  autoUpdater.autoDownload = false; autoUpdater.autoInstallOnAppQuit = true;
+  let info = null;
+  try { const r = await Promise.race([autoUpdater.checkForUpdates(), new Promise(res => setTimeout(() => res(null), 8000))]); info = r && r.updateInfo; } catch (e) { return false; }
+  if (!info || !info.version || !vgt(info.version, app.getVersion())) return false;
+  const quiet = argv.includes('--hidden');
+  const ui = quiet ? null : updaterWindow();
+  if (ui) ui.set('ينزّل النسخة ' + info.version.split('.').map(n => n.padStart(2, '0')).join('.') + '…', 0);
+  autoUpdater.on('download-progress', p => ui && ui.set(`ينزّل التحديث… ${Math.round(p.percent || 0)}%`, Math.round(p.percent || 0)));
+  try {
+    await Promise.race([autoUpdater.downloadUpdate(), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 10 * 60000))]);
+  } catch (e) { if (ui && !ui.w.isDestroyed()) ui.w.destroy(); return false; }   // couldn't update now: open normally, try again later
+  if (ui) ui.set('يثبّت التحديث ويرجع يفتح…', 100);
+  try { fs.writeFileSync(PENDING, JSON.stringify({ at: Date.now(), argv: argv.filter(a => a.startsWith('--launch=') || a.startsWith('premiumstudio://') || a === '--hidden') })); } catch (e) {}
+  quitting = true;
+  setTimeout(() => { try { autoUpdater.quitAndInstall(true, true); } catch (e) { app.relaunch(); app.exit(0); } }, 600);
+  return true;
+}
+function backgroundUpdates() {
+  let autoUpdater; try { ({ autoUpdater } = require('electron-updater')); } catch (e) { return; }
+  autoUpdater.autoDownload = true; autoUpdater.autoInstallOnAppQuit = true;
+  let ready = false;
+  const apply = () => { if (!ready || running.size || busy.size || stopping.size) return;
+    try { fs.writeFileSync(PENDING, JSON.stringify({ at: Date.now(), argv: ['--hidden'].concat(mainWin && !mainWin.isDestroyed() && mainWin.isVisible() ? ['--show'] : []) })); } catch (e) {}
+    quitting = true; try { autoUpdater.quitAndInstall(true, true); } catch (e) {} };
+  autoUpdater.on('update-downloaded', () => { ready = true; apply(); });
+  setInterval(apply, 60000);
+  const check = () => autoUpdater.checkForUpdates().catch(() => {});
+  setTimeout(check, 60000); setInterval(check, 30 * 60000);
 }
 
 if (!app.requestSingleInstanceLock()) {
@@ -749,28 +796,20 @@ if (!app.requestSingleInstanceLock()) {
   else app.setAsDefaultProtocolClient('premiumstudio');
   app.setAppUserModelId('com.premiumstudio.client');
   app.on('second-instance', (e, argv) => handleArgv(argv, false));
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     Menu.setApplicationMenu(null);
     registerGameProtocol();
     migrateReg();
     if (Object.values(installedNow()).some(v => v.type === 'bf-launcher')) fixBfShortcuts();   // leftover icon from older installs
     makeTray();
-    handleArgv(process.argv, true);
+    // like Steam: on start, bring Premium Studio up to date first (download, restart), then do what was asked
+    let argv = process.argv;
+    try { const p = JSON.parse(fs.readFileSync(PENDING, 'utf8')); fs.rmSync(PENDING, { force: true }); if (Date.now() - p.at < 300000) argv = p.argv; } catch (e) {}
+    if (app.isPackaged && await startupUpdate(argv)) return;
+    handleArgv(argv, true);
     // start with Windows, quietly in the tray (like Steam)
     if (app.isPackaged && process.platform === 'win32') { try { app.setLoginItemSettings({ openAtLogin: true, args: ['--hidden'] }); } catch (e) {} }
-    if (app.isPackaged) {
-      try {
-        const { autoUpdater } = require('electron-updater');
-        autoUpdater.autoDownload = true;
-        // like Steam: a new version installs itself and restarts right away (it waits while a game is running)
-        let ready = false;
-        const apply = () => { if (!ready || running.size || busy.size) return; quitting = true; try { autoUpdater.quitAndInstall(true, true); } catch (e) {} };
-        autoUpdater.on('update-downloaded', () => { ready = true; apply(); });
-        setInterval(apply, 60000);
-        const check = () => autoUpdater.checkForUpdates().catch(() => {});
-        check(); setInterval(check, 30 * 60000);
-      } catch (e) {}
-    }
+    if (app.isPackaged) backgroundUpdates();
   });
   app.on('window-all-closed', () => { if (!tray) app.quit(); });   // otherwise keep running in the tray
   app.on('before-quit', () => { quitting = true; for (const k of [...running.keys()]) if (!gameWins.has(k)) { const r = running.get(k); addPlaytime(r, Date.now() - r.since); } });

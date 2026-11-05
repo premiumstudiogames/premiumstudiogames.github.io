@@ -27,7 +27,7 @@ const PACKS = [             // must match coinPacks() in firestore.rules (coins 
   {id:"u100000",coins:100000, price:1000000}
 ];
 const coins = n => ((n || 0) / COIN_UNIT).toLocaleString("en-US", {minimumFractionDigits:0, maximumFractionDigits:4});
-const SITE_VERSION = "00.00.20";
+const SITE_VERSION = "00.00.21";
 const APP_DL = "downloads/PremiumStudioSetup.exe";
 
 const fb = initializeApp(firebaseConfig);
@@ -173,6 +173,12 @@ if (PS) {
   // give the app each game's cover for its "Starting game" window
   if (PS.setCover) setTimeout(() => { for (const g of GAMES) { try { const box = document.createElement("div"); box.style.cssText = "position:fixed;left:-9999px;top:0;width:300px;height:450px";
     document.body.appendChild(box); const o = {c:document.createElement("canvas"), id:g.id}; box.appendChild(o.c); paint(o, 0); PS.setCover(g.id, o.c.toDataURL("image/png")).catch(() => {}); box.remove(); } catch(e) {} } }, 1500);
+  // very old app versions only update when fully closed: tell them once how
+  fetch("https://api.github.com/repos/premiumstudiogames/premiumstudiogames.github.io/releases/latest").then(r => r.json()).then(j => {
+    const lv = String(j.tag_name || "").replace(/^v/, "").split(".").map(n => n.padStart(2, "0")).join(".");
+    if (lv && PS.version && PS.version < lv && !PS.updatesItself) { const b = document.createElement("div"); b.className = "updbar";
+      b.innerHTML = `نسخة جديدة من Premium Studio (${lv}) جاهزة. اضغط بالزر اليمين على أيقونة PS جنب الساعة ← «خروج»، وافتحه، ويتحدّث. بعدها التحديثات تنزل لحالها. <a href="downloads/PremiumStudioSetup.exe" download>أو حمّلها من هنا</a>`;
+      document.body.prepend(b); } }).catch(() => {});
   if (PS.onRunning) { PS.onRunning(r => { RUNNING = r || {}; render(); }); PS.getRunning().then(r => { RUNNING = r || {}; render(); }).catch(() => {}); }
   refreshInstalled();
 }
