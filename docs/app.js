@@ -27,7 +27,7 @@ const PACKS = [             // must match coinPacks() in firestore.rules (coins 
   {id:"u100000",coins:100000, price:1000000}
 ];
 const coins = n => ((n || 0) / COIN_UNIT).toLocaleString("en-US", {minimumFractionDigits:0, maximumFractionDigits:4});
-const SITE_VERSION = "00.00.01";
+const SITE_VERSION = "00.00.14";
 const APP_DL = "downloads/PremiumStudioSetup.exe";
 
 const fb = initializeApp(firebaseConfig);
