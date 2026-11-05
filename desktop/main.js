@@ -376,6 +376,7 @@ function launchGame(id, edition) {
     writeBfAccount();
     try { fs.rmSync(path.join(BF_DATA, 'premium_cmd.json'), { force: true }); } catch (e) {}
     const { spawn } = require('child_process');
+    guardBfShortcut(90000);
     const child = spawn(BF_EXE, ['--premium'], { cwd: BF_DIR, detached: true, stdio: 'ignore' });
     // the starting window stays until BLOCKFALL shows up
     (async () => { const t0 = Date.now(); while (splashKey === id && Date.now() - t0 < 30000) { await new Promise(r => setTimeout(r, 700)); if (await bfAlive()) break; } if (splashKey === id) closeSplash(); })();
@@ -422,6 +423,22 @@ function migrateReg() {
     }
     if (changed) writeReg(reg).catch(() => {});
   } catch (e) {}
+}
+// BLOCKFALL's own launcher adds a "BLOCKFALL 3001" icon when it starts; Premium Studio makes its own (one per edition),
+// so that extra icon is removed the moment it appears
+const BF_LAUNCHER_LNK = () => [path.join(app.getPath('desktop'), 'BLOCKFALL 3001.lnk'), path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'BLOCKFALL 3001.lnk')];
+let bfWatch = null, bfWatchT = null;
+function guardBfShortcut(ms) {
+  const kill = () => { for (const f of BF_LAUNCHER_LNK()) { try { fs.rmSync(f, { force: true }); } catch (e) {} } };
+  kill();
+  clearTimeout(bfWatchT);
+  if (!bfWatch) {
+    bfWatch = [];
+    for (const f of BF_LAUNCHER_LNK()) {
+      try { const w = fs.watch(path.dirname(f), (ev, name) => { if (name && name.toLowerCase() === 'blockfall 3001.lnk') setTimeout(kill, 30); }); bfWatch.push(w); } catch (e) {}
+    }
+  }
+  bfWatchT = setTimeout(() => { for (const w of bfWatch || []) { try { w.close(); } catch (e) {} } bfWatch = null; kill(); }, ms || 60000);
 }
 function fixBfShortcuts() {
   const own = Object.entries(installedNow()).filter(([, v]) => v.type === 'bf-launcher');
@@ -718,6 +735,7 @@ if (!app.requestSingleInstanceLock()) {
     Menu.setApplicationMenu(null);
     registerGameProtocol();
     migrateReg();
+    if (Object.values(installedNow()).some(v => v.type === 'bf-launcher')) guardBfShortcut(5000);
     makeTray();
     handleArgv(process.argv, true);
     // start with Windows, quietly in the tray (like Steam)
