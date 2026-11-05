@@ -727,7 +727,7 @@ function handleDeepLink(url) {
       const mine = Object.entries(installedNow()).filter(([k, v]) => (v.game || k.split('--')[0]) === id)
         .sort((a, b) => ((b[1].lastPlayed || 0) - (a[1].lastPlayed || 0)) || (EDITIONS.indexOf(b[1].edition) - EDITIONS.indexOf(a[1].edition)));
       if (mine.length) return playFromOutside(mine[0][0]);
-      return createMain(id);
+      return createMain('library');
     }
     if (kind === 'install' && validId(id)) return createMain(id.split('--')[0], 'install=' + encodeURIComponent(id));
     createMain(validId(id) ? id : (kind === 'library' ? 'library' : ''));
@@ -762,7 +762,13 @@ if (!app.requestSingleInstanceLock()) {
       try {
         const { autoUpdater } = require('electron-updater');
         autoUpdater.autoDownload = true;
-        autoUpdater.checkForUpdatesAndNotify().catch(() => {});
+        // like Steam: a new version installs itself and restarts right away (it waits while a game is running)
+        let ready = false;
+        const apply = () => { if (!ready || running.size || busy.size) return; quitting = true; try { autoUpdater.quitAndInstall(true, true); } catch (e) {} };
+        autoUpdater.on('update-downloaded', () => { ready = true; apply(); });
+        setInterval(apply, 60000);
+        const check = () => autoUpdater.checkForUpdates().catch(() => {});
+        check(); setInterval(check, 30 * 60000);
       } catch (e) {}
     }
   });
