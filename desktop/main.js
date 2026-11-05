@@ -98,12 +98,19 @@ function createMain(hash, query) {
     if (mainWin.isMinimized()) mainWin.restore();
     mainWin.show(); mainWin.focus(); return mainWin;
   }
+  // remember the window like Steam does (size, place, maximized); first time it opens big
+  const WF = path.join(app.getPath('userData'), 'window.json');
+  let ws = null; try { ws = JSON.parse(fs.readFileSync(WF, 'utf8')); } catch (e) {}
+  const { screen } = require('electron'), wa = screen.getPrimaryDisplay().workAreaSize;
   mainWin = new BrowserWindow({
-    width: 1320, height: 840, minWidth: 900, minHeight: 600,
+    width: ws && ws.w || Math.min(1600, wa.width), height: ws && ws.h || Math.min(980, wa.height), x: ws ? ws.x : undefined, y: ws ? ws.y : undefined, minWidth: 900, minHeight: 600,
     backgroundColor: '#0a0d14', title: 'Premium Studio', icon: ICON, autoHideMenuBar: true, show: false,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false }
   });
-  mainWin.once('ready-to-show', () => mainWin.show());
+  mainWin.once('ready-to-show', () => { if (!ws ? wa.width <= 1920 : ws.max) mainWin.maximize(); mainWin.show(); });
+  const saveWin = () => { try { if (!mainWin || mainWin.isDestroyed() || mainWin.isMinimized()) return; const b = mainWin.getNormalBounds();
+    fs.writeFileSync(WF, JSON.stringify({ x: b.x, y: b.y, w: b.width, h: b.height, max: mainWin.isMaximized() })); } catch (e) {} };
+  mainWin.on('resize', saveWin); mainWin.on('move', saveWin); mainWin.on('maximize', saveWin); mainWin.on('unmaximize', saveWin);
   mainWin.webContents.setWindowOpenHandler(({ url }) => { openExternal(url); return { action: 'deny' }; });
   mainWin.webContents.on('will-navigate', (e, url) => {
     if (url.startsWith('premiumstudio://')) { e.preventDefault(); handleDeepLink(url); return; }

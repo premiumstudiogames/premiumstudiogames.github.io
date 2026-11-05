@@ -27,7 +27,7 @@ const PACKS = [             // must match coinPacks() in firestore.rules (coins 
   {id:"u100000",coins:100000, price:1000000}
 ];
 const coins = n => ((n || 0) / COIN_UNIT).toLocaleString("en-US", {minimumFractionDigits:0, maximumFractionDigits:4});
-const SITE_VERSION = "00.00.15";
+const SITE_VERSION = "00.00.16";
 const APP_DL = "downloads/PremiumStudioSetup.exe";
 
 const fb = initializeApp(firebaseConfig);
@@ -163,17 +163,73 @@ function autoInstall(){
   const b = document.querySelector(`[data-act="install"][data-gid="${gid}"][data-ed="${ed}"]`); if (b) b.click();
 }
 if (PS) {
-  $("#tabDl").hidden = true;
-  PS.onProgress(p => { PROGRESS[p.id] = p; if (p.phase === "done" || p.phase === "error") { delete PROGRESS[p.id]; if (p.phase === "error") toast("ما تم التثبيت: " + (p.error || "خطأ")); else toast("تم التثبيت ✓ أيقونتها على سطح المكتب"); refreshInstalled(); } updateProgressUI(); });
+  $("#tabDl").hidden = true; $("#tabDls").hidden = false;
+  PS.onProgress(p => { trackSpeed(p); PROGRESS[p.id] = p;
+    if (p.phase === "done" || p.phase === "error") { delete PROGRESS[p.id];
+      if (p.phase === "error") toast("ما تم التثبيت: " + (p.error || "خطأ")); else { toast("تم التثبيت ✓ أيقونتها على سطح المكتب"); addDone(p.id); }
+      refreshInstalled(); if (curView === "downloads") renderDownloads(); }
+    updateProgressUI(); });
   PS.onInstalledChanged && PS.onInstalledChanged(() => refreshInstalled());
   if (PS.onRunning) { PS.onRunning(r => { RUNNING = r || {}; render(); }); PS.getRunning().then(r => { RUNNING = r || {}; render(); }).catch(() => {}); }
   refreshInstalled();
 }
+/* download speed (like Steam's network graph) and the list of finished downloads */
+const SPEED = {}; let PEAK = 0;
+function trackSpeed(p){
+  const now = performance.now(), s = SPEED[p.id] || (SPEED[p.id] = {t:now, r:p.received || 0, v:0});
+  if (p.phase !== "download") { s.v = 0; return; }
+  const dt = (now - s.t) / 1000; if (dt >= 0.5) { const v = Math.max(0, ((p.received || 0) - s.r) / dt); s.v = s.v ? s.v * 0.6 + v * 0.4 : v; s.t = now; s.r = p.received || 0; PEAK = Math.max(PEAK, s.v); }
+}
+const totalSpeed = () => Object.keys(PROGRESS).reduce((a, k) => a + ((SPEED[k] && SPEED[k].v) || 0), 0);
+const fmtSpeed = b => b >= 1048576 ? (b / 1048576).toFixed(1) + " MB/s" : Math.round(b / 1024) + " KB/s";
+const DONE_KEY = "ps-downloads-done";
+const loadDone = () => { try { return JSON.parse(localStorage.getItem(DONE_KEY) || "[]"); } catch(e) { return []; } };
+function addDone(key){ const l = loadDone().filter(d => d.key !== key); l.unshift({key, at:Date.now(), size:(SPEED[key] && SPEED[key].r) || 0}); try { localStorage.setItem(DONE_KEY, JSON.stringify(l.slice(0, 20))); } catch(e) {} delete SPEED[key]; }
+function clearDone(){ try { localStorage.removeItem(DONE_KEY); } catch(e) {} renderDownloads(); updateProgressUI(); }
+const keyTitle = key => { const v = INSTALLED[key], [gid, ed] = String(key).split("--"), g = byId(v ? v.game : gid), e = v ? v.edition : ed; return g ? (g.en || g.title) + (ED_TAG[e] ? " " + ED_TAG[e] : "") : key; };
+// updates waiting for an installed game (newer version on the server)
+const pendingUpdates = () => Object.entries(INSTALLED).filter(([k, v]) => { const L = LATEST[v.game], m = MANIFEST.games[v.game]; return m && m.type !== "bf-launcher" && L && L.version && v.version !== L.version && !PROGRESS[k]; });
 function updateProgressUI(){
+  renderDlBar();
   const active = Object.values(PROGRESS);
   $("#dlChip").hidden = !active.length;
   if (active.length) { const p = active[0]; $("#dlChipT").textContent = (p.phase === "extract" ? "جاري التثبيت" : "جاري التحميل") + " " + pct(p) + "%"; }
   for (const p of active) { $$(`[data-prog="${p.id}"]`).forEach(el => { el.querySelector("i").style.width = pct(p) + "%"; const t = el.parentElement.querySelector("[data-progt]"); if (t) t.textContent = progText(p); }); }
+  if (curView === "downloads") renderDownloads(true);
+  if (curView === "library") renderLibSide();
+}
+// the bar at the bottom of the app (Steam's "Downloads - 2 of 2 items complete")
+function renderDlBar(){
+  const bar = $("#dlBar"); if (!bar) return;
+  if (!PS || !user) { bar.hidden = true; document.body.classList.remove("hasbar"); return; }
+  bar.hidden = false; document.body.classList.add("hasbar");
+  const act = Object.values(PROGRESS), done = loadDone().length, sp = totalSpeed();
+  const mid = act.length
+    ? `<span class="spin"></span><b>${esc(keyTitle(act[0].id))}</b><span class="num">${pct(act[0])}%</span><span class="dlbar-p"><i style="width:${pct(act[0])}%"></i></span>${sp ? `<span class="num muted">${fmtSpeed(sp)}</span>` : ""}${act.length > 1 ? `<span class="muted">+${act.length - 1}</span>` : ""}`
+    : `<span class="muted">التحميلات · ${done ? `${done} من ${done} مكتملة` : "ما فيه تحميلات"}</span>`;
+  bar.innerHTML = `<a class="dlbar-l" href="#store">＋ المتجر</a><a class="dlbar-m" href="#downloads">${mid}</a><a class="dlbar-r" href="#friends">الأصدقاء والدردشة</a>`;
+}
+function renderDownloads(light){
+  const box = $("#downloads"); if (!box) return;
+  if (!PS) { box.innerHTML = '<div class="empty"><b style="color:var(--text)">التحميلات تشتغل في تطبيق Premium Studio</b><a class="btn buy" href="#download">حمّل التطبيق</a></div>'; return; }
+  const act = Object.values(PROGRESS), sp = totalSpeed();
+  if (light && box.querySelector(".dl-net")) {   // just refresh numbers while downloading
+    box.querySelector("[data-net]").textContent = fmtSpeed(sp); box.querySelector("[data-peak]").textContent = fmtSpeed(PEAK);
+    for (const p of act) { const r = box.querySelector(`[data-dl="${p.id}"]`); if (!r) return renderDownloads(); r.querySelector(".bar i").style.width = pct(p) + "%"; r.querySelector("[data-progt]").textContent = progText(p);
+      const s = SPEED[p.id] && SPEED[p.id].v, eta = s && p.total ? Math.max(0, (p.total - p.received) / s) : 0; r.querySelector("[data-eta]").textContent = s ? `${fmtSpeed(s)}${eta ? " · باقي " + (eta > 90 ? Math.round(eta / 60) + " د" : Math.round(eta) + " ث") : ""}` : (p.phase === "extract" ? "يثبّت…" : "…"); }
+    if (box.querySelectorAll("[data-dl]").length !== act.length) renderDownloads();
+    return;
+  }
+  const done = loadDone(), ups = pendingUpdates();
+  const art = id => `<span class="dl-art" data-cover="${id}"></span>`;
+  box.innerHTML = `<div class="dl-net"><div><small>الشبكة</small><b class="num" data-net>${fmtSpeed(sp)}</b></div><div><small>الأعلى</small><b class="num" data-peak>${fmtSpeed(PEAK)}</b></div><div><small>التحديث التلقائي</small><b>شغال</b></div></div>
+    <div class="dl-sec"><h3>قيد التحميل <span class="num muted">(${act.length})</span></h3>${act.length ? act.map(p => { const v = String(p.id).split("--")[0];
+      return `<div class="dl-row" data-dl="${p.id}">${art(v)}<div class="dl-info"><b>${esc(keyTitle(p.id))}</b><span class="num muted" data-progt>${progText(p)}</span><div class="bar"><i style="width:${pct(p)}%"></i></div></div><span class="num muted" data-eta>…</span></div>`; }).join("") : '<p class="muted">ما فيه تحميلات الحين.</p>'}</div>
+    ${ups.length ? `<div class="dl-sec"><h3>تحديثات متوفرة <span class="num muted">(${ups.length})</span></h3>${ups.map(([k, v]) => `<div class="dl-row">${art(v.game)}<div class="dl-info"><b>${esc(keyTitle(k))}</b><span class="muted num">${esc(v.version)} ← ${esc(LATEST[v.game].version)}</span></div><span class="muted" style="font-size:12px">يتحدّث تلقائيًا لما تشغّلها</span><button class="btn inst mini" data-act="install" data-g="${k}" data-gid="${v.game}" data-ed="${v.edition}">حدّث الحين</button></div>`).join("")}</div>` : ""}
+    <div class="dl-sec"><h3>مكتملة <span class="num muted">(${done.length})</span>${done.length ? '<button class="btn ghost mini" id="dlClear" type="button">مسح الكل</button>' : ""}</h3>${done.length ? done.map(d => { const inst = INSTALLED[d.key], gid = inst ? inst.game : String(d.key).split("--")[0];
+      return `<div class="dl-row">${art(gid)}<div class="dl-info"><b>${esc(keyTitle(d.key))}</b><span class="muted num" style="font-size:12px">${inst ? mb(inst.size || 0) + " · " : ""}اكتمل ${new Date(d.at).toLocaleString("ar-SA-u-nu-latn", {weekday:"short", hour:"numeric", minute:"2-digit"})}</span></div>${inst ? (RUNNING[d.key] ? '<span class="st run">● شغالة</span>' : `<button class="btn play" data-act="launch" data-g="${d.key}" data-gid="${gid}" data-ed="${inst.edition}">▶ لعب</button>`) : '<span class="muted">انحذفت</span>'}</div>`; }).join("") : '<p class="muted">ما فيه شي.</p>'}</div>`;
+  box.querySelectorAll("[data-cover]").forEach(el => cover(el, el.dataset.cover));
+  const c = $("#dlClear"); if (c) c.onclick = clearDone;
 }
 const pct = p => p.total ? Math.min(100, Math.round(p.received / p.total * 100)) : (p.phase === "extract" ? 100 : 0);
 const progText = p => p.phase === "extract" ? "جاري فك الملفات…" : `${mb(p.received||0)} / ${mb(p.total||0)}`;
@@ -294,20 +350,77 @@ function renderGame(g){
   cover(v.querySelector(".banner"), g.id);
   v.querySelectorAll("[data-ed]:not([data-act])").forEach(b => b.onclick = () => buy(g, g.editions.find(e => e.id === b.dataset.ed)));
 }
-function renderLib(){
-  const box = $("#lib"), bar = $("#libBar"); box.innerHTML = ""; bar.innerHTML = "";
-  if (!user) { box.innerHTML = '<div class="empty"><b style="color:var(--text)">المكتبة للمسجّلين فقط</b><span>سجّل دخولك عشان تضيف ألعاب لمكتبتك وتثبّتها.</span><button class="btn buy" type="button" data-login>تسجيل الدخول</button></div>'; return; }
-  const mine = GAMES.filter(g => ent(g.id).best || ent(g.id).pending);
-  if (PS) { const n = Object.keys(INSTALLED).length, sz = Object.values(INSTALLED).reduce((a, x) => a + (x.size || 0), 0); bar.innerHTML = `<span class="tag">${mine.length} في المكتبة</span><span class="tag">${n} مثبتة · <span class="num">${mb(sz)}</span></span>`; }
-  else if (!isMobile) bar.innerHTML = `<span>عشان تثبّت ألعابك على الكمبيوتر تحتاج تطبيق Premium Studio.</span><a class="btn mini buy" href="#download">حمّل التطبيق</a>`;
-  if (!mine.length) { box.innerHTML = '<div class="empty"><b style="color:var(--text)">مكتبتك فاضية</b><span>أي لعبة تشتريها أو تضيف ديمو حقها تطلع هنا.</span><a class="btn buy" href="#store">تصفّح المتجر</a></div>'; return; }
-  mine.forEach(g => { const {best, pending} = ent(g.id), o = best || pending; const d = document.createElement("div"); d.className = "li";
-    d.innerHTML = `<a class="art" href="#${g.id}" aria-label="${esc(g.en || g.title)}"></a><div class="info"><b style="font:700 19px ${g.ar ? "var(--kufi)" : "var(--display)"}">${esc(g.title)}</b>
-      <div class="row" style="gap:8px"><span class="muted" style="font-size:13px">${esc(edName(g, o.edition))}</span>${stPill(o.status)}${anyInstalled(g.id) ? '<span class="st inst">مثبتة</span>' : ""}</div>
-      <span class="muted" style="font-size:12px">أضيفت ${fdate(o.at)}${pending && best ? " · ترقية بانتظار الدفع" : ""}</span>${refundLine(g)}</div>
-      <div class="acts">${best ? installBlock(g) : '<span class="muted" style="font-size:13px">تقدر تلعب بعد تأكيد الدفع</span>'}</div>`;
-    box.appendChild(d); cover(d.querySelector(".art"), g.id); });
+/* ---------------- library, Steam style: game list on the side, shelves and a game page on the right ---------------- */
+let LIBSEL = "", LIBQ = "", LIBF = "", LIBSORT = "az";
+function libGames(){
+  return GAMES.filter(g => ent(g.id).best || ent(g.id).pending);
 }
+const lastPlayed = gid => PLAY[gid] && PLAY[gid].last ? tsMs(PLAY[gid].last) : 0;
+const runningGame = gid => Object.entries(RUNNING).some(([k, r]) => (r.game || k.split("--")[0]) === gid);
+const progGame = gid => Object.values(PROGRESS).find(p => String(p.id).split("--")[0] === gid);
+function renderLibSide(){
+  const side = $("#libSide"); if (!side) return;
+  const q = LIBQ.trim().toLowerCase();
+  const list = libGames().filter(g => (!q || (g.title + " " + (g.en || "")).toLowerCase().includes(q))
+    && (!LIBF || (LIBF === "inst" ? anyInstalled(g.id) : !anyInstalled(g.id)))).sort((a, b) => (a.en || a.title).localeCompare(b.en || b.title));
+  side.querySelector(".ls-list").innerHTML = list.length ? list.map(g => { const pr = progGame(g.id), run = runningGame(g.id), inst = anyInstalled(g.id);
+    const tag = run ? '<small class="ls-run">● شغالة</small>' : pr ? `<small class="ls-dl num">يحمّل ${pct(pr)}%</small>` : ent(g.id).best ? "" : '<small class="muted">بانتظار الدفع</small>';
+    return `<button class="ls-item${LIBSEL === g.id ? " on" : ""}${inst ? " inst" : ""}" data-sel="${g.id}" type="button"><span class="ls-ic" data-cover="${g.id}"></span><span class="ls-n">${esc(g.en || g.title)}</span>${tag}</button>`; }).join("") : '<p class="muted" style="padding:10px">ما فيه نتائج</p>';
+  side.querySelectorAll("[data-cover]").forEach(el => cover(el, el.dataset.cover));
+  side.querySelectorAll("[data-sel]").forEach(b => b.onclick = () => { LIBSEL = b.dataset.sel; renderLib(); });
+}
+function libTile(g, big){
+  const mins = (PLAY[g.id] && PLAY[g.id].minutes) || 0, run = runningGame(g.id);
+  return `<button class="lt${big ? " big" : ""}${run ? " running" : ""}" data-sel="${g.id}" type="button"><span class="lt-art" data-cover="${g.id}"></span>
+    ${big ? `<span class="lt-info"><span class="lt-play">${run ? "■" : "▶"}</span><span><b>${run ? "شغالة الحين" : "وقت اللعب"}</b><small class="num">${mins >= 60 ? (mins / 60).toFixed(1) + " ساعة" : mins + " دقيقة"}</small></span></span>` : ""}
+    <span class="lt-t">${esc(g.en || g.title)}</span>${anyInstalled(g.id) ? "" : '<span class="lt-badge">غير مثبتة</span>'}</button>`;
+}
+function renderLibHome(main){
+  const mine = libGames();
+  if (!mine.length) { main.innerHTML = '<div class="empty"><b style="color:var(--text)">مكتبتك فاضية</b><span>أي لعبة تشتريها أو تضيف ديمو حقها تطلع هنا.</span><a class="btn buy" href="#store">تصفّح المتجر</a></div>'; return; }
+  const recent = mine.filter(g => lastPlayed(g.id)).sort((a, b) => lastPlayed(b.id) - lastPlayed(a.id));
+  const sorters = {az:(a, b) => (a.en || a.title).localeCompare(b.en || b.title), recent:(a, b) => lastPlayed(b.id) - lastPlayed(a.id), time:(a, b) => ((PLAY[b.id] || {}).minutes || 0) - ((PLAY[a.id] || {}).minutes || 0)};
+  const all = mine.slice().sort(sorters[LIBSORT] || sorters.az);
+  main.innerHTML = `${recent.length ? `<div class="shelf"><div class="shelf-h"><h3>آخر الألعاب</h3></div><div class="shelf-row">${recent.map((g, i) => libTile(g, i === 0)).join("")}</div></div>` : ""}
+    <div class="shelf"><div class="shelf-h"><h3>كل الألعاب <span class="num muted">(${all.length})</span></h3><label class="muted" style="font-size:12px">ترتيب
+      <select id="libSort"><option value="az">أبجدي</option><option value="recent">آخر تشغيل</option><option value="time">وقت اللعب</option></select></label></div>
+      <div class="shelf-grid">${all.map(g => libTile(g)).join("")}</div></div>`;
+  $("#libSort").value = LIBSORT; $("#libSort").onchange = e => { LIBSORT = e.target.value; renderLib(); };
+}
+function renderLibGame(main, g){
+  const {best, pending} = ent(g.id), o = best || pending, mins = (PLAY[g.id] && PLAY[g.id].minutes) || 0, last = lastPlayed(g.id);
+  const ach = Object.values(ACH).filter(a => a.game === g.id).length, achAll = Object.keys((MANIFEST.games[g.id] || {}).achievements || {}).length;
+  const days = last ? Math.floor((Date.now() - last) / 864e5) : -1;
+  main.innerHTML = `<div class="lg-hero"><span class="lg-art" data-cover="${g.id}"></span><div class="lg-title"><button class="btn ghost mini" id="libBack" type="button">→ المكتبة</button><h1>${esc(g.title)}</h1></div></div>
+    <div class="lg-bar">${best ? installBlock(g) : '<span class="muted">تقدر تلعب بعد تأكيد الدفع</span>'}
+      <div class="lg-stats"><div><small>آخر تشغيل</small><b>${days < 0 ? "—" : days === 0 ? "اليوم" : days === 1 ? "أمس" : new Date(last).toLocaleDateString("ar-SA-u-nu-latn", {day:"numeric", month:"short"})}</b></div>
+        <div><small>وقت اللعب</small><b class="num">${mins >= 60 ? (mins / 60).toFixed(1) + " ساعة" : mins + " دقيقة"}</b></div>
+        ${achAll ? `<div><small>الإنجازات</small><b class="num">${ach}/${achAll}</b><span class="lg-ach"><i style="width:${Math.round(ach / achAll * 100)}%"></i></span></div>` : ""}</div></div>
+    <div class="lg-body"><div class="panel"><h3>نسختك</h3><div class="row" style="gap:8px"><span>${esc(edName(g, o.edition))}</span>${stPill(o.status)}</div><span class="muted" style="font-size:12px">أضيفت ${fdate(o.at)}${pending && best ? " · ترقية بانتظار الدفع" : ""}</span>${refundLine(g)}<a class="linkbtn" href="#${g.id}">صفحة المتجر</a></div>
+      ${achAll ? `<div class="panel"><h3>الإنجازات</h3><div class="lg-achs">${Object.entries(MANIFEST.games[g.id].achievements).map(([id, d]) => { const got = ACH[g.id + "__" + id];
+        return `<div class="badge${got ? " got" : ""}" title="${esc(d.desc || "")}"><span>🏆</span><b>${esc(d.name)}</b><small>${esc(d.desc || "")}</small></div>`; }).join("")}</div></div>` : ""}</div>`;
+  $("#libBack").onclick = () => { LIBSEL = ""; renderLib(); };
+}
+function renderLib(){
+  const box = $("#lib"), bar = $("#libBar"); bar.innerHTML = "";
+  if (!user) { box.innerHTML = '<div class="empty"><b style="color:var(--text)">المكتبة للمسجّلين فقط</b><span>سجّل دخولك عشان تضيف ألعاب لمكتبتك وتثبّتها.</span><button class="btn buy" type="button" data-login>تسجيل الدخول</button></div>'; return; }
+  if (!PS && !isMobile) bar.innerHTML = `<span>عشان تثبّت ألعابك على الكمبيوتر تحتاج تطبيق Premium Studio.</span><a class="btn mini buy" href="#download">حمّل التطبيق</a>`;
+  if (!box.querySelector("#libSide")) {
+    box.innerHTML = `<div class="libwrap"><aside class="libside" id="libSide"><button class="ls-home" id="libHome" type="button">الرئيسية</button>
+      <div class="ls-tools"><input id="libQ" type="search" placeholder="ابحث في مكتبتك" autocomplete="off"><select id="libF" aria-label="فلتر"><option value="">الكل</option><option value="inst">مثبتة</option><option value="no">غير مثبتة</option></select></div>
+      <div class="ls-list"></div></aside><section class="libmain" id="libMain"></section></div>`;
+    $("#libQ").oninput = e => { LIBQ = e.target.value; renderLibSide(); };
+    $("#libF").onchange = e => { LIBF = e.target.value; renderLibSide(); };
+    $("#libHome").onclick = () => { LIBSEL = ""; renderLib(); };
+  }
+  $("#libHome").classList.toggle("on", !LIBSEL);
+  renderLibSide();
+  const main = $("#libMain"), g = LIBSEL && byId(LIBSEL);
+  if (g && (ent(g.id).best || ent(g.id).pending)) renderLibGame(main, g); else { LIBSEL = ""; renderLibHome(main); }
+  main.querySelectorAll("[data-cover]").forEach(el => cover(el, el.dataset.cover));
+  main.querySelectorAll(".lt[data-sel]").forEach(b => b.onclick = () => { LIBSEL = b.dataset.sel; renderLib(); main.scrollIntoView({block:"start"}); });
+}
+
 /* ---------------- profile: level, XP, badges, game achievements ----------------
    XP: 10 per hour played, 100 per game owned, +50 per Gold edition, 25 per friend. Level n needs 25·n² XP. */
 const BADGES = [
@@ -680,7 +793,7 @@ $("#signIn").onclick = () => showAuth("login");
 let curView = "store";
 function route(){
   const h = (location.hash || "#store").slice(1), g = byId(h);
-  let v = g ? "game" : (["store", "library", "friends", "studio", "download", "account", "coins"].includes(h) ? h : "store");
+  let v = g ? "game" : (["store", "library", "downloads", "friends", "studio", "download", "account", "coins"].includes(h) ? h : "store");
   if (v === "studio" && !isAdmin) v = "store";
   curView = v; $$(".view").forEach(s => s.hidden = s.dataset.view !== v);
   $$("#tabs a").forEach(a => a.setAttribute("aria-current", a.dataset.v === (g ? "store" : v) ? "page" : "false"));
@@ -694,6 +807,7 @@ function guestNote(){
 }
 function render(){
   try { publishProfile(); } catch(e) {}
+  try { renderDlBar(); } catch(e) {}
   if (!authReady) return;
   guestNote();
   if (curView === "store") { renderHero(); renderGrid(); }
@@ -703,6 +817,7 @@ function render(){
   else if (curView === "account") renderAccount();
   else if (curView === "coins") renderCoins();
   else if (curView === "friends") renderFriends();
+  else if (curView === "downloads") renderDownloads();
   else if (curView === "download") { $("#dlInApp").hidden = !PS; $("#dlBtn").hidden = !!PS; }
 }
 addEventListener("hashchange", route);
