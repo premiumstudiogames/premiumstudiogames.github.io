@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const fsp = fs.promises;
 const crypto = require('crypto');
+const zlib = require('zlib');
 const { pathToFileURL } = require('url');
 
 const SITE = 'https://premiumstudiogames.github.io/';
@@ -177,6 +178,7 @@ function markStopped(key) {
   running.delete(key);
   addPlaytime(r, Date.now() - r.since); pushPresence(); runningChanged();
   if (ovKey === key) closeOverlay();
+  if (recKey === key && recWin && !recWin.isDestroyed()) recWin.webContents.send('rec:stop');
   if (![...running.keys()].some(k => (readReg()[k] || {}).type === 'bf-launcher')) gameKeys(false);
 }
 // BLOCKFALL runs as its own program: watch its process
@@ -355,6 +357,36 @@ ipcMain.handle('ps:screenshots', guard(async gid => {
 }));
 ipcMain.handle('ps:openShots', guard(async file => { if (typeof file === 'string' && path.resolve(file).startsWith(SHOTS())) shell.showItemInFolder(file); else { await fsp.mkdir(SHOTS(), { recursive: true }); shell.openPath(SHOTS()); } return true; }));
 
+// game recording (F9 starts, F9 again saves), like Steam's — saved to Videos\Premium Studio\<game>
+let recWin = null, recKey = '', recT = null;
+const CLIPS = () => path.join(app.getPath('videos'), 'Premium Studio');
+async function toggleRecord(key) {
+  if (recKey) { if (recWin && !recWin.isDestroyed()) recWin.webContents.send('rec:stop'); return; }
+  try {
+    let sourceId = '';
+    const w = gameWins.get(key);
+    if (w && !w.isDestroyed()) sourceId = w.getMediaSourceId();
+    else { const { desktopCapturer } = require('electron'); const src = (await desktopCapturer.getSources({ types: ['screen'] }))[0]; sourceId = src && src.id; }
+    if (!sourceId) return;
+    if (!recWin || recWin.isDestroyed()) {
+      recWin = new BrowserWindow({ show: false, width: 200, height: 100, webPreferences: { preload: path.join(__dirname, 'recorder-preload.js'), contextIsolation: false, sandbox: false, backgroundThrottling: false } });
+      await recWin.loadURL('data:text/html,<title>rec</title>');
+    }
+    recKey = key; recWin.webContents.send('rec:start', sourceId);
+    clearTimeout(recT); recT = setTimeout(() => { if (recKey && recWin && !recWin.isDestroyed()) recWin.webContents.send('rec:stop'); }, 10 * 60000);   // 10 minutes at most
+  } catch (e) { recKey = ''; }
+}
+ipcMain.on('rec:started', () => flash('⏺ يسجّل… اضغط F9 عشان توقف'));
+ipcMain.on('rec:error', () => { recKey = ''; flash('ما قدرت أسجّل'); });
+ipcMain.on('rec:done', async (e, bytes) => {
+  const key = recKey; recKey = ''; clearTimeout(recT);
+  try { const dir = path.join(CLIPS(), gameFolder(key)); await fsp.mkdir(dir, { recursive: true });
+    const t = new Date(), pad = n => String(n).padStart(2, '0');
+    await fsp.writeFile(path.join(dir, `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())} ${pad(t.getHours())}.${pad(t.getMinutes())}.${pad(t.getSeconds())}.webm`), Buffer.from(bytes));
+    flash('🎬 انحفظ المقطع'); } catch (er) { flash('ما انحفظ المقطع'); }
+});
+ipcMain.handle('ps:openClips', guard(async () => { await fsp.mkdir(CLIPS(), { recursive: true }); shell.openPath(CLIPS()); return true; }));
+
 // small notice at the bottom corner, above any game
 let flashWin = null, flashT = null;
 function flash(text) {
@@ -394,7 +426,7 @@ function ovHTML(d) {
   .a{padding:12px;background:#1a2232;border:1px solid #2c3446;opacity:.35}.a.got{opacity:1;border-color:#6b5512}.a b{display:block;font-size:14px}.a small{font-size:12px;color:#9aa4b8}
   footer{padding:14px;text-align:center;color:#8c96aa;font-size:14px}
   </style></head><body><header><span class="ps"><i>P</i><i>S</i></span><h1>${esc(d.name)}</h1><span class="t">تلعب من ${d.mins} دقيقة · ${esc(d.clock)}</span></header>
-  <main><div class="card"><h2>اختصارات</h2><a href="#shot">📸 لقطة شاشة (F12)</a><a href="#shots">🖼 لقطاتي</a><a href="#friends">👥 الأصدقاء والدردشة</a><a href="#back">↩ ارجع للعبة</a><a class="red" href="#close">■ إغلاق اللعبة</a></div>
+  <main><div class="card"><h2>اختصارات</h2><a href="#shot">📸 لقطة شاشة (F12)</a><a href="#rec">🎬 سجّل مقطع (F9)</a><a href="#shots">🖼 لقطاتي</a><a href="#friends">👥 الأصدقاء والدردشة</a><a href="#back">↩ ارجع للعبة</a><a class="red" href="#close">■ إغلاق اللعبة</a></div>
   <div class="card"><h2>الإنجازات ${all.length ? `(${got.size}/${all.length})` : ''}</h2>${all.length ? `<div class="ach">${all.map(([id, v]) => `<div class="a${got.has(id) ? ' got' : ''}"><b>🏆 ${esc(v.name)}</b><small>${esc(v.desc || '')}</small></div>`).join('')}</div>` : '<p class="t">هذي اللعبة ما فيها إنجازات للحين.</p>'}</div></main>
   <footer>Shift+Tab أو Esc يرجعك للعبة</footer></body></html>`;
 }
@@ -414,6 +446,7 @@ async function toggleOverlay(key) {
   ovWin.webContents.on('did-navigate-in-page', async (e, url) => {
     const h = url.split('#')[1], k = ovKey;
     if (h === 'shot') { closeOverlay(); setTimeout(() => screenshot(k), 250); }
+    else if (h === 'rec') { closeOverlay(); setTimeout(() => toggleRecord(k), 250); }
     else if (h === 'shots') { closeOverlay(); shell.openPath(path.join(SHOTS(), gameFolder(k))).catch(() => {}); }
     else if (h === 'friends') { closeOverlay(); createMain('friends'); }
     else if (h === 'close') { closeOverlay(); stopGame(k); }
@@ -430,7 +463,8 @@ function gameKeys(on) {
       const bf = () => [...running.keys()].find(k => (readReg()[k] || {}).type === 'bf-launcher');
       if (!globalShortcut.isRegistered('F12')) globalShortcut.register('F12', () => { const k = bf(); if (k) screenshot(k); });
       if (!globalShortcut.isRegistered('Shift+Tab')) globalShortcut.register('Shift+Tab', () => { const k = bf(); if (k) toggleOverlay(k); });
-    } else { globalShortcut.unregister('F12'); globalShortcut.unregister('Shift+Tab'); }
+      if (!globalShortcut.isRegistered('F9')) globalShortcut.register('F9', () => { const k = bf(); if (k) toggleRecord(k); });
+    } else { globalShortcut.unregister('F12'); globalShortcut.unregister('Shift+Tab'); globalShortcut.unregister('F9'); }
   } catch (e) {}
 }
 
@@ -477,6 +511,7 @@ ipcMain.handle('ps:setCover', guard(async (id, dataUrl) => {
 
 async function launchWithUpdate(id, edition) {
   const g = installedNow()[id];
+  const pb = g && parentalBlocks(g.game || id.split('--')[0]); if (pb) { flash('🔒 ' + pb); throw new Error(pb); }
   if (g && !running.has(id)) showSplash(id);
   if (g && g.type === 'manifest' && !busy.has(id) && !running.has(id)) {
     try {
@@ -524,6 +559,7 @@ function launchGame(id, edition) {
     if (input.type !== 'keyDown') return;
     if (input.key === 'F11') { w.setFullScreen(!w.isFullScreen()); e.preventDefault(); }
     else if (input.key === 'F12') { e.preventDefault(); screenshot(id); }
+    else if (input.key === 'F9') { e.preventDefault(); toggleRecord(id); }
     else if (input.key === 'Tab' && input.shift) { e.preventDefault(); toggleOverlay(id); }
   });
   const q = g.edition === 'demo' ? '?demo=1' : '';
@@ -833,12 +869,86 @@ ipcMain.handle('ps:setOwned', guard(async o => {
   if (JSON.stringify(owned) === JSON.stringify(currentUser.owned || {})) return true;
   currentUser.owned = owned; try { fs.writeFileSync(USER_FILE, JSON.stringify(currentUser)); } catch (e) {} writeBfAccount(); return true;
 }));
-ipcMain.handle('ps:getSettings', guard(async () => settings()));
+ipcMain.handle('ps:getSettings', guard(async () => { const x = settings(); return { limit: x.limit || 0, parental: parentalPublic() }; }));
+/* ---- parental controls (on this PC): a PIN, which games are allowed, and minutes per day ---- */
+const pinHash = p => crypto.createHash('sha256').update('ps-parental:' + String(p || '')).digest('hex');
+const today = () => new Date().toISOString().slice(0, 10);
+function parental() { const x = settings().parental || {}; return { on: !!x.on, pin: x.pin || '', allowed: Array.isArray(x.allowed) ? x.allowed : [], daily: +x.daily || 0, used: x.day === today() ? (+x.used || 0) : 0 }; }
+function parentalPublic() { const p = parental(); return { on: p.on, hasPin: !!p.pin, allowed: p.allowed, daily: p.daily, used: Math.round(p.used) }; }
+function saveParental(p) { const x = settings(); x.parental = { on: p.on, pin: p.pin, allowed: p.allowed, daily: p.daily, used: p.used, day: today() }; fs.writeFileSync(SETTINGS_FILE(), JSON.stringify(x)); }
+function parentalBlocks(gid) {
+  const p = parental(); if (!p.on) return '';
+  if (p.allowed.length && !p.allowed.includes(gid)) return 'هذي اللعبة مقفولة بالرقابة الأبوية';
+  if (p.daily && p.used >= p.daily) return 'خلص وقت اللعب المسموح اليوم';
+  return '';
+}
+ipcMain.handle('ps:setParental', guard(async o => {
+  const p = parental();
+  if (p.pin && pinHash(o && o.pin) !== p.pin) throw new Error('الرقم السري غلط');
+  if (o.newPin != null) { if (!/^\d{4,8}$/.test(String(o.newPin))) throw new Error('الرقم السري من 4 إلى 8 أرقام'); p.pin = pinHash(o.newPin); }
+  if ('on' in o) { if (o.on && !p.pin) throw new Error('حط رقم سري أول'); p.on = !!o.on; }
+  if (Array.isArray(o.allowed)) p.allowed = o.allowed.filter(validId).slice(0, 50);
+  if ('daily' in o) p.daily = Math.max(0, Math.min(1440, +o.daily || 0));
+  saveParental(p); return parentalPublic();
+}));
+// count today's play time and close games when the day's time is over
+setInterval(() => {
+  const p = parental(); if (!p.on || !running.size) return;
+  p.used += 1; saveParental(p);
+  if (p.daily && p.used >= p.daily) { flash('⏰ خلص وقت اللعب اليوم'); for (const k of [...running.keys()]) stopGame(k); }
+}, 60000);
 ipcMain.handle('ps:setSettings', guard(async o => { const cur = settings(); if (o && typeof o === 'object') { if ('limit' in o) cur.limit = Math.max(0, Math.min(1e9, +o.limit || 0)); }
-  fs.writeFileSync(SETTINGS_FILE(), JSON.stringify(cur)); return cur; }));
+  fs.writeFileSync(SETTINGS_FILE(), JSON.stringify(cur)); return { limit: cur.limit || 0, parental: parentalPublic() }; }));
 // game properties: check the files (download again what's wrong or missing), put the icon back on the desktop
 ipcMain.handle('ps:verify', guard(async id => { if (!validId(id) || !readReg()[id]) throw new Error('مو مثبتة'); if (running.has(id)) throw new Error('اقفل اللعبة أول'); await install(id, { force: true, edition: readReg()[id].edition }); return true; }));
 ipcMain.handle('ps:shortcut', guard(async id => { const g = readReg()[id]; if (!g) throw new Error('مو مثبتة'); makeShortcuts(id, g); return true; }));
+/* ---- Workshop: share BLOCKFALL worlds; subscribed ones go into your worlds next time you play ---- */
+ipcMain.handle('ps:myWorlds', guard(async () => {
+  const dir = path.join(BF_DATA, 'worlds_export'); let files = []; try { files = (await fsp.readdir(dir)).filter(f => f.endsWith('.json')); } catch (e) { return []; }
+  const out = []; for (const f of files) { try { const x = JSON.parse(await fsp.readFile(path.join(dir, f), 'utf8')); out.push({ id: x.meta.id, name: x.meta.name, mode: x.meta.mode, size: x.data.length }); } catch (e) {} }
+  return out;
+}));
+ipcMain.handle('ps:workshopUpload', guard(async (worldId, title, desc) => {
+  if (!currentUser || !currentUser.uid) throw new Error('سجّل دخولك');
+  const f = path.join(BF_DATA, 'worlds_export', String(worldId).replace(/[^a-z0-9]/gi, '') + '.json');
+  const x = JSON.parse(await fsp.readFile(f, 'utf8'));
+  const b64 = zlib.gzipSync(Buffer.from(x.data, 'utf8'), { level: 9 }).toString('base64'); if (b64.length > 8e6) throw new Error('العالم كبير مرة (الحد 6 ميجا مضغوط)');
+  const parts = []; for (let i = 0; i < b64.length; i += 700000) parts.push(b64.slice(i, i + 700000));
+  const id = 'w' + Date.now().toString(36) + crypto.randomBytes(3).toString('hex');
+  const t = await fbToken(); if (!t) throw new Error('ما قدرت أوصل لحسابك');
+  const writes = [{ update: { name: `${FB_DB}/workshop/${id}`, fields: { game: { stringValue: 'blockfall' }, author: { stringValue: currentUser.uid }, authorName: { stringValue: currentUser.username || '' },
+      title: { stringValue: String(title || x.meta.name || 'عالم').slice(0, 60) }, desc: { stringValue: String(desc || '').slice(0, 600) }, mode: { stringValue: String(x.meta.mode || 'c').slice(0, 4) },
+      parts: { integerValue: String(parts.length) }, size: { integerValue: String(x.data.length) }, subs: { integerValue: '0' } } }, updateTransforms: [{ fieldPath: 'at', setToServerValue: 'REQUEST_TIME' }], currentDocument: { exists: false } }];
+  parts.forEach((d, i) => writes.push({ update: { name: `${FB_DB}/workshop/${id}/parts/${i}`, fields: { d: { stringValue: d } } } }));
+  const r = await net.fetch(`https://firestore.googleapis.com/v1/${FB_DB}:commit`, { method: 'POST', headers: { authorization: 'Bearer ' + t, 'content-type': 'application/json' }, body: JSON.stringify({ writes }) });
+  if (!r.ok) throw new Error('ما ارتفع (' + r.status + ')');
+  return id;
+}));
+ipcMain.handle('ps:workshopGet', guard(async (id, name, mode) => {
+  if (!/^[a-z0-9]{4,40}$/i.test(String(id))) throw new Error('bad id');
+  const t = await fbToken(); if (!t) throw new Error('ما قدرت أوصل لحسابك');
+  const meta = await fbGet(`workshop/${id}`); if (!meta) throw new Error('انحذف من الورشة');
+  const n = +meta.fields.parts.integerValue; let b64 = '';
+  for (let i = 0; i < n; i++) { const d = await fbGet(`workshop/${id}/parts/${i}`); if (!d) throw new Error('ناقص'); b64 += d.fields.d.stringValue; }
+  const data = zlib.gunzipSync(Buffer.from(b64, 'base64')).toString('utf8');
+  const dir = path.join(BF_DATA, 'workshop_import'); await fsp.mkdir(dir, { recursive: true });
+  await fsp.writeFile(path.join(dir, id + '.json'), JSON.stringify({ name: String(name || meta.fields.title.stringValue).slice(0, 40), mode: mode || meta.fields.mode.stringValue, data }));
+  return true;
+}));
+
+// Remote Play Together: which game window the store may share, and the friend's keys/mouse for it
+let shareWin = '';
+ipcMain.handle('ps:shareGame', guard(async id => { if (!validId(id) || !gameWins.has(id)) throw new Error('شغّل اللعبة أول'); shareWin = id; return true; }));
+ipcMain.handle('ps:remoteInput', guard(async (id, ev) => {
+  const w = gameWins.get(id); if (!w || w.isDestroyed() || id !== shareWin || !ev || typeof ev !== 'object') return false;
+  const T = ['keyDown', 'keyUp', 'char', 'mouseDown', 'mouseUp', 'mouseMove', 'mouseWheel'];
+  if (!T.includes(ev.type)) return false;
+  const [cw, ch] = w.getContentSize(), e = { type: ev.type };
+  if (ev.type.startsWith('mouse')) { e.x = Math.round(Math.max(0, Math.min(1, +ev.x || 0)) * cw); e.y = Math.round(Math.max(0, Math.min(1, +ev.y || 0)) * ch); e.button = ['left', 'middle', 'right'][+ev.button || 0] || 'left'; e.clickCount = 1;
+    if (ev.type === 'mouseWheel') { e.deltaX = +ev.dx || 0; e.deltaY = -(+ev.dy || 0); } }
+  else e.keyCode = String(ev.key || '').slice(0, 20);
+  try { w.webContents.sendInputEvent(e); } catch (er) {} return true;
+}));
 ipcMain.handle('ps:fullscreen', guard(async on => { if (mainWin && !mainWin.isDestroyed()) { mainWin.setFullScreen(!!on); if (on) { mainWin.show(); mainWin.focus(); } } return true; }));
 ipcMain.handle('ps:retryOnline', guard(async () => { if (mainWin) mainWin.loadURL(SITE); return true; }));
 // Game achievements: a game calls PREMIUM_STUDIO.achieve('id'); it's kept on the player's account
@@ -938,6 +1048,15 @@ if (!app.requestSingleInstanceLock()) {
     Menu.setApplicationMenu(null);
     registerGameProtocol();
     migrateReg();
+    // the store may use the microphone (voice chat) and share a game window (Remote Play); nothing else
+    const { session, desktopCapturer } = require('electron');
+    session.defaultSession.setPermissionRequestHandler((wc, perm, cb, d) => cb((recWin && !recWin.isDestroyed() && wc === recWin.webContents && perm === 'media') || (isTrusted(d && d.requestingUrl) && ['media', 'notifications', 'fullscreen', 'clipboard-sanitized-write'].includes(perm))));
+    session.defaultSession.setPermissionCheckHandler((wc, perm, origin) => (recWin && !recWin.isDestroyed() && wc === recWin.webContents) || ((origin && origin.startsWith(SITE_ORIGIN)) ? ['media', 'notifications', 'fullscreen'].includes(perm) : false));
+    session.defaultSession.setDisplayMediaRequestHandler(async (req, cb) => {
+      try { const w = shareWin && gameWins.get(shareWin); if (!w || w.isDestroyed()) return cb({});
+        const id = w.getMediaSourceId(), src = (await desktopCapturer.getSources({ types: ['window'] })).find(x => x.id === id);
+        cb(src ? { video: src } : {}); } catch (e) { cb({}); }
+    });
     if (Object.values(installedNow()).some(v => v.type === 'bf-launcher')) fixBfShortcuts();   // leftover icon from older installs
     makeTray();
     // like Steam: on start, bring Premium Studio up to date first (download, restart), then do what was asked

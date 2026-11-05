@@ -1,9 +1,10 @@
 import { makeBP } from "./bp.js?v=1";
+import { makeRTC } from "./rtc.js?v=1";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut,
   sendPasswordResetEmail, sendEmailVerification, updateProfile, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, collectionGroup, onSnapshot,
-  serverTimestamp, writeBatch, Timestamp, increment, addDoc, query, orderBy, limit, where } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  serverTimestamp, writeBatch, Timestamp, increment, addDoc, query, orderBy, limit, where, arrayUnion, arrayRemove } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 /* ---------------- config ---------------- */
 const firebaseConfig = {
@@ -28,7 +29,7 @@ const PACKS = [             // must match coinPacks() in firestore.rules (coins 
   {id:"u100000",coins:100000, price:1000000}
 ];
 const coins = n => ((n || 0) / COIN_UNIT).toLocaleString("en-US", {minimumFractionDigits:0, maximumFractionDigits:4});
-const SITE_VERSION = "00.00.24";
+const SITE_VERSION = "00.00.25";
 const APP_DL = "downloads/PremiumStudioSetup.exe";
 
 const fb = initializeApp(firebaseConfig);
@@ -426,9 +427,10 @@ function renderLibGame(main, g){
   $("#libHide").onclick = () => { const h = (PREFS.hidden || []).includes(g.id); setPref("hidden", g.id, !h); if (!h) { LIBSEL = ""; toast("انخفت من مكتبتك. تلقاها في «المخفية»"); } };
   $("#libProps").onclick = () => gameProps(g);
   if (PS && PS.screenshots) {   // screenshots taken with F12 while playing
-    const box = document.createElement("div"); box.className = "panel lg-shots"; box.innerHTML = `<h3>لقطات الشاشة <button class="linkbtn" type="button" data-shots>فتح المجلد</button></h3><div class="shots"><span class="muted">اضغط F12 وانت تلعب عشان تصوّر.</span></div>`;
+    const box = document.createElement("div"); box.className = "panel lg-shots"; box.innerHTML = `<h3>لقطات الشاشة والمقاطع <span><button class="linkbtn" type="button" data-shots>اللقطات</button> · <button class="linkbtn" type="button" data-clips>المقاطع</button></span></h3><div class="shots"><span class="muted">اضغط F12 وانت تلعب عشان تصوّر، و F9 عشان تسجّل مقطع.</span></div>`;
     main.querySelector(".lg-body").appendChild(box);
     box.querySelector("[data-shots]").onclick = () => PS.openShots("");
+    box.querySelector("[data-clips]").onclick = () => PS.openClips && PS.openClips();
     PS.screenshots(g.id).then(l => { if (!l.length) return; box.querySelector(".shots").innerHTML = l.map((x, i) => `<button class="shot" type="button" data-i="${i}" title="${esc(x.name)}"><img src="${x.thumb}" alt=""></button>`).join("");
       box.querySelectorAll(".shot").forEach(b => b.onclick = () => PS.openShots(l[+b.dataset.i].file)); }).catch(() => {});
   }
@@ -575,6 +577,7 @@ function notes(){
   for (const id of Object.keys(LASTMSG)) if (unread(id)) { const m = LASTMSG[id], f = FRIENDS[id]; out.push({t:m.kind === "invite" ? `@${f ? f.username : ""} يدعوك تلعب ${gameName(m.game)}` : `رسالة من @${f ? f.username : ""}`, href:"#friends", i:m.kind === "invite" ? "🎮" : "💬"}); }
   for (const a of Object.values(ACH)) if (Date.now() - tsMs(a.at) < 864e5) { const d = ((MANIFEST.games[a.game] || {}).achievements || {})[a.id]; out.push({t:`إنجاز جديد: ${d ? d.name : a.id}`, href:"#account", i:"🏆"}); }
   for (const [k, v] of pendingUpdates()) out.push({t:`تحديث متوفر: ${keyTitle(k)}`, href:"#downloads", i:"⬇"});
+  for (const [id, d] of Object.entries(DEVICES)) if (id !== deviceId() && Date.now() - tsMs(d.first) < 864e5) out.push({t:`دخول من جهاز جديد: ${d.name || ""}`, href:"#account", i:"🔐"});
   for (const [id, r] of Object.entries(REFUNDS)) if (r.status !== "pending" && Date.now() - tsMs(r.doneAt || r.at) < 7 * 864e5) out.push({t:r.status === "done" ? "تمت الموافقة على الاسترجاع" : "انرفض طلب الاسترجاع", href:"#library", i:"↩"});
   for (const gid of Object.keys(WISH)) { const g = byId(gid); if (g && ent(gid).best) continue; }
   return out;
@@ -585,6 +588,135 @@ function renderBell(){
   const b = $("#bell"); if (!b) return; b.hidden = !user;
   const n = notes(); b.querySelector(".nb").textContent = n.length; b.querySelector(".nb").hidden = !n.length;
   const l = $("#bellList"); if (l && !l.hidden) l.innerHTML = n.length ? n.map(x => `<a href="${x.href}"><span>${x.i}</span>${esc(x.t)}</a>`).join("") : '<p class="muted">ما فيه إشعارات</p>';
+}
+
+/* ---------------- voice chat, parties and Remote Play Together ---------------- */
+let RTC = null;
+function rtc(){
+  if (RTC) return RTC;
+  RTC = makeRTC({fs, toast, esc, PS, me:() => user, myName:() => (PROFILE && PROFILE.username) || "",
+    F:{doc, collection, query, where, onSnapshot, setDoc, getDoc, updateDoc, addDoc, serverTimestamp, arrayUnion, arrayRemove},
+    gameStream:async key => { try { await PS.shareGame(key); return await navigator.mediaDevices.getDisplayMedia({video:{frameRate:30}, audio:false}); } catch(e) { toast("شغّل اللعبة من بريميوم أول: " + (e && e.message || e)); return null; } }});
+  RTC.onChange = renderCall; return RTC;
+}
+const callName = (c, uid) => (c.names && c.names[uid]) || (FRIENDS[uid] && FRIENDS[uid].username) || "";
+function renderCall(){
+  const bar = $("#callBar"), ring = $("#ringBox"); if (!bar || !ring) return;
+  const R = RTC, c = R && R.cur;
+  // ringing / invited
+  const inc = R ? Object.entries(R.incoming) : [];
+  ring.hidden = !inc.length || !!(c && inc.every(([id]) => id === c.id));
+  ring.innerHTML = inc.map(([id, x]) => `<div class="ring"><b>${x.kind === "party" ? "🎉 دعوة لحفلة صوتية" : x.kind === "remote" ? "🎮 دعوة تلعب عن بعد" : "📞 مكالمة صوتية"}</b><span>من @${esc(callName(x, x.host))}${x.game ? " · " + esc(gameName(x.game)) : ""}</span>
+    <div class="row" style="gap:6px"><button class="btn mini buy" type="button" data-rj="${id}">${x.kind === "voice" ? "رد" : "انضم"}</button><button class="btn mini danger" type="button" data-rd="${id}">رفض</button></div></div>`).join("");
+  ring.querySelectorAll("[data-rj]").forEach(b => b.onclick = () => rtc().join(b.dataset.rj).catch(e => toast(String(e && e.message || e))));
+  ring.querySelectorAll("[data-rd]").forEach(b => b.onclick = () => rtc().decline(b.dataset.rd));
+  // in a call
+  bar.hidden = !c;
+  if (!c) { const v = $("#remoteView"); if (v) v.remove(); return; }
+  const others = (c.data.in || []).filter(x => x !== user.uid);
+  bar.innerHTML = `<b>${c.data.kind === "party" ? "🎉 حفلة صوتية" : c.data.kind === "remote" ? "🎮 تلعب عن بعد" : "📞 مكالمة"}</b>
+    <span class="muted">${others.length ? others.map(x => "@" + esc(callName(c.data, x))).join("، ") : "بانتظار الباقين…"}</span>
+    ${c.local && c.data.kind !== "remote" ? `<button class="btn mini" type="button" id="cMute">${c.muted ? "🔇 مكتوم" : "🎙 كتم"}</button>` : ""}<button class="btn mini danger" type="button" id="cLeave">إنهاء</button>`;
+  const m = $("#cMute"); if (m) m.onclick = () => rtc().mute();
+  $("#cLeave").onclick = () => rtc().leave();
+  // Remote Play viewer: the host's game, and your keys/mouse go back to it
+  if (c.data.kind === "remote" && !c.isHost) {
+    let v = $("#remoteView");
+    if (!v) { v = document.createElement("div"); v.id = "remoteView"; v.innerHTML = `<video autoplay playsinline></video><div class="rv-bar"><span>تلعب على جهاز @${esc(callName(c.data, c.data.host))} · اضغط على الشاشة وابدأ</span><button class="btn mini danger" type="button">خروج</button></div>`;
+      document.body.appendChild(v); v.querySelector("button").onclick = () => rtc().leave();
+      const vid = v.querySelector("video"), pos = e => { const r = vid.getBoundingClientRect(); return {x:(e.clientX - r.left) / r.width, y:(e.clientY - r.top) / r.height}; };
+      vid.tabIndex = 0;
+      vid.onmousedown = e => { vid.focus(); rtc().input({type:"mouseDown", button:e.button, ...pos(e)}); };
+      vid.onmouseup = e => rtc().input({type:"mouseUp", button:e.button, ...pos(e)});
+      let mv = 0; vid.onmousemove = e => { if (performance.now() - mv < 30) return; mv = performance.now(); rtc().input({type:"mouseMove", ...pos(e)}); };
+      vid.onwheel = e => { e.preventDefault(); rtc().input({type:"mouseWheel", dx:e.deltaX, dy:e.deltaY, ...pos(e)}); };
+      vid.oncontextmenu = e => e.preventDefault();
+      vid.onkeydown = e => { e.preventDefault(); rtc().input({type:"keyDown", key:e.key.length === 1 ? e.key : e.key}); if (e.key.length === 1) rtc().input({type:"char", key:e.key}); };
+      vid.onkeyup = e => { e.preventDefault(); rtc().input({type:"keyUp", key:e.key}); }; }
+    const vid = v.querySelector("video"); if (c.remoteVideo && vid.srcObject !== c.remoteVideo) vid.srcObject = c.remoteVideo;
+  }
+}
+function partyModal(){
+  const fr = Object.entries(FRIENDS).filter(([, f]) => f.status === "ok"); if (!fr.length) return toast("أضف أصدقاء أول");
+  openModal(`<div class="eyebrow">PARTY</div><h1 class="mbox-t">🎉 حفلة صوتية</h1><p class="muted">اختر لين 5 أصدقاء. يتكلمون معك وانتم تلعبون.</p>
+    <div class="giftlist">${fr.map(([id, f]) => `<label><input type="checkbox" value="${id}"> @${esc(f.username)}${isOnline(id) ? ' <small class="plg">متصل</small>' : ""}</label>`).join("")}</div>
+    <div class="row" style="justify-content:flex-end;gap:8px;margin-top:12px"><button class="btn" type="button" data-close>إلغاء</button><button class="btn buy" type="button" id="pGo">ابدأ الحفلة</button></div>`);
+  $("#mbox [data-close]").onclick = closeModal;
+  $("#pGo").onclick = () => { const ids = [...document.querySelectorAll("#mbox input:checked")].map(x => x.value).slice(0, 5); if (!ids.length) return toast("اختر صديق");
+    const names = {}; ids.forEach(id => names[id] = FRIENDS[id].username); closeModal(); rtc().start("party", ids, names).catch(() => {}); };
+}
+// Remote Play Together: share a game that runs inside Premium Studio
+function remoteModal(fid){
+  if (!PS || !PS.shareGame) return toast("العب عن بعد من تطبيق Premium Studio");
+  const run = Object.entries(RUNNING).filter(([k]) => (MANIFEST.games[(INSTALLED[k] || {}).game] || {}).type === "manifest");
+  if (!run.length) return toast("شغّل «التسجيل الأخير» أول، وبعدين ادعُ صديقك يلعب معك");
+  const [key] = run[0]; rtc().start("remote", [fid], {[fid]:FRIENDS[fid].username}, {key, game:(INSTALLED[key] || {}).game}).catch(() => {});
+}
+
+/* ---------------- account security: your devices, new-device alerts, sign out everywhere ---------------- */
+let DEVICES = {}, SECURITY = {};
+const DEV_KEY = "ps-device", LOGIN_KEY = "ps-login-at";
+const deviceId = () => { try { let d = localStorage.getItem(DEV_KEY); if (!d) { d = Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem(DEV_KEY, d); } return d; } catch(e) { return "web"; } };
+function deviceName(){ const ua = navigator.userAgent; const os = /Windows/.test(ua) ? "Windows" : /Android/.test(ua) ? "Android" : /iPhone|iPad/.test(ua) ? "iPhone/iPad" : /Mac/.test(ua) ? "Mac" : "جهاز"; return (PS ? "تطبيق Premium Studio · " : "المتصفح · ") + os; }
+function registerDevice(){
+  if (!user) return; const id = deviceId();
+  try { if (!localStorage.getItem(LOGIN_KEY + user.uid)) localStorage.setItem(LOGIN_KEY + user.uid, String(Date.now())); } catch(e) {}
+  setDoc(doc(fs, "users", user.uid, "devices", id), {name:deviceName(), last:serverTimestamp(), first:(DEVICES[id] && DEVICES[id].first) || serverTimestamp()}, {merge:true}).catch(() => {});
+}
+function checkSignOutAll(){
+  if (!user || !SECURITY.signOutBefore) return; let at = 0; try { at = +localStorage.getItem(LOGIN_KEY + user.uid) || 0; } catch(e) {}
+  if (at && at < tsMs(SECURITY.signOutBefore)) { try { localStorage.removeItem(LOGIN_KEY + user.uid); } catch(e) {} toast("طلعت من كل الأجهزة. سجّل دخولك من جديد"); signOut(auth); }
+}
+function securityBox(){
+  const me = deviceId(), list = Object.entries(DEVICES).sort((a, b) => tsMs(b[1].last) - tsMs(a[1].last));
+  return `<h3 style="margin-top:16px">الأمان</h3><p class="muted" style="font-size:13px;margin:0 0 8px">الأجهزة اللي دخلت منها. إذا شفت جهاز ما تعرفه، اطلع من كل الأجهزة وغيّر كلمة السر.</p>
+    <div class="devs">${list.map(([id, d]) => `<div class="dev"><b>${esc(d.name || "جهاز")}${id === me ? ' <span class="tag">هذا الجهاز</span>' : ""}</b><small class="muted">آخر دخول ${fdate(d.last)}</small>${id !== me ? `<button class="linkbtn" type="button" data-devx="${id}">إزالة</button>` : ""}</div>`).join("")}</div>
+    <button class="btn mini danger" type="button" id="signAll" style="margin-top:8px">اطلع من كل الأجهزة</button>`;
+}
+async function signOutEverywhere(){
+  confirmModal("تطلع من كل الأجهزة؟", "كل جهاز داخل بحسابك يطلع، وتحتاج تسجّل دخولك فيها من جديد (حتى هذا الجهاز).", "اطلع من الكل", async () => {
+    try { await setDoc(doc(fs, "users", user.uid, "meta", "security"), {signOutBefore:serverTimestamp()}); } catch(e) { toast("ما تم: " + e.code); } });
+}
+// parental controls (in the app): PIN, allowed games, minutes per day
+let PARENTAL = null;
+function parentalBox(){
+  if (!PS || !PS.setParental) return "";
+  const p = PARENTAL || {on:false, hasPin:false, allowed:[], daily:0, used:0};
+  return `<h3 style="margin-top:16px">الرقابة الأبوية</h3><p class="muted" style="font-size:13px;margin:0 0 8px">على هذا الكمبيوتر: اختر الألعاب المسموحة ووقت اللعب باليوم. ${p.on ? `<b class="plg">شغالة</b> · لعب اليوم <span class="num">${p.used}</span> دقيقة` : ""}</p>
+    <div class="pc"><label>الرقم السري<input id="pcPin" type="password" inputmode="numeric" maxlength="8" placeholder="${p.hasPin ? "اكتب الرقم السري" : "اختر رقم من 4 لـ 8 أرقام"}" autocomplete="off"></label>
+      <label>دقائق اللعب باليوم<input id="pcDaily" type="number" min="0" max="1440" value="${p.daily || 0}"><small class="muted">0 = بدون حد</small></label>
+      <div><span class="muted" style="font-size:13px">الألعاب المسموحة (إذا ما اخترت شي، كلها مسموحة)</span><div class="row" style="gap:8px;flex-wrap:wrap">${GAMES.map(g => `<label class="tag"><input type="checkbox" data-pcg="${g.id}"${p.allowed.includes(g.id) ? " checked" : ""}> ${esc(g.en || g.title)}</label>`).join("")}</div></div>
+      <div class="row" style="gap:8px"><button class="btn mini buy" type="button" id="pcSave">${p.on ? "احفظ" : "شغّل الرقابة"}</button>${p.on ? '<button class="btn mini" type="button" id="pcOff">وقّفها</button>' : ""}</div><div class="err" id="pcErr"></div></div>`;
+}
+async function parentalSave(on){
+  const pin = $("#pcPin").value.trim(), p = PARENTAL || {};
+  const o = {pin, daily:+$("#pcDaily").value || 0, allowed:[...document.querySelectorAll("[data-pcg]:checked")].map(x => x.dataset.pcg), on};
+  if (!p.hasPin) o.newPin = pin;
+  try { PARENTAL = await PS.setParental(o); document.body.classList.toggle("kidmode", !!PARENTAL.on); toast(PARENTAL.on ? "الرقابة الأبوية شغالة ✓" : "انوقفت الرقابة الأبوية"); renderAccount(); }
+  catch(e) { $("#pcErr").textContent = String(e && e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, ""); }
+}
+
+/* ---------------- Workshop: worlds made by players ---------------- */
+let WORKSHOP = [], wsUnsub = null, MYWORLDS = null, WSUBS = {};
+function watchWorkshop(){ if (wsUnsub || !user) return; wsUnsub = onSnapshot(collection(fs, "workshop"), s => { WORKSHOP = s.docs.map(d => ({id:d.id, ...d.data()})).sort((a, b) => (b.subs || 0) - (a.subs || 0) || tsMs(b.at) - tsMs(a.at)); if (curView === "workshop") renderWorkshop(); }, () => {}); unsubs.push(() => { if (wsUnsub) wsUnsub(); wsUnsub = null; }); }
+function renderWorkshop(){
+  const box = $("#workshop"); if (!box) return;
+  if (!user) { box.innerHTML = '<div class="empty"><b style="color:var(--text)">الورشة للمسجّلين</b><button class="btn buy" type="button" data-login>تسجيل الدخول</button></div>'; return; }
+  watchWorkshop();
+  const canPlay = ownedEds("blockfall").length > 0;
+  if (PS && PS.myWorlds && MYWORLDS === null) { MYWORLDS = []; PS.myWorlds().then(l => { MYWORLDS = l || []; renderWorkshop(); }).catch(() => {}); }
+  box.innerHTML = `<p class="muted">عوالم BLOCKFALL 3001 سواها اللاعبين. اضغط «اشترك» وتلقاه في عوالمك أول ما تشغّل اللعبة.</p>
+    ${PS && PS.workshopUpload ? `<div class="panel ws-up"><h3>ارفع عالم من عوالمك</h3>${MYWORLDS && MYWORLDS.length ? `<div class="row" style="gap:8px;flex-wrap:wrap"><select id="wsW">${MYWORLDS.map(w => `<option value="${esc(w.id)}">${esc(w.name)} (${mb(w.size)})</option>`).join("")}</select><input id="wsT" maxlength="60" placeholder="اسم العالم في الورشة"><input id="wsD" maxlength="600" placeholder="وصف (اختياري)"><button class="btn buy" type="button" id="wsGo">ارفع</button></div><div class="err" id="wsE"></div>` : '<span class="muted">العب BLOCKFALL مرة من بريميوم عشان تطلع عوالمك هنا.</span>'}</div>` : ""}
+    <div class="ws-grid">${WORKSHOP.length ? WORKSHOP.map((w, i) => `<div class="ws"><span class="ws-art" data-cover="blockfall"></span><div class="ws-b"><b>${esc(w.title)}</b><small class="muted">@${esc(w.authorName || "")} · ${mb(w.size || 0)} · <span class="num">${w.subs || 0}</span> مشترك</small>${w.desc ? `<p>${esc(w.desc)}</p>` : ""}
+      <div class="row" style="gap:6px">${!PS ? '<span class="muted" style="font-size:12px">الاشتراك من التطبيق</span>' : !canPlay ? '<span class="muted" style="font-size:12px">تحتاج BLOCKFALL 3001</span>' : WSUBS[w.id] ? '<span class="st inst">✓ مشترك · يدخل عوالمك</span>' : `<button class="btn mini buy" type="button" data-wss="${i}">اشترك</button>`}${w.author === user.uid ? `<button class="btn mini danger" type="button" data-wsx="${i}">احذف</button>` : ""}</div></div></div>`).join("") : '<p class="muted">ما فيه عوالم للحين. كن أول واحد يرفع.</p>'}</div>`;
+  box.querySelectorAll("[data-cover]").forEach(el => cover(el, el.dataset.cover));
+  const go = $("#wsGo"); if (go) go.onclick = async () => { go.disabled = true; go.textContent = "يرفع…"; const sel = $("#wsW");
+    try { await PS.workshopUpload(sel.value, $("#wsT").value.trim() || sel.options[sel.selectedIndex].text.replace(/ \(.*$/, ""), $("#wsD").value.trim()); toast("ارتفع عالمك للورشة ✓"); }
+    catch(e) { $("#wsE").textContent = String(e && e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, ""); } go.disabled = false; go.textContent = "ارفع"; };
+  box.querySelectorAll("[data-wss]").forEach(b => b.onclick = async () => { const w = WORKSHOP[+b.dataset.wss]; b.disabled = true; b.textContent = "ينزّل…";
+    try { await PS.workshopGet(w.id, w.title, w.mode); WSUBS[w.id] = 1; updateDoc(doc(fs, "workshop", w.id), {subs:increment(1)}).catch(() => {}); toast("✓ يدخل عوالمك أول ما تشغّل BLOCKFALL"); renderWorkshop(); }
+    catch(e) { toast("ما تم: " + String(e && e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, "")); b.disabled = false; b.textContent = "اشترك"; } });
+  box.querySelectorAll("[data-wsx]").forEach(b => b.onclick = () => deleteDoc(doc(fs, "workshop", WORKSHOP[+b.dataset.wsx].id)).catch(e => toast(e.code)));
 }
 
 /* ---------------- gifts: buy an edition for a friend ---------------- */
@@ -721,7 +853,11 @@ function renderAccount(){
   const sb = $("#statusBox");
   if (sb && user) { const st = myStatus(); sb.innerHTML = `<h3>حالتك</h3><div class="row" style="gap:8px">${[["online","● متصل"],["away","◐ بعيد"],["invisible","○ أبان غير متصل"]].map(([k, n]) => `<button class="btn mini${st === k ? " buy" : ""}" type="button" data-st="${k}">${n}</button>`).join("")}</div>
     ${Object.keys(WISH).length ? `<h3 style="margin-top:16px">قائمة أمنياتك</h3><div class="row" style="gap:8px;flex-wrap:wrap">${Object.keys(WISH).map(id => { const g = byId(id); return g ? `<a class="btn mini" href="#${id}">♥ ${esc(g.en || g.title)}</a>` : ""; }).join("")}</div>` : ""}`;
-    sb.insertAdjacentHTML("beforeend", familyBox() + cardsBox());
+    sb.insertAdjacentHTML("beforeend", familyBox() + cardsBox() + securityBox() + parentalBox());
+    sb.querySelectorAll("[data-devx]").forEach(b => b.onclick = () => deleteDoc(doc(fs, "users", user.uid, "devices", b.dataset.devx)).catch(() => {}));
+    const sa = $("#signAll"); if (sa) sa.onclick = signOutEverywhere;
+    const ps = $("#pcSave"); if (ps) ps.onclick = () => parentalSave(true);
+    const po = $("#pcOff"); if (po) po.onclick = () => parentalSave(false);
     sb.querySelectorAll("[data-fam]").forEach(c => c.onchange = saveFamily);
     sb.querySelectorAll("[data-craft]").forEach(b => b.onclick = () => { b.disabled = true; craftBadge(b.dataset.craft); });
     sb.querySelectorAll("[data-st]").forEach(b => b.onclick = () => setStatus(b.dataset.st)); }
@@ -827,6 +963,7 @@ function renderChat(){
   const keepDraft = $("#chatIn") ? $("#chatIn").value : "";
   const pl = playingNow(CHAT_WITH);
   box.innerHTML = `<div class="chat-h"><span class="av">${esc(f.username.charAt(0).toUpperCase())}</span><div class="who"><b class="ltr">@${esc(f.username)}</b>${pl ? `<small class="plg">يلعب ${esc(pl)}</small>` : ""}</div>
+      <button class="btn mini" id="callB" type="button" title="مكالمة صوتية">📞</button><button class="btn mini" id="rpB" type="button" title="العب معي عن بعد">🎮 عن بعد</button>
       ${owned.length ? `<select id="invG" aria-label="اللعبة">${owned.map(g => `<option value="${g.id}">${esc(g.en || g.title)}</option>`).join("")}</select><button class="btn mini buy" id="invB" type="button">ادعه يلعب</button>` : ""}</div>
     <div class="chat-msgs" id="chatMsgs">${CHAT_MSGS.length ? CHAT_MSGS.map(m => {
       const me = m.from === user.uid, t = m.at && m.at.toDate ? m.at.toDate().toLocaleTimeString("ar-SA-u-nu-latn", {hour:"numeric", minute:"2-digit"}) : "";
@@ -838,6 +975,8 @@ function renderChat(){
   const ml = $("#chatMsgs"); ml.scrollTop = ml.scrollHeight;
   const inp = $("#chatIn"); inp.value = keepDraft; inp.focus();
   $("#chatF").onsubmit = ev => { ev.preventDefault(); const v = inp.value; inp.value = ""; sendMsg(CHAT_WITH, v); };
+  $("#callB").onclick = () => rtc().start("voice", [CHAT_WITH], {[CHAT_WITH]:f.username}).catch(() => {});
+  $("#rpB").onclick = () => remoteModal(CHAT_WITH);
   if ($("#invB")) $("#invB").onclick = () => { const g = $("#invG").value; sendMsg(CHAT_WITH, `دعوة للعب ${gameName(g)}`, "invite", g); };
   box.querySelectorAll("[data-inv]").forEach(b => b.onclick = () => playInvite(b.dataset.inv));
 }
@@ -867,9 +1006,10 @@ function renderFriends(){
   const box = $("#friends");
   if (!user) { box.innerHTML = '<div class="empty"><b style="color:var(--text)">الأصدقاء للمسجّلين فقط</b><span>سجّل دخولك عشان تضيف أصدقاءك باسم المستخدم.</span><button class="btn buy" type="button" data-login>تسجيل الدخول</button></div>'; return; }
   if (!$("#frList")) {
-    box.innerHTML = `<form class="fradd" id="frForm" novalidate><label class="fld">أضف صديق باسم المستخدم<input id="frU" dir="ltr" maxlength="21" autocomplete="off" placeholder="@username"></label><button class="btn buy" type="submit">إضافة</button></form>
+    box.innerHTML = `<div class="row" style="justify-content:flex-end;margin-bottom:10px"><button class="btn" type="button" id="partyB">🎉 حفلة صوتية</button></div><form class="fradd" id="frForm" novalidate><label class="fld">أضف صديق باسم المستخدم<input id="frU" dir="ltr" maxlength="21" autocomplete="off" placeholder="@username"></label><button class="btn buy" type="submit">إضافة</button></form>
       <div class="err" id="frErr" style="margin:-10px 0 12px"></div>
       <div class="frcols"><div class="panel" id="frList"></div><div class="panel chat" id="chat"></div></div>`;
+    $("#partyB").onclick = partyModal;
     $("#frForm").onsubmit = async ev => { ev.preventDefault(); const btn = ev.target.querySelector("button"); btn.disabled = true; const m = await addFriend($("#frU").value); btn.disabled = false; if (m) $("#frErr").textContent = m; else { $("#frU").value = ""; $("#frErr").textContent = ""; } };
     renderChat();
   }
@@ -1042,7 +1182,7 @@ function route(){
   const h0 = (location.hash || "#store").slice(1);
   if (h0 === "bigpicture") { bigPicture().open(); return; }
   const h = h0, g = byId(h);
-  let v = g ? "game" : (["store", "library", "downloads", "friends", "market", "studio", "download", "account", "coins"].includes(h) ? h : "store");
+  let v = g ? "game" : (["store", "library", "downloads", "friends", "market", "workshop", "studio", "download", "account", "coins"].includes(h) ? h : "store");
   if (v === "studio" && !isAdmin) v = "store";
   curView = v; $$(".view").forEach(s => s.hidden = s.dataset.view !== v);
   $$("#tabs a").forEach(a => a.setAttribute("aria-current", a.dataset.v === (g ? "store" : v) ? "page" : "false"));
@@ -1073,6 +1213,7 @@ function render(){
   else if (curView === "friends") renderFriends();
   else if (curView === "downloads") renderDownloads();
   else if (curView === "market") renderMarket();
+  else if (curView === "workshop") renderWorkshop();
   else if (curView === "download") { $("#dlInApp").hidden = !PS; $("#dlBtn").hidden = !!PS; }
 }
 addEventListener("hashchange", route);
@@ -1210,6 +1351,10 @@ onAuthStateChanged(auth, async u => {
     unsubs.push(onSnapshot(doc(fs, "families", u.uid), s => { FAMILY = s.exists() ? s.data() : null; if (curView === "account") renderAccount(); }, () => {}));
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "gifts"), s => { GIFTS = s.docs.map(d => ({id:d.id, ...d.data()})); }, () => {}));
     watchShared();
+    rtc().watchIncoming();
+    unsubs.push(onSnapshot(collection(fs, "users", u.uid, "devices"), s => { const first = !Object.keys(DEVICES).length; DEVICES = {}; s.forEach(d => DEVICES[d.id] = d.data()); if (first) registerDevice(); if (curView === "account") renderAccount(); renderBell(); }, () => {}));
+    unsubs.push(onSnapshot(doc(fs, "users", u.uid, "meta", "security"), s => { SECURITY = s.exists() ? s.data() : {}; checkSignOutAll(); }, () => {}));
+    if (PS && PS.getSettings) PS.getSettings().then(x => { PARENTAL = x && x.parental; document.body.classList.toggle("kidmode", !!(PARENTAL && PARENTAL.on)); }).catch(() => {});
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "wishlist"), s => { WISH = {}; s.forEach(d => WISH[d.id] = d.data()); render(); }, () => {}));
     unsubs.push(onSnapshot(doc(fs, "users", u.uid, "meta", "prefs"), s => { PREFS = s.exists() ? {fav:[], hidden:[], ...s.data()} : {fav:[], hidden:[]}; render(); }, () => {}));
     beat();

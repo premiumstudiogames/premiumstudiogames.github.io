@@ -43,8 +43,22 @@ app.whenReady().then(async () => {
     if (gw) gw.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab', modifiers: ['shift'] });
     ok('Shift+Tab opens the overlay', await waitFor(() => BrowserWindow.getAllWindows().some(w => !w.isDestroyed() && w.webContents.getURL().startsWith('data:') && w.isVisible() && /%D8%A7%D9%84%D8%A5%D9%86%D8%AC%D8%A7%D8%B2%D8%A7%D8%AA|الإنجازات/.test(decodeURIComponent(w.webContents.getURL()).slice(0, 20000))), 10000));
     if (gw) gw.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab', modifiers: ['shift'] });
+    await sleep(800);
+    // F9 records a clip, F9 again saves it
+    if (gw) { gw.focus(); gw.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F9' }); }
+    await sleep(4000);
+    if (gw) gw.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F9' });
+    const clipDir = path.join(app.getPath('videos'), 'Premium Studio');
+    ok('F9 records a clip', await waitFor(() => { try { return fs.readdirSync(clipDir).some(d => fs.readdirSync(path.join(clipDir, d)).some(f => f.endsWith('.webm') && fs.statSync(path.join(clipDir, d, f)).size > 1000)); } catch (e) { return false; } }, 15000));
     await call('ps:stop', 'last-recording--std');
     ok('horror game closes', await waitFor(async () => !(await call('ps:getRunning'))['last-recording--std'], 20000));
+    // ---- parental controls: a game that isn't allowed doesn't start
+    await call('ps:setParental', { newPin: '4321', pin: '', on: true, allowed: ['blockfall'], daily: 0 });
+    let blocked = false; try { await call('ps:launch', 'last-recording--std'); } catch (e) { blocked = /الرقابة/.test(String(e.message)); }
+    ok('parental controls block a game', blocked && !(await call('ps:getRunning'))['last-recording--std']);
+    let wrong = false; try { await call('ps:setParental', { pin: '0000', on: false }); } catch (e) { wrong = true; }
+    ok('parental controls need the PIN', wrong);
+    await call('ps:setParental', { pin: '4321', on: false, allowed: [] });
     // ---- BLOCKFALL
     const t0 = Date.now();
     await call('ps:install', 'blockfall--gold', { edition: 'gold' });

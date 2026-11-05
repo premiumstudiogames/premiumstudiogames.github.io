@@ -57,6 +57,27 @@ await ok('family query by member', assertSucceeds(getDocs(query(collection(B, 'f
 const craft = db => { const b = writeBatch(db); for (let i = 1; i <= 5; i++) b.update(doc(db, `users/C/cards/blockfall_${i}`), { count: 0, via: 'craft' }); b.set(doc(db, 'users/C/badges/blockfall'), { level: 1, at: serverTimestamp() }); return b.commit(); };
 await ok('craft a badge from a full set', assertSucceeds(craft(C)));
 await ok('no badge without cards', assertFails((async () => { const b = writeBatch(C); b.set(doc(C, 'users/C/badges/blockfall'), { level: 2, at: serverTimestamp() }); await b.commit(); })()));
+// voice calls
+await ok('call a friend', assertSucceeds(setDoc(doc(A, 'calls/K1'), { host: 'A', members: ['A', 'B'], names: { A: 'alice', B: 'bob' }, kind: 'voice', game: '', in: ['A'], status: 'live', at: serverTimestamp() })));
+await ok('cannot call a stranger', assertFails(setDoc(doc(A, 'calls/K2'), { host: 'A', members: ['A', 'C'], names: {}, kind: 'voice', game: '', in: ['A'], status: 'live', at: serverTimestamp() })));
+await ok('friend sees the call', assertSucceeds(getDocs(query(collection(B, 'calls'), where('members', 'array-contains', 'B')))));
+await ok('stranger cannot see it', assertFails(getDoc(doc(C, 'calls/K1'))));
+await ok('friend joins', assertSucceeds(updateDoc(doc(B, 'calls/K1'), { in: ['A', 'B'] })));
+await ok('cannot add someone else', assertFails(updateDoc(doc(B, 'calls/K1'), { in: ['A', 'B', 'C'] })));
+await ok('send a handshake', assertSucceeds(setDoc(doc(B, 'calls/K1/sig/s1'), { from: 'B', to: 'A', type: 'offer', data: '{}', at: serverTimestamp() })));
+await ok('only the receiver reads it', assertSucceeds(getDocs(query(collection(A, 'calls/K1/sig'), where('to', '==', 'A')))));
+await ok('outsider cannot send', assertFails(setDoc(doc(C, 'calls/K1/sig/s2'), { from: 'C', to: 'A', type: 'offer', data: '{}', at: serverTimestamp() })));
+await ok('hang up', assertSucceeds(updateDoc(doc(A, 'calls/K1'), { status: 'ended', in: ['B'] })));
+// workshop
+await ok('upload a world', assertSucceeds((async () => { const b = writeBatch(A); b.set(doc(A, 'workshop/W1'), { game: 'blockfall', author: 'A', authorName: 'alice', title: 'قلعة', desc: '', mode: 'c', parts: 1, size: 10, subs: 0, at: serverTimestamp() }); b.set(doc(A, 'workshop/W1/parts/0'), { d: 'abc' }); await b.commit(); })()));
+await ok('cannot add parts to someone else\'s world', assertFails(setDoc(doc(B, 'workshop/W1/parts/1'), { d: 'x' })));
+await ok('subscribe counts +1', assertSucceeds(updateDoc(doc(B, 'workshop/W1'), { subs: increment(1) })));
+await ok('cannot fake many subscribers', assertFails(updateDoc(doc(B, 'workshop/W1'), { subs: 99 })));
+await ok('others read the world', assertSucceeds(getDoc(doc(C, 'workshop/W1/parts/0'))));
+// devices and sign out everywhere
+await ok('register a device', assertSucceeds(setDoc(doc(A, 'users/A/devices/d1'), { name: 'Windows', first: serverTimestamp(), last: serverTimestamp() })));
+await ok('sign out everywhere', assertSucceeds(setDoc(doc(A, 'users/A/meta/security'), { signOutBefore: serverTimestamp() })));
+await ok('nobody else sees your devices', assertFails(getDocs(collection(B, 'users/A/devices'))));
 // existing features still work
 await ok('player still adds a demo', assertSucceeds(setDoc(doc(B, 'users/B/library/last-recording__demo'), { game: 'last-recording', edition: 'demo', price: 0, status: 'free', at: serverTimestamp() })));
 await ok('player still renames', assertSucceeds(updateDoc(doc(B, 'users/B'), { name: 'Bobby' })));

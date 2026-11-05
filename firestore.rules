@@ -256,8 +256,15 @@ service cloud.firestore {
       }
       match /meta/{d} {
         allow read: if isMe(uid);
-        allow write: if isMe(uid) && d == 'prefs' && request.resource.data.keys().hasOnly(['fav', 'hidden'])
-          && request.resource.data.fav is list && request.resource.data.fav.size() <= 200 && request.resource.data.hidden is list && request.resource.data.hidden.size() <= 200;
+        allow write: if isMe(uid) && ((d == 'prefs' && request.resource.data.keys().hasOnly(['fav', 'hidden'])
+          && request.resource.data.fav is list && request.resource.data.fav.size() <= 200 && request.resource.data.hidden is list && request.resource.data.hidden.size() <= 200)
+          || (d == 'security' && request.resource.data.keys().hasOnly(['signOutBefore']) && request.resource.data.signOutBefore == request.time));
+      }
+      // the devices you signed in from
+      match /devices/{dev} {
+        allow read, delete: if isMe(uid);
+        allow create, update: if isMe(uid) && request.resource.data.keys().hasOnly(['name', 'first', 'last'])
+          && request.resource.data.name is string && request.resource.data.name.size() <= 60 && request.resource.data.last == request.time;
       }
 
       // Play time per game, written by the Premium Studio app when a game closes
@@ -435,6 +442,46 @@ service cloud.firestore {
     }
     match /{path=**}/gifts/{g} {
       allow read: if isAdmin();
+    }
+
+    // Voice calls, parties and Remote Play: only between friends; the handshake messages go to one person each
+    function friendOk(x) { return get(/databases/$(database)/documents/users/$(request.auth.uid)/friends/$(x)).data.status == 'ok'; }
+    function membersOk(m) { return m.size() >= 2 && m.size() <= 6 && m[0] == request.auth.uid && friendOk(m[1])
+      && (m.size() < 3 || friendOk(m[2])) && (m.size() < 4 || friendOk(m[3])) && (m.size() < 5 || friendOk(m[4])) && (m.size() < 6 || friendOk(m[5])); }
+    match /calls/{id} {
+      allow read: if signedIn() && request.auth.uid in resource.data.members;
+      allow create: if signedIn() && request.resource.data.keys().hasOnly(['host', 'members', 'names', 'kind', 'game', 'in', 'status', 'at'])
+        && request.resource.data.host == request.auth.uid && membersOk(request.resource.data.members)
+        && request.resource.data.kind in ['voice', 'party', 'remote'] && request.resource.data.in == [request.auth.uid]
+        && request.resource.data.status == 'live' && request.resource.data.at == request.time;
+      allow update: if signedIn() && request.auth.uid in resource.data.members && changed().hasOnly(['in', 'status'])
+        && (request.resource.data.status == resource.data.status || request.resource.data.status == 'ended')
+        && request.resource.data.in.toSet().difference(resource.data.in.toSet()).hasOnly([request.auth.uid])
+        && resource.data.in.toSet().difference(request.resource.data.in.toSet()).hasOnly([request.auth.uid]);
+      match /sig/{m} {
+        allow read: if signedIn() && (resource.data.to == request.auth.uid || resource.data.from == request.auth.uid);
+        allow create: if signedIn() && request.resource.data.keys().hasOnly(['from', 'to', 'type', 'data', 'at'])
+          && request.resource.data.from == request.auth.uid && request.resource.data.type in ['offer', 'answer', 'ice']
+          && request.auth.uid in get(/databases/$(database)/documents/calls/$(id)).data.members && request.resource.data.to in get(/databases/$(database)/documents/calls/$(id)).data.members
+          && request.resource.data.data is string && request.resource.data.data.size() <= 20000;
+      }
+    }
+
+    // Workshop: worlds shared by players (the app uploads them in parts)
+    match /workshop/{id} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.keys().hasOnly(['game', 'author', 'authorName', 'title', 'desc', 'mode', 'parts', 'size', 'subs', 'at'])
+        && request.resource.data.author == request.auth.uid && request.resource.data.subs == 0 && request.resource.data.at == request.time
+        && request.resource.data.title is string && request.resource.data.title.size() <= 60 && request.resource.data.desc is string && request.resource.data.desc.size() <= 600
+        && request.resource.data.parts is int && request.resource.data.parts >= 1 && request.resource.data.parts <= 12;
+      allow update: if signedIn() && changed().hasOnly(['subs']) && request.resource.data.subs == resource.data.subs + 1;
+      allow delete: if signedIn() && (resource.data.author == request.auth.uid || isAdmin());
+      match /parts/{n} {
+        allow read: if signedIn();
+        allow create: if signedIn() && getAfter(/databases/$(database)/documents/workshop/$(id)).data.author == request.auth.uid
+          && request.resource.data.keys().hasOnly(['d']) && request.resource.data.d is string && request.resource.data.d.size() <= 800000;
+        allow delete: if signedIn() && get(/databases/$(database)/documents/workshop/$(id)).data.author == request.auth.uid;
+      }
     }
 
     // Public profile card (level, badges) that friends see
