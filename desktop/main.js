@@ -309,17 +309,60 @@ function playFromOutside(key) {
 function openExternal(url) { if (/^https?:\/\//.test(url)) shell.openExternal(url); }
 
 // Before starting a game that updates from its own manifest, pull the newest version (like the game's standalone app does).
+/* ---------------- "Starting game" window (like Steam's) ---------------- */
+const COVERS = path.join(app.getPath('userData'), 'covers');
+let splash = null, splashKey = '';
+function splashHTML(name, cover) {
+  const esc = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  return `<!doctype html><html dir="rtl"><head><meta charset="utf-8"><style>
+  *{box-sizing:border-box;margin:0}body{font-family:"Segoe UI",Tahoma,sans-serif;background:#1b2130;color:#e8ecf3;height:100vh;display:flex;gap:20px;padding:18px;border:1px solid #2c3446;-webkit-app-region:drag;user-select:none;overflow:hidden}
+  .art{width:150px;flex:none;background:#0b0f16 center/cover no-repeat;border:1px solid #2c3446;${cover ? `background-image:url("${cover}")` : 'background-image:linear-gradient(135deg,#ffcc1f,#ff7a1f)'}}
+  .side{flex:1;display:flex;flex-direction:column;min-width:0}
+  small{color:#9aa4b8;font-size:14px}h1{font-size:26px;margin:6px 0 16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #st{color:#9aa4b8;letter-spacing:.12em;font-size:13px;font-weight:600}
+  .bar{height:4px;background:#0b0f16;margin-top:10px;overflow:hidden}.bar i{display:block;height:100%;width:30%;background:#ffcc1f;animation:a 1.2s infinite ease-in-out}
+  @keyframes a{0%{transform:translateX(120%)}100%{transform:translateX(-340%)}}
+  a{-webkit-app-region:no-drag;cursor:pointer;font:inherit;text-decoration:none;text-align:center}
+  .open{margin-top:auto;background:#2c3650;color:#e8ecf3;border:0;padding:11px;font-size:14px}.open:hover{background:#38446a}
+  .x{position:absolute;top:8px;left:10px;background:none;border:0;color:#9aa4b8;font-size:18px}.x:hover{color:#fff}
+  .ps{position:absolute;bottom:8px;left:12px;font:700 11px sans-serif;color:#5c667a}.ps b{color:#ffcc1f}
+  </style></head><body><a class="x" href="#close">✕</a><div class="art"></div>
+  <div class="side"><small>جاري تشغيل اللعبة</small><h1>${esc(name)}</h1><div id="st">يتحقق من التحديثات…</div><div class="bar"><i></i></div>
+  <a class="open" href="#open">افتح Premium Studio</a></div></body></html>`;
+}
+function showSplash(key) {
+  closeSplash();
+  const g = readReg()[key]; if (!g) return;
+  let cover = ''; try { cover = 'data:image/png;base64,' + fs.readFileSync(path.join(COVERS, (g.game || key.split('--')[0]) + '.png')).toString('base64'); } catch (e) {}
+  splashKey = key;
+  splash = new BrowserWindow({ width: 560, height: 240, frame: false, resizable: false, alwaysOnTop: true, skipTaskbar: false, show: false, backgroundColor: '#1b2130', title: g.name, icon: ICON,
+    webPreferences: { sandbox: true, contextIsolation: true } });
+  splash.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(splashHTML(g.name, cover)));
+  splash.once('ready-to-show', () => splash && splash.show());
+  splash.webContents.on('did-navigate-in-page', (e, url) => { const h = url.split('#')[1]; if (h === 'open') { closeSplash(); createMain('library'); } else if (h === 'close') closeSplash(); });
+  splash.on('closed', () => { splash = null; });
+  setTimeout(() => { if (splashKey === key) closeSplash(); }, 45000);   // never hang around
+}
+function splashStatus(t) { if (splash && !splash.isDestroyed()) splash.webContents.executeJavaScript(`document.getElementById('st').textContent=${JSON.stringify(t)}`).catch(() => {}); }
+function closeSplash() { splashKey = ''; if (splash && !splash.isDestroyed()) splash.destroy(); splash = null; }
+ipcMain.handle('ps:setCover', guard(async (id, dataUrl) => {
+  if (!validId(id) || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/png;base64,') || dataUrl.length > 3e6) return false;
+  await fsp.mkdir(COVERS, { recursive: true }); await fsp.writeFile(path.join(COVERS, id + '.png'), Buffer.from(dataUrl.split(',')[1], 'base64')); return true;
+}));
+
 async function launchWithUpdate(id, edition) {
   const g = installedNow()[id];
+  if (g && !running.has(id)) showSplash(id);
   if (g && g.type === 'manifest' && !busy.has(id) && !running.has(id)) {
     try {
       const m = ((await fetchManifest()).games || {})[g.game];
       if (m && JSON.stringify(m.account || null) !== JSON.stringify(readReg()[id].account || null)) { const reg = readReg(); reg[id].account = m.account || undefined; await writeReg(reg); }
-      if (m) { const l = await latestOf(m); if (l.version && l.version !== g.version) await install(id); }
+      if (m) { const l = await latestOf(m); if (l.version && l.version !== g.version) { splashStatus('يحمّل التحديث ' + l.version + '…'); await install(id); } }
     } catch (e) { /* offline: play the copy we have */ }
   }
-  if (g && g.type === 'manifest' && !running.has(id)) { try { await cloudPull(id); } catch (e) {} }
-  launchGame(id, edition);
+  if (g && g.type === 'manifest' && !running.has(id)) { splashStatus('يجيب حفظك من السحابة…'); try { await cloudPull(id); } catch (e) {} }
+  splashStatus('جاري التشغيل');
+  try { launchGame(id, edition); } catch (e) { closeSplash(); throw e; }
 }
 function launchGame(id, edition) {
   const g = installedNow()[id];
@@ -333,12 +376,14 @@ function launchGame(id, edition) {
     writeBfAccount();
     try { fs.rmSync(path.join(BF_DATA, 'premium_cmd.json'), { force: true }); } catch (e) {}
     const { spawn } = require('child_process');
-    const child = spawn(BF_EXE, [], { cwd: BF_DIR, detached: true, stdio: 'ignore' });
+    const child = spawn(BF_EXE, ['--premium'], { cwd: BF_DIR, detached: true, stdio: 'ignore' });
+    // the starting window stays until BLOCKFALL shows up
+    (async () => { const t0 = Date.now(); while (splashKey === id && Date.now() - t0 < 30000) { await new Promise(r => setTimeout(r, 700)); if (await bfAlive()) break; } if (splashKey === id) closeSplash(); })();
     child.unref();
     for (const k of [...running.keys()]) if ((readReg()[k] || {}).type === 'bf-launcher' && k !== id) markStopped(k);
     markRunning(id);
     // the launcher re-adds its own "BLOCKFALL 3001" shortcuts each start; put ours (one per edition) back
-    setTimeout(fixBfShortcuts, 6000);
+    setTimeout(fixBfShortcuts, 1500); setTimeout(fixBfShortcuts, 6000);
     return;
   }
   if (gameWins.has(id) && !gameWins.get(id).isDestroyed()) { const w = gameWins.get(id); w.show(); w.focus(); return; }
@@ -348,7 +393,7 @@ function launchGame(id, edition) {
     webPreferences: { preload: path.join(__dirname, 'game-preload.js'), contextIsolation: false, sandbox: false, nodeIntegration: false, backgroundThrottling: false }
   });
   w.setMenu(null);
-  w.once('ready-to-show', () => { w.maximize(); w.show(); });
+  w.once('ready-to-show', () => { w.maximize(); w.show(); if (splashKey === id) closeSplash(); });
   w.webContents.setWindowOpenHandler(({ url }) => { openExternal(url); return { action: 'deny' }; });
   w.webContents.on('before-input-event', (e, input) => {
     if (input.type === 'keyDown' && input.key === 'F11') { w.setFullScreen(!w.isFullScreen()); e.preventDefault(); }

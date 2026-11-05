@@ -23,6 +23,7 @@ if (ok) {
     onProgress: cb => { const f = (e, p) => cb(p); ipcRenderer.on('ps:progress', f); return () => ipcRenderer.removeListener('ps:progress', f); },
     getRunning: () => ipcRenderer.invoke('ps:getRunning'),
     stop: id => ipcRenderer.invoke('ps:stop', id),
+    setCover: (id, dataUrl) => ipcRenderer.invoke('ps:setCover', id, dataUrl),
     onRunning: cb => { const f = (e, r) => cb(r); ipcRenderer.on('ps:running', f); return () => ipcRenderer.removeListener('ps:running', f); },
     onInstalledChanged: cb => { const f = () => cb(); ipcRenderer.on('ps:installed-changed', f); return () => ipcRenderer.removeListener('ps:installed-changed', f); }
   });

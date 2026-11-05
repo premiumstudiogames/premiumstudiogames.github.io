@@ -27,7 +27,7 @@ const PACKS = [             // must match coinPacks() in firestore.rules (coins 
   {id:"u100000",coins:100000, price:1000000}
 ];
 const coins = n => ((n || 0) / COIN_UNIT).toLocaleString("en-US", {minimumFractionDigits:0, maximumFractionDigits:4});
-const SITE_VERSION = "00.00.16";
+const SITE_VERSION = "00.00.17";
 const APP_DL = "downloads/PremiumStudioSetup.exe";
 
 const fb = initializeApp(firebaseConfig);
@@ -170,6 +170,9 @@ if (PS) {
       refreshInstalled(); if (curView === "downloads") renderDownloads(); }
     updateProgressUI(); });
   PS.onInstalledChanged && PS.onInstalledChanged(() => refreshInstalled());
+  // give the app each game's cover for its "Starting game" window
+  if (PS.setCover) setTimeout(() => { for (const g of GAMES) { try { const box = document.createElement("div"); box.style.cssText = "position:fixed;left:-9999px;top:0;width:300px;height:450px";
+    document.body.appendChild(box); const o = {c:document.createElement("canvas"), id:g.id}; box.appendChild(o.c); paint(o, 0); PS.setCover(g.id, o.c.toDataURL("image/png")).catch(() => {}); box.remove(); } catch(e) {} } }, 1500);
   if (PS.onRunning) { PS.onRunning(r => { RUNNING = r || {}; render(); }); PS.getRunning().then(r => { RUNNING = r || {}; render(); }).catch(() => {}); }
   refreshInstalled();
 }
