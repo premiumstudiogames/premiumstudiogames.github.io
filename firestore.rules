@@ -161,9 +161,17 @@ service cloud.firestore {
       match /cloud/{game} {
         allow read, delete: if isMe(uid) || isAdmin();
         allow create, update: if isMe(uid)
-          && request.resource.data.keys().hasOnly(['data', 'size', 'at'])
+          && request.resource.data.keys().hasOnly(['data', 'size', 'at', 'parts', 'v'])
           && request.resource.data.data is string && request.resource.data.data.size() <= 900000
           && request.resource.data.size is int && request.resource.data.at == request.time;
+        // big saves (BLOCKFALL worlds) come in gzip parts
+        match /parts/{n} {
+          allow read, delete: if isMe(uid) || isAdmin();
+          allow create, update: if isMe(uid)
+            && request.resource.data.keys().hasOnly(['d', 'v'])
+            && request.resource.data.d is string && request.resource.data.d.size() <= 800000
+            && request.resource.data.v is int;
+        }
       }
 
       // Play time per game, written by the Premium Studio app when a game closes

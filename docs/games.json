@@ -13,7 +13,53 @@
         "std": "a931ea3e8683d0afeb62099a32d7fe3af48bc4200c8eb7d505167f5bf5411477",
         "gold": "e0c2023896d5e7bf2854aa648e21fe1f58c5775ba6fb0f0e5f6d1f597906f204"
       },
-      "site": "https://abdullra7manx-cmyk.github.io/terravolt/"
+      "site": "https://abdullra7manx-cmyk.github.io/terravolt/",
+      "achievements": {
+        "first_block": {
+          "name": "أول بلوكة",
+          "desc": "حطيت أول بلوكة"
+        },
+        "builder": {
+          "name": "بنّاء",
+          "desc": "حطيت 1,000 بلوكة"
+        },
+        "architect": {
+          "name": "مهندس",
+          "desc": "حطيت 10,000 بلوكة"
+        },
+        "miner": {
+          "name": "حفّار",
+          "desc": "كسرت 500 بلوكة"
+        },
+        "digger": {
+          "name": "منجم بشري",
+          "desc": "كسرت 5,000 بلوكة"
+        },
+        "lumberjack": {
+          "name": "حطّاب",
+          "desc": "قطعت 50 شجرة"
+        },
+        "shepherd": {
+          "name": "راعي",
+          "desc": "10 خرفان"
+        },
+        "crafter": {
+          "name": "صانع",
+          "desc": "صنعت 25 شي"
+        },
+        "hour": {
+          "name": "ساعة في العالم",
+          "desc": "لعبت ساعة"
+        },
+        "veteran": {
+          "name": "محارب قديم",
+          "desc": "لعبت 10 ساعات"
+        },
+        "explorer": {
+          "name": "مستكشف عوالم",
+          "desc": "عندك 3 عوالم"
+        }
+      }
     },
     "last-recording": {
       "type": "manifest",
