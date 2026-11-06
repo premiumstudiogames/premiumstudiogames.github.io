@@ -1,5 +1,6 @@
 import { makeBP } from "./bp.js?v=1";
 import { makeRTC } from "./rtc.js?v=1";
+import { SOON, SOON_GENRES } from "./soon.js?v=1";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut,
   sendPasswordResetEmail, sendEmailVerification, updateProfile, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
@@ -29,7 +30,7 @@ const PACKS = [             // must match coinPacks() in firestore.rules (coins 
   {id:"u100000",coins:100000, price:1000000}
 ];
 const coins = n => ((n || 0) / COIN_UNIT).toLocaleString("en-US", {minimumFractionDigits:0, maximumFractionDigits:4});
-const SITE_VERSION = "00.00.25";
+const SITE_VERSION = "00.00.26";
 const APP_DL = "downloads/PremiumStudioSetup.exe";
 
 const fb = initializeApp(firebaseConfig);
@@ -344,7 +345,30 @@ function renderGrid(){
     a.innerHTML = `<div class="art"></div><div class="body"><div class="t ${g.ar ? "ar" : ""}">${esc(g.title)}</div><div class="muted" style="font-size:13px">${esc(g.sub)}</div>
       <div class="ft">${best ? `<span class="own">في مكتبتك · ${esc(edName(g, best.edition))}${anyInstalled(g.id) ? " · مثبتة" : ""}</span>` : '<span class="tag">ديمو مجاني</span>'}<span class="price" style="font-size:16px">${money(lowPrice(g))}</span></div></div>`;
     box.appendChild(a); cover(a.querySelector(".art"), g.id); });
-  const s = document.createElement("div"); s.className = "card soon"; s.innerHTML = "<b>COMING SOON</b><span>ألعاب جديدة من بريميوم ستوديو قريبًا</span>"; box.appendChild(s);
+  renderSoon();
+}
+/* ---------------- coming soon: invented placeholder titles ---------------- */
+let soonGenre = "", soonShown = 24;
+function soonArt(x){
+  const h = x.hue, h2 = (h + 40) % 360, w = 320, ht = 180, r = n => ((x.id.charCodeAt(5) * 31 + x.id.charCodeAt(7) * 17 + n * 53) % 997) / 997;
+  const motifs = [
+    () => [0,1,2].map(i => `<path d="M0 ${130 + i*12} L${60 + r(i)*60} ${70 + i*18 + r(i+3)*20} L${150 + r(i+1)*40} ${120 + i*10} L${230 + r(i+2)*40} ${60 + i*20} L320 ${110 + i*14} V180 H0Z" fill="hsl(${h},50%,${10 + i*6}%)" opacity=".9"/>`).join(""),
+    () => Array.from({length:9}, (_, i) => `<line x1="${i*40}" y1="180" x2="${160 + (i-4)*14}" y2="95" stroke="hsl(${h2},90%,60%)" stroke-opacity=".35"/>`).join("") + `<circle cx="160" cy="80" r="34" fill="hsl(${h2},90%,60%)" opacity=".55"/>`,
+    () => Array.from({length:7}, (_, i) => `<circle cx="${r(i)*320}" cy="${r(i+9)*180}" r="${12 + r(i+4)*50}" fill="none" stroke="hsl(${(h + i*25) % 360},80%,65%)" stroke-opacity=".35" stroke-width="2"/>`).join(""),
+    () => Array.from({length:40}, (_, i) => `<circle cx="${r(i)*320}" cy="${r(i+40)*180}" r="${r(i+80)*1.6 + .3}" fill="#fff" opacity="${.3 + r(i+7)*.6}"/>`).join("") + `<circle cx="${240 - r(1)*80}" cy="60" r="26" fill="hsl(${h2},70%,55%)" opacity=".7"/>`,
+    () => Array.from({length:6}, (_, i) => `<rect x="${i*56 - 10}" y="${70 + r(i)*60}" width="${30 + r(i+2)*24}" height="200" fill="hsl(${h},40%,${8 + r(i+5)*10}%)"/>`).join("") + Array.from({length:14}, (_, i) => `<rect x="${r(i)*300}" y="${90 + r(i+20)*70}" width="3" height="4" fill="hsl(${h2},100%,70%)" opacity=".8"/>`).join("")];
+  return `<svg viewBox="0 0 ${w} ${ht}" preserveAspectRatio="xMidYMid slice" aria-hidden="true" direction="ltr" style="direction:ltr"><defs><linearGradient id="g${x.id}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="hsl(${h},60%,22%)"/><stop offset="1" stop-color="hsl(${h2},70%,8%)"/></linearGradient></defs><rect width="${w}" height="${ht}" fill="url(#g${x.id})"/>${motifs[x.motif % motifs.length]()}<rect width="${w}" height="${ht}" fill="url(#g${x.id})" opacity=".15"/><text x="16" y="${ht - 18}" direction="ltr" text-anchor="start" fill="#fff" font-family="Chakra Petch,system-ui,sans-serif" font-weight="800" font-size="${x.title.length > 18 ? 17 : 22}" letter-spacing=".5">${esc(x.title.toUpperCase())}</text></svg>`;
+}
+function renderSoon(){
+  let sec = $("#soonSec");
+  if (!sec) { sec = document.createElement("div"); sec.id = "soonSec"; $("#grid").after(sec); }
+  const list = SOON.filter(x => !soonGenre || x.genre === soonGenre);
+  sec.innerHTML = `<div class="sec-h"><h2>قريبًا</h2><small>COMING SOON · ${SOON.length}</small></div>
+    <div class="chips soonchips"><button type="button" class="chip" aria-pressed="${!soonGenre}" data-sg="">الكل</button>${Object.entries(SOON_GENRES).map(([k, v]) => `<button type="button" class="chip" aria-pressed="${soonGenre === k}" data-sg="${k}">${esc(v)}</button>`).join("")}</div>
+    <div class="grid soongrid">${list.slice(0, soonShown).map(x => `<div class="card soonc"><div class="art">${soonArt(x)}<span class="soonbadge">قريبًا</span></div><div class="body"><div class="t">${esc(x.title)}</div><div class="muted" style="font-size:13px">${esc(x.tagline)}</div><div class="ft"><span class="tag">${esc(x.genreAr)}</span><span class="muted" style="font-size:12px">${esc(x.when)}</span></div></div></div>`).join("")}</div>
+    ${list.length > soonShown ? `<div style="text-align:center;margin-top:16px"><button class="btn ghost" type="button" id="soonMore">عرض المزيد (${list.length - soonShown})</button></div>` : ""}`;
+  sec.querySelectorAll("[data-sg]").forEach(b => b.onclick = () => { soonGenre = b.dataset.sg; soonShown = 24; renderSoon(); });
+  const m = sec.querySelector("#soonMore"); if (m) m.onclick = () => { soonShown += 24; renderSoon(); };
 }
 const ST = {free:["free","ديمو مجاني"], pending:["pending","بانتظار الدفع"], paid:["paid","مدفوع"], granted:["granted","مجاني من الاستوديو"]};
 const stPill = s => { const [c, n] = ST[s] || ST.free; return `<span class="st ${c}">${n}</span>`; };
