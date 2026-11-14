@@ -431,7 +431,8 @@ async function achievementsFor(game) {
 }
 function ovHTML(d) {
   const esc = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const all = Object.entries(d.defs || {}), got = new Set(d.got);
+  const all = Object.entries(d.defs || {}), got = new Set(d.got), O = { platinum: 0, gold: 1, silver: 2, bronze: 3 };
+  const CUP = '<svg viewBox="0 0 24 24" width="16" height="16" style="vertical-align:-3px"><path fill="currentColor" d="M7 2h10v2h3.5v3.2A4.3 4.3 0 0 1 16.4 11.5 5.1 5.1 0 0 1 13 14.4V17h3.2v3H7.8v-3H11v-2.6a5.1 5.1 0 0 1-3.4-2.9A4.3 4.3 0 0 1 3.5 7.2V4H7zm0 4H5.5v1.2A2.3 2.3 0 0 0 7 9.4zm10 0v3.4a2.3 2.3 0 0 0 1.5-2.2V6z"/></svg>';
   return `<!doctype html><html dir="rtl"><head><meta charset="utf-8"><style>
   *{box-sizing:border-box;margin:0}body{font-family:"Segoe UI",Tahoma,sans-serif;color:#eef2f8;background:rgba(5,8,14,.78);height:100vh;display:flex;flex-direction:column;user-select:none}
   header{display:flex;align-items:center;gap:22px;padding:22px 36px;background:rgba(10,14,22,.9);border-bottom:1px solid #2c3446}
@@ -443,11 +444,11 @@ function ovHTML(d) {
   a{display:block;text-decoration:none;color:#eef2f8;background:#1d2638;padding:15px 18px;margin-bottom:10px;font-size:16px;border:1px solid #2c3446}
   a:hover,a:focus{border-color:#ffcc1f;outline:none}a.red{background:#5a1d22;border-color:#7a2a30}
   .ach{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
-  .a{padding:12px;background:#1a2232;border:1px solid #2c3446;opacity:.35}.a.got{opacity:1;border-color:#6b5512}.a b{display:block;font-size:14px}.a small{font-size:12px;color:#9aa4b8}
+  .a{padding:12px;background:#1a2232;border:1px solid #2c3446;opacity:.35;color:#c98a55}.a.t-silver{color:#cfd6e0}.a.t-gold{color:#f2c94c}.a.t-platinum{color:#a9e4ff}.a b{color:inherit}.a.got{opacity:1;border-color:#6b5512}.a b span{color:#eef2f8}.a b{display:block;font-size:14px}.a small{font-size:12px;color:#9aa4b8}
   footer{padding:14px;text-align:center;color:#8c96aa;font-size:14px}
   </style></head><body><header><span class="ps"><i>P</i><i>G</i></span><h1>${esc(d.name)}</h1><span class="t">تلعب من ${d.mins} دقيقة · ${esc(d.clock)}</span></header>
   <main><div class="card"><h2>اختصارات</h2><a href="#shot">📸 لقطة شاشة (F12)</a><a href="#rec">🎬 سجّل مقطع (F9)</a><a href="#shots">🖼 لقطاتي</a><a href="#friends">👥 الأصدقاء والدردشة</a><a href="#back">↩ ارجع للعبة</a><a class="red" href="#close">■ إغلاق اللعبة</a></div>
-  <div class="card"><h2>الإنجازات ${all.length ? `(${got.size}/${all.length})` : ''}</h2>${all.length ? `<div class="ach">${all.map(([id, v]) => `<div class="a${got.has(id) ? ' got' : ''}"><b>🏆 ${esc(v.name)}</b><small>${esc(v.desc || '')}</small></div>`).join('')}</div>` : '<p class="t">هذي اللعبة ما فيها إنجازات للحين.</p>'}</div></main>
+  <div class="card"><h2>التروفيات ${all.length ? `(${[...got].filter(id => d.defs[id]).length}/${all.length})` : ''}</h2>${all.length ? `<div class="ach">${all.map(([id, v], i) => [id, v, i]).sort((a, b) => (got.has(b[0]) - got.has(a[0])) || ((O[a[1].tier] ?? 3) - (O[b[1].tier] ?? 3)) || a[2] - b[2]).map(([id, v]) => `<div class="a${got.has(id) ? ' got' : ''} t-${O[v.tier] != null ? v.tier : 'bronze'}"><b>${CUP} ${esc(v.name)}</b><small>${esc(v.desc || '')}</small></div>`).join('')}</div>` : '<p class="t">هذي اللعبة ما فيها تروفيات للحين.</p>'}</div></main>
   <footer>Shift+Tab أو Esc يرجعك للعبة</footer></body></html>`;
 }
 async function toggleOverlay(key) {

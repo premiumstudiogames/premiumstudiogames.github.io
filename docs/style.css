@@ -570,8 +570,8 @@ s.was{color:var(--muted);font-size:.78em;margin-inline-end:.4em}
 .reqs{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
 .specs.req .rh{color:var(--gold);font-weight:700;border-bottom:1px solid var(--line);padding-bottom:6px;margin-bottom:4px}
 .achpub{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px}
-.achpub span{background:var(--deck);border:1px solid var(--line);padding:10px 12px;display:flex;flex-direction:column;gap:2px;font-size:14px}
-.achpub span small{color:var(--muted);font-size:12px}.achpub span.got{border-color:var(--goldDeep);background:linear-gradient(135deg,rgba(217,178,95,.12),transparent)}
+.achpub > span{background:var(--deck);border:1px solid var(--line);padding:10px 12px;display:flex;flex-direction:column;gap:2px;font-size:14px}
+.achpub > span small{color:var(--muted);font-size:12px}.achpub span.got{border-color:var(--goldDeep);background:linear-gradient(135deg,rgba(217,178,95,.12),transparent)}
 .fract{margin-bottom:16px}
 .fract-row{display:flex;gap:10px;overflow-x:auto;padding-bottom:6px}
 .fract-i{flex:none;display:flex;align-items:center;gap:10px;background:var(--deck);border:1px solid var(--line);padding:10px 14px;min-width:220px}
@@ -580,3 +580,17 @@ s.was{color:var(--muted);font-size:.78em;margin-inline-end:.4em}
 .fld.mini{font-size:12px;min-width:110px}.fld.mini input{padding:6px 8px}
 .salerow{display:flex;flex-direction:column;gap:8px}
 .bp-soon.sale{background:#4c8a1e;color:#e6ffc9}
+/* trophies */
+.tro{display:inline-grid;place-items:center;width:22px;height:22px;flex:none;font-style:normal;vertical-align:middle}.tro svg{width:100%;height:100%}
+.tro.t-bronze{color:#c98a55}.tro.t-silver{color:#cfd6e0}.tro.t-gold{color:#f2c94c}.tro.t-platinum{color:#a9e4ff;filter:drop-shadow(0 0 4px rgba(169,228,255,.6))}
+.tro.off{color:#3a4458;filter:none}
+.troph{display:flex;flex-direction:column;gap:12px}
+.tro-sum{display:flex;align-items:center;gap:14px;flex-wrap:wrap}.tro-sum .lg-ach{flex:1;min-width:120px}
+.tro-c{display:inline-flex;align-items:center;gap:4px;font-size:13px;color:var(--muted)}
+.achpub span.got.t-platinum{border-color:#5aa9c9;background:linear-gradient(135deg,rgba(169,228,255,.14),transparent)}
+.achpub > span{flex-direction:row!important;align-items:flex-start;gap:10px!important}
+.achpub > span > span{display:flex;flex-direction:column;gap:2px;background:none;border:0;padding:0}
+.achpub.collapsed > span:nth-child(n+13){display:none}
+.tro-more{align-self:center}
+.badge .tro{width:28px;height:28px}
+.bp-achs .tro{width:1.1em;height:1.1em}

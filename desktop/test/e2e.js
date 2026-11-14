@@ -59,11 +59,11 @@ app.whenReady().then(async () => {
     const shotDir = path.join(app.getPath('pictures'), 'Premium Games');
     ok('F12 saves a screenshot', await waitFor(() => { try { return fs.readdirSync(shotDir).some(d => fs.readdirSync(path.join(shotDir, d)).some(f => f.endsWith('.png'))); } catch (e) { return false; } }, 10000));
     if (gw) gw.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab', modifiers: ['shift'] });
-    ok('Shift+Tab opens the overlay', await waitFor(() => BrowserWindow.getAllWindows().some(w => !w.isDestroyed() && w.webContents.getURL().startsWith('data:') && w.isVisible() && /%D8%A7%D9%84%D8%A5%D9%86%D8%AC%D8%A7%D8%B2%D8%A7%D8%AA|الإنجازات/.test(decodeURIComponent(w.webContents.getURL()).slice(0, 20000))), 10000));
+    ok('Shift+Tab opens the overlay', await waitFor(() => BrowserWindow.getAllWindows().some(w => !w.isDestroyed() && w.webContents.getURL().startsWith('data:') && w.isVisible() && /%D8%A7%D9%84%D8%A5%D9%86%D8%AC%D8%A7%D8%B2%D8%A7%D8%AA|التروفيات/.test(decodeURIComponent(w.webContents.getURL()).slice(0, 20000))), 10000));
     if (gw) gw.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab', modifiers: ['shift'] });
     await sleep(800);
     // the controller's Home button opens the overlay too
-    const ovVisible = () => BrowserWindow.getAllWindows().some(w => !w.isDestroyed() && w.webContents.getURL().startsWith('data:') && w.isVisible() && /الإنجازات/.test(decodeURIComponent(w.webContents.getURL()).slice(0, 20000)));
+    const ovVisible = () => BrowserWindow.getAllWindows().some(w => !w.isDestroyed() && w.webContents.getURL().startsWith('data:') && w.isVisible() && /التروفيات/.test(decodeURIComponent(w.webContents.getURL()).slice(0, 20000)));
     if (gw) ipcMain.emit('game:guide', { sender: gw.webContents });
     ok('controller Home button opens the overlay', await waitFor(ovVisible, 10000));
     if (gw) ipcMain.emit('game:guide', { sender: gw.webContents });

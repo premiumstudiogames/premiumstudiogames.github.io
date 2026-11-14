@@ -1,4 +1,4 @@
-import { makeBP } from "./bp.js?v=3";
+import { makeBP } from "./bp.js?v=4";
 import { makeRTC } from "./rtc.js?v=1";
 import { SOON, SOON_GENRES } from "./soon.js?v=1";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
@@ -30,7 +30,7 @@ const PACKS = [             // must match coinPacks() in firestore.rules (coins 
   {id:"u100000",coins:100000, price:1000000}
 ];
 const coins = n => ((n || 0) / COIN_UNIT).toLocaleString("en-US", {minimumFractionDigits:0, maximumFractionDigits:4});
-const SITE_VERSION = "00.00.28";
+const SITE_VERSION = "00.00.29";
 const APP_DL = "downloads/PremiumStudioSetup.exe";
 
 const fb = initializeApp(firebaseConfig);
@@ -80,6 +80,21 @@ const REQ = {
   "last-recording":{min:[["النظام","Windows 10 64-bit"],["المعالج","Intel Core i3 / AMD Ryzen 3"],["الذاكرة","4 GB RAM"],["كرت الشاشة","Intel UHD 620 أو أفضل (WebGL 2)"],["المساحة","100 MB"]],
              rec:[["النظام","Windows 11 64-bit"],["المعالج","Intel Core i5 / AMD Ryzen 5"],["الذاكرة","8 GB RAM"],["كرت الشاشة","NVIDIA GTX 1050 / AMD RX 560"],["المساحة","200 MB"]]}
 };
+/* ---------------- trophies: bronze / silver / gold / platinum ---------------- */
+const TIERS = {platinum:{n:"بلاتيني", o:0}, gold:{n:"ذهبي", o:1}, silver:{n:"فضي", o:2}, bronze:{n:"برونزي", o:3}};
+const CUP = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 2h10v2h3.5v3.2A4.3 4.3 0 0 1 16.4 11.5 5.1 5.1 0 0 1 13 14.4V17h3.2v3H7.8v-3H11v-2.6a5.1 5.1 0 0 1-3.4-2.9A4.3 4.3 0 0 1 3.5 7.2V4H7zm0 4H5.5v1.2A2.3 2.3 0 0 0 7 9.4zm10 0v3.4a2.3 2.3 0 0 0 1.5-2.2V6z"/></svg>';
+const troIcon = (tier, got) => `<i class="tro t-${TIERS[tier] ? tier : "bronze"}${got ? "" : " off"}" title="${(TIERS[tier] || TIERS.bronze).n}">${CUP}</i>`;
+function troList(gid){ const all = (MANIFEST.games[gid] || {}).achievements || {};
+  return Object.entries(all).map(([id, d], i) => ({id, name:d.name, desc:d.desc || "", tier:TIERS[d.tier] ? d.tier : "bronze", got:!!ACH[gid + "__" + id], i}))
+    .sort((a, b) => (b.got - a.got) || (TIERS[a.tier].o - TIERS[b.tier].o) || (a.i - b.i)); }
+function troHTML(gid, open){ const l = troList(gid); if (!l.length) return "";
+  const got = l.filter(t => t.got).length, by = t => l.filter(x => x.tier === t);
+  return `<div class="troph"><div class="tro-sum"><b class="num">${got}/${l.length}</b><span class="lg-ach"><i style="width:${Math.round(got / l.length * 100)}%"></i></span>
+    ${["platinum","gold","silver","bronze"].filter(t => by(t).length).map(t => `<span class="tro-c">${troIcon(t, true)}<span class="num">${by(t).filter(x => x.got).length}/${by(t).length}</span></span>`).join("")}</div>
+    <div class="achpub${open || l.length <= 12 ? "" : " collapsed"}">${l.map(t => `<span class="${t.got ? "got" : ""} t-${t.tier}">${troIcon(t.tier, t.got)}<span><b>${esc(t.name)}</b><small>${esc(t.desc)}</small></span></span>`).join("")}</div>
+    ${!open && l.length > 12 ? `<button class="btn ghost mini tro-more" type="button" data-tromore>عرض كل التروفيات (${l.length})</button>` : ""}</div>`; }
+document.addEventListener("click", e => { const b = e.target.closest("[data-tromore]"); if (!b) return; const box = b.parentElement.querySelector(".achpub");
+  const open = box.classList.toggle("collapsed"); b.textContent = open ? `عرض كل التروفيات (${box.children.length})` : "عرض أقل"; });
 /* ---------------- sales: the studio sets a % off with an end time; prices drop everywhere and a countdown shows ---------------- */
 let SALES = {};
 const saleOf = gid => { const s = SALES[gid]; return s && s.pct > 0 && tsMs(s.ends) > Date.now() ? s : null; };
@@ -398,7 +413,7 @@ function renderGame(g){
     <div><div class="sec-h" style="margin-bottom:12px"><h2>المميزات</h2><small>FEATURES</small></div><ul class="feat">${g.feat.map(f => `<li>${esc(f)}</li>`).join("")}</ul></div>
     <dl class="specs"><dt>المطوّر</dt><dd>Premium Games</dd><dt>المنصة</dt><dd>Windows 10 / 11</dd><dt>النوع</dt><dd>${g.tags.map(esc).join(" · ")}</dd>${LATEST[g.id] ? `<dt>آخر إصدار</dt><dd class="num">${esc(LATEST[g.id].game || LATEST[g.id].version)}</dd>` : ""}</dl>
     ${REQ[g.id] ? `<div><div class="sec-h" style="margin-bottom:12px"><h2>متطلبات التشغيل</h2><small>SYSTEM REQUIREMENTS</small></div><div class="reqs">${[["الحد الأدنى", REQ[g.id].min], ["المستحسن", REQ[g.id].rec]].map(([t, l]) => `<dl class="specs req"><dt class="rh">${t}</dt><dd class="rh"></dd>${l.map(([k, v]) => `<dt>${esc(k)}</dt><dd><bdi>${esc(v)}</bdi></dd>`).join("")}</dl>`).join("")}</div></div>` : ""}
-    ${m && m.achievements && Object.keys(m.achievements).length ? `<div><div class="sec-h" style="margin-bottom:12px"><h2>الإنجازات · ${Object.keys(m.achievements).length}</h2><small>ACHIEVEMENTS</small></div><div class="achpub">${Object.entries(m.achievements).map(([id, a]) => `<span class="${ACH[g.id + "__" + id] ? "got" : ""}" title="${esc(a.desc)}">${ACH[g.id + "__" + id] ? "🏆" : "🔒"} <b>${esc(a.name)}</b><small>${esc(a.desc)}</small></span>`).join("")}</div></div>` : ""}
+    ${m && m.achievements && Object.keys(m.achievements).length ? `<div><div class="sec-h" style="margin-bottom:12px"><h2>التروفيات · ${Object.keys(m.achievements).length}</h2><small>TROPHIES</small></div>${troHTML(g.id)}</div>` : ""}
   </div>
   <aside class="eds">
     ${saleOf(g.id) ? `<div class="salebox"><b>🔥 تخفيض ${saleOf(g.id).pct}%${saleOf(g.id).title ? " · " + esc(saleOf(g.id).title) : ""}</b>${cdHTML(g.id)}</div>` : ""}
@@ -464,8 +479,7 @@ function renderLibGame(main, g){
         <div><small>وقت اللعب</small><b class="num">${mins >= 60 ? (mins / 60).toFixed(1) + " ساعة" : mins + " دقيقة"}</b></div>
         ${achAll ? `<div><small>الإنجازات</small><b class="num">${ach}/${achAll}</b><span class="lg-ach"><i style="width:${Math.round(ach / achAll * 100)}%"></i></span></div>` : ""}</div></div>
     <div class="lg-body"><div class="panel"><h3>نسختك</h3><div class="row" style="gap:8px"><span>${esc(edName(g, o.edition))}</span>${sh ? `<span class="tag">مشاركة من @${esc(sh)}</span>` : stPill(o.status)}${o.from ? `<span class="tag">🎁 هدية من @${esc(o.from)}</span>` : ""}</div><span class="muted" style="font-size:12px">أضيفت ${fdate(o.at)}${pending && best ? " · ترقية بانتظار الدفع" : ""}</span>${refundLine(g)}<a class="linkbtn" href="#${g.id}">صفحة المتجر</a></div>
-      ${achAll ? `<div class="panel"><h3>الإنجازات</h3><div class="lg-achs">${Object.entries(MANIFEST.games[g.id].achievements).map(([id, d]) => { const got = ACH[g.id + "__" + id];
-        return `<div class="badge${got ? " got" : ""}" title="${esc(d.desc || "")}"><span>🏆</span><b>${esc(d.name)}</b><small>${esc(d.desc || "")}</small></div>`; }).join("")}</div></div>` : ""}</div>`;
+      ${achAll ? `<div class="panel"><h3>التروفيات</h3>${troHTML(g.id)}</div>` : ""}</div>`;
   $("#libBack").onclick = () => { LIBSEL = ""; renderLib(); };
   $("#libFav").onclick = () => setPref("fav", g.id, !(PREFS.fav || []).includes(g.id));
   $("#libHide").onclick = () => { const h = (PREFS.hidden || []).includes(g.id); setPref("hidden", g.id, !h); if (!h) { LIBSEL = ""; toast("انخفت من مكتبتك. تلقاها في «المخفية»"); } };
@@ -543,11 +557,11 @@ function renderProfile(){
       <div class="prof-who"><b class="ltr">@${esc(un || "—")}</b><span class="muted">${esc((PROFILE && PROFILE.name) || "")}</span>
         <div class="xpbar" title="${xp} XP"><i style="width:${pc}%"></i></div><small class="muted num">${xp} / ${next} XP للمستوى ${lv + 1}</small></div>
       <div class="lvl"><small>المستوى</small><b class="num">${lv}</b></div></div>
-    <div class="prof-stats"><div><b class="num">${hrs >= 10 ? Math.round(hrs) : hrs.toFixed(1)}</b><span>ساعة لعب</span></div><div><b class="num">${st.games}</b><span>لعبة</span></div><div><b class="num">${st.friends}</b><span>صديق</span></div><div><b class="num">${achList.length}</b><span>إنجاز</span></div></div>
+    <div class="prof-stats"><div><b class="num">${hrs >= 10 ? Math.round(hrs) : hrs.toFixed(1)}</b><span>ساعة لعب</span></div><div><b class="num">${st.games}</b><span>لعبة</span></div><div><b class="num">${st.friends}</b><span>صديق</span></div><div><b class="num">${achList.length}</b><span>تروفي</span></div>${achList.some(a => (((MANIFEST.games[a.game] || {}).achievements || {})[a.id] || {}).tier === "platinum") ? `<div><b class="num">${achList.filter(a => (((MANIFEST.games[a.game] || {}).achievements || {})[a.id] || {}).tier === "platinum").length}</b><span>بلاتيني</span></div>` : ""}</div>
     <h3 class="prof-sub">الشارات <span class="muted num">${badges.length}/${BADGES.length}</span></h3>
     <div class="badges">${BADGES.map(b => `<div class="badge${badges.includes(b.id) ? " got" : ""}" title="${esc(b.desc)}"><span>${b.icon}</span><b>${esc(b.name)}</b><small>${esc(b.desc)}</small></div>`).join("")}</div>
     ${achList.length ? `<h3 class="prof-sub">إنجازات الألعاب</h3><div class="badges">${achList.map(a => { const g = byId(a.game), def = (MANIFEST.games[a.game] && MANIFEST.games[a.game].achievements || {})[a.id] || {};
-      return `<div class="badge got"><span>🏆</span><b>${esc(def.name || a.id)}</b><small>${esc(g ? (g.en || g.title) : a.game)}${def.desc ? " · " + esc(def.desc) : ""}</small></div>`; }).join("")}</div>` : ""}`;
+      return `<div class="badge got">${troIcon(def.tier, true)}<b>${esc(def.name || a.id)}</b><small>${esc(g ? (g.en || g.title) : a.game)}${def.desc ? " · " + esc(def.desc) : ""}</small></div>`; }).join("")}</div>` : ""}`;
 }
 
 /* ---------------- wishlist, reviews, news (store game page) ---------------- */
@@ -619,7 +633,7 @@ function notes(){
   const out = [];
   for (const [id, f] of Object.entries(FRIENDS)) if (f.status === "in") out.push({t:`@${f.username} يبي يضيفك صديق`, href:"#friends", i:"👤"});
   for (const id of Object.keys(LASTMSG)) if (unread(id)) { const m = LASTMSG[id], f = FRIENDS[id]; out.push({t:m.kind === "invite" ? `@${f ? f.username : ""} يدعوك تلعب ${gameName(m.game)}` : `رسالة من @${f ? f.username : ""}`, href:"#friends", i:m.kind === "invite" ? "🎮" : "💬"}); }
-  for (const a of Object.values(ACH)) if (Date.now() - tsMs(a.at) < 864e5) { const d = ((MANIFEST.games[a.game] || {}).achievements || {})[a.id]; out.push({t:`إنجاز جديد: ${d ? d.name : a.id}`, href:"#account", i:"🏆"}); }
+  for (const a of Object.values(ACH)) if (Date.now() - tsMs(a.at) < 864e5) { const d = ((MANIFEST.games[a.game] || {}).achievements || {})[a.id]; out.push({t:`تروفي ${d && TIERS[d.tier] ? TIERS[d.tier].n + " " : ""}جديد: ${d ? d.name : a.id}`, href:"#account", i:"🏆"}); }
   for (const [k, v] of pendingUpdates()) out.push({t:`تحديث متوفر: ${keyTitle(k)}`, href:"#downloads", i:"⬇"});
   for (const [id, d] of Object.entries(DEVICES)) if (id !== deviceId() && Date.now() - tsMs(d.first) < 864e5) out.push({t:`دخول من جهاز جديد: ${d.name || ""}`, href:"#account", i:"🔐"});
   for (const [id, r] of Object.entries(REFUNDS)) if (r.status !== "pending" && Date.now() - tsMs(r.doneAt || r.at) < 7 * 864e5) out.push({t:r.status === "done" ? "تمت الموافقة على الاسترجاع" : "انرفض طلب الاسترجاع", href:"#library", i:"↩"});
@@ -1268,9 +1282,8 @@ function guestNote(){
   if (!n) { n = document.createElement("div"); n.className = "guestnote"; n.innerHTML = '<span>أنت تتصفح كضيف. تقدر تتفرج بس، وللشراء والتثبيت لازم تسجّل دخولك.</span><button class="btn buy mini" type="button" data-login>تسجيل الدخول</button>'; v.prepend(n); }
 }
 let BP = null;
-function achOf(gid){ const all = (MANIFEST.games[gid] || {}).achievements || {};
-  const list = Object.entries(all).map(([id, d]) => ({id, name:d.name, desc:d.desc, got:!!ACH[gid + "__" + id]})).sort((a, b) => b.got - a.got);
-  return {all:list.length, got:list.filter(a => a.got).length, list}; }
+function achOf(gid){ const list = troList(gid);
+  return {all:list.length, got:list.filter(a => a.got).length, list, icon:troIcon}; }
 function bigPicture(){ if (!BP) BP = makeBP({$, esc, GAMES, ownedEds, instOf, ED_TAG, PS, toast, cover, money, ent, keyTitle, pct, progText,
   byId, lastPlayed, SOON, soonArt, notes, pendingUpdates, achOf, sendMsg, lowPrice, saleOf,
   call:fid => rtc().start("voice", [fid], {[fid]:(FRIENDS[fid] || {}).username}).catch(() => {}),

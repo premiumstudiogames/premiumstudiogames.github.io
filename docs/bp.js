@@ -117,8 +117,8 @@ export function makeBP(H){
         <p class="bp-desc">${esc(g.tagline || "")}</p>
         <div class="bp-acts">${actBtn(g, ed, true)}${eds.length ? "" : `<button class="bp-btn ghost" data-bp="buy" data-g="${g.id}">الإصدارات والأسعار</button>`}</div>
         <div class="bp-stats">${eds.length ? `<div><b>${m ? hrs(m) : "—"}</b><small>وقت اللعب</small></div><div><b>${lp ? ago(lp) : "—"}</b><small>آخر مرة</small></div>` : `<div><b>${money(Math.round(H.lowPrice(g) * 100) / 100)}</b><small>يبدأ من${H.saleOf(g.id) ? " · خصم " + H.saleOf(g.id).pct + "%" : ""}</small></div><div><b>مجاني</b><small>الديمو</small></div>`}
-          ${ach.all ? `<div><b>${ach.got}/${ach.all}</b><small>الإنجازات</small></div>` : ""}${e && e.d ? `<div><b>${esc(e.d)}</b><small>${esc(e.name)}</small></div>` : ""}</div>
-        ${ach.all ? `<div class="bp-achs">${ach.list.map(a => `<span class="${a.got ? "got" : ""}" title="${esc(a.desc)}">${a.got ? "🏆" : "🔒"} ${esc(a.name)}</span>`).join("")}</div>` : ""}
+          ${ach.all ? `<div><b>${ach.got}/${ach.all}</b><small>التروفيات</small></div>` : ""}${e && e.d ? `<div><b>${esc(e.d)}</b><small>${esc(e.name)}</small></div>` : ""}</div>
+        ${ach.all ? `<div class="bp-achs">${ach.list.slice(0, 24).map(a => `<span class="${a.got ? "got" : ""}" title="${esc(a.desc)}">${ach.icon(a.tier, a.got)} ${esc(a.name)}</span>`).join("")}${ach.all > 24 ? `<span>+${ach.all - 24}</span>` : ""}</div>` : ""}
         </div></div>`; }
     if (L.t === "soon") { const x = H.SOON.find(s => s.id === L.s);
       return `<div class="bp-page soonp"><span class="bp-bg">${H.soonArt(x)}</span><div class="bp-pinfo"><div class="bp-eyebrow">قريبًا · ${esc(x.genreAr)}</div><h1>${esc(x.title)}</h1><p class="bp-desc">${esc(x.tagline)}</p>

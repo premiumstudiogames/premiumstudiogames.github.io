@@ -16,49 +16,510 @@
       },
       "site": "https://abdullra7manx-cmyk.github.io/terravolt/",
       "achievements": {
+        "platinum": {
+          "name": "بلاتينيوم BLOCKFALL",
+          "desc": "اجمع كل الـ 100 تروفي",
+          "tier": "platinum"
+        },
         "first_block": {
-          "name": "أول بلوكة",
-          "desc": "حطيت أول بلوكة"
+          "name": "أول بلوك",
+          "desc": "حط أول بلوك",
+          "tier": "bronze"
         },
         "builder": {
           "name": "بنّاء",
-          "desc": "حطيت 1,000 بلوكة"
+          "desc": "حط 1,000 بلوك",
+          "tier": "bronze"
         },
         "architect": {
-          "name": "مهندس",
-          "desc": "حطيت 10,000 بلوكة"
+          "name": "مهندس معماري",
+          "desc": "حط 10,000 بلوك",
+          "tier": "silver"
+        },
+        "b_city": {
+          "name": "مدينة كاملة",
+          "desc": "حط 50,000 بلوك",
+          "tier": "gold"
+        },
+        "first_break": {
+          "name": "أول ضربة",
+          "desc": "اكسر أول بلوك",
+          "tier": "bronze"
         },
         "miner": {
-          "name": "حفّار",
-          "desc": "كسرت 500 بلوكة"
+          "name": "عامل منجم",
+          "desc": "اكسر 500 بلوك",
+          "tier": "bronze"
         },
         "digger": {
-          "name": "منجم بشري",
-          "desc": "كسرت 5,000 بلوكة"
+          "name": "حفّار",
+          "desc": "اكسر 5,000 بلوك",
+          "tier": "silver"
+        },
+        "d_deep": {
+          "name": "حفّار الأعماق",
+          "desc": "اكسر 20,000 بلوك",
+          "tier": "gold"
+        },
+        "torch_10": {
+          "name": "نوّر المكان",
+          "desc": "حط 10 مشاعل",
+          "tier": "bronze"
+        },
+        "glass_100": {
+          "name": "بيت زجاج",
+          "desc": "حط 100 بلوك زجاج",
+          "tier": "bronze"
+        },
+        "lift_1": {
+          "name": "الرافعة",
+          "desc": "ركّب مركبة على الرافعة",
+          "tier": "bronze"
+        },
+        "first_tree": {
+          "name": "أول شجرة",
+          "desc": "اقطع شجرة",
+          "tier": "bronze"
         },
         "lumberjack": {
           "name": "حطّاب",
-          "desc": "قطعت 50 شجرة"
+          "desc": "اقطع 50 شجرة",
+          "tier": "bronze"
+        },
+        "t_forest": {
+          "name": "آكل الغابات",
+          "desc": "اقطع 500 شجرة",
+          "tier": "silver"
         },
         "shepherd": {
           "name": "راعي",
-          "desc": "10 خرفان"
+          "desc": "اصطد 10 خرفان",
+          "tier": "bronze"
+        },
+        "sh_100": {
+          "name": "قطيع كامل",
+          "desc": "اصطد 100 خروف",
+          "tier": "silver"
+        },
+        "hunter_50": {
+          "name": "صياد",
+          "desc": "اصطد 50 حيوان",
+          "tier": "silver"
+        },
+        "craft_1": {
+          "name": "أول صنعة",
+          "desc": "اصنع أول غرض",
+          "tier": "bronze"
         },
         "crafter": {
           "name": "صانع",
-          "desc": "صنعت 25 شي"
+          "desc": "اصنع 25 غرض",
+          "tier": "bronze"
+        },
+        "craft_250": {
+          "name": "حرفي",
+          "desc": "اصنع 250 غرض",
+          "tier": "silver"
+        },
+        "craft_1000": {
+          "name": "معلّم الصنعة",
+          "desc": "اصنع 1,000 غرض",
+          "tier": "gold"
+        },
+        "eat_50": {
+          "name": "شبعان",
+          "desc": "كل 50 مرة في وضع البقاء",
+          "tier": "bronze"
+        },
+        "t_10m": {
+          "name": "البداية",
+          "desc": "العب 10 دقايق",
+          "tier": "bronze"
         },
         "hour": {
-          "name": "ساعة في العالم",
-          "desc": "لعبت ساعة"
+          "name": "ساعة كاملة",
+          "desc": "العب ساعة",
+          "tier": "bronze"
+        },
+        "t_5h": {
+          "name": "مدمن",
+          "desc": "العب 5 ساعات",
+          "tier": "silver"
         },
         "veteran": {
           "name": "محارب قديم",
-          "desc": "لعبت 10 ساعات"
+          "desc": "العب 10 ساعات",
+          "tier": "silver"
+        },
+        "t_24h": {
+          "name": "يوم كامل",
+          "desc": "العب 24 ساعة",
+          "tier": "gold"
+        },
+        "night_1": {
+          "name": "أول ليلة",
+          "desc": "انجُ من ليلة كاملة في وضع البقاء",
+          "tier": "bronze"
+        },
+        "night_10": {
+          "name": "عشر ليالي",
+          "desc": "انجُ من 10 ليالي",
+          "tier": "silver"
+        },
+        "night_50": {
+          "name": "ابن الليل",
+          "desc": "انجُ من 50 ليلة",
+          "tier": "gold"
+        },
+        "world_1": {
+          "name": "عالمي الأول",
+          "desc": "سوِّ عالم جديد",
+          "tier": "bronze"
         },
         "explorer": {
-          "name": "مستكشف عوالم",
-          "desc": "عندك 3 عوالم"
+          "name": "مستكشف",
+          "desc": "يكون عندك 3 عوالم",
+          "tier": "bronze"
+        },
+        "world_10": {
+          "name": "صانع العوالم",
+          "desc": "سوِّ 10 عوالم",
+          "tier": "silver"
+        },
+        "events_2": {
+          "name": "ابن الفعاليات",
+          "desc": "العب فعاليتين مختلفتين",
+          "tier": "silver"
+        },
+        "k_z1": {
+          "name": "أول زومبي",
+          "desc": "اقتل زومبي",
+          "tier": "bronze"
+        },
+        "k_z50": {
+          "name": "صيّاد الزومبي",
+          "desc": "اقتل 50 زومبي",
+          "tier": "bronze"
+        },
+        "k_z250": {
+          "name": "مطهّر",
+          "desc": "اقتل 250 زومبي",
+          "tier": "silver"
+        },
+        "k_z1000": {
+          "name": "نهاية الوباء",
+          "desc": "اقتل 1,000 زومبي",
+          "tier": "gold"
+        },
+        "k_runner": {
+          "name": "أسرع منه",
+          "desc": "اقتل 10 زومبي راكض",
+          "tier": "bronze"
+        },
+        "k_crawler": {
+          "name": "تحت رجولك",
+          "desc": "اقتل 10 زومبي زاحف",
+          "tier": "bronze"
+        },
+        "k_brute1": {
+          "name": "الضخم",
+          "desc": "اقتل زومبي ضخم",
+          "tier": "bronze"
+        },
+        "k_brute25": {
+          "name": "قاهر العمالقة",
+          "desc": "اقتل 25 زومبي ضخم",
+          "tier": "silver"
+        },
+        "k_boomer": {
+          "name": "قبل لا ينفجر",
+          "desc": "اقتل 10 زومبي متفجر",
+          "tier": "bronze"
+        },
+        "k_archer": {
+          "name": "قنّاص القنّاصين",
+          "desc": "اقتل 10 زومبي الأسهم",
+          "tier": "bronze"
+        },
+        "k_raider1": {
+          "name": "أول مرتزق",
+          "desc": "اقتل مرتزق",
+          "tier": "bronze"
+        },
+        "k_raider50": {
+          "name": "ضد المرتزقة",
+          "desc": "اقتل 50 مرتزق",
+          "tier": "silver"
+        },
+        "k_heavy1": {
+          "name": "كسر الدرع",
+          "desc": "اقتل المدرّع",
+          "tier": "silver"
+        },
+        "k_heavy10": {
+          "name": "لا درع يحميهم",
+          "desc": "اقتل 10 مدرّعين",
+          "tier": "gold"
+        },
+        "shot_1": {
+          "name": "أول طلقة",
+          "desc": "اطلق من سلاح",
+          "tier": "bronze"
+        },
+        "shot_1000": {
+          "name": "رشّاش",
+          "desc": "اطلق 1,000 طلقة",
+          "tier": "silver"
+        },
+        "boom_10": {
+          "name": "بووم",
+          "desc": "صير قريب من 10 انفجارات",
+          "tier": "bronze"
+        },
+        "death_1": {
+          "name": "أول موتة",
+          "desc": "مت مرة",
+          "tier": "bronze"
+        },
+        "sleep_1": {
+          "name": "تصبح على خير",
+          "desc": "نام في سرير",
+          "tier": "bronze"
+        },
+        "sleep_30": {
+          "name": "نومة الهنا",
+          "desc": "نام 30 مرة",
+          "tier": "silver"
+        },
+        "swim_60": {
+          "name": "سبّاح",
+          "desc": "اسبح دقيقة",
+          "tier": "bronze"
+        },
+        "swim_600": {
+          "name": "حوت",
+          "desc": "اسبح 10 دقايق",
+          "tier": "silver"
+        },
+        "talk_1": {
+          "name": "سلام عليكم",
+          "desc": "كلّم قروي",
+          "tier": "bronze"
+        },
+        "trade_1": {
+          "name": "أول صفقة",
+          "desc": "تاجر مع قروي",
+          "tier": "bronze"
+        },
+        "trade_50": {
+          "name": "تاجر",
+          "desc": "سوِّ 50 صفقة",
+          "tier": "silver"
+        },
+        "trade_200": {
+          "name": "رجل أعمال",
+          "desc": "سوِّ 200 صفقة",
+          "tier": "gold"
+        },
+        "veh_drive": {
+          "name": "على الطريق",
+          "desc": "اركب مركبة",
+          "tier": "bronze"
+        },
+        "veh_10": {
+          "name": "مصنع مركبات",
+          "desc": "ركّب 10 مركبات على الرافعة",
+          "tier": "silver"
+        },
+        "veh_1km": {
+          "name": "أول كيلو",
+          "desc": "سوق مسافة 1 كم",
+          "tier": "bronze"
+        },
+        "veh_10km": {
+          "name": "سواق",
+          "desc": "سوق مسافة 10 كم",
+          "tier": "silver"
+        },
+        "veh_100km": {
+          "name": "رحّالة",
+          "desc": "سوق مسافة 100 كم",
+          "tier": "gold"
+        },
+        "eng_1": {
+          "name": "ميكانيكي",
+          "desc": "ركّب قطعة على محرك",
+          "tier": "bronze"
+        },
+        "eng_25": {
+          "name": "ورشة كاملة",
+          "desc": "ركّب 25 قطعة على المحركات",
+          "tier": "silver"
+        },
+        "jet": {
+          "name": "نفّاث",
+          "desc": "اركب مركبة فيها محرك نفاث شغّال",
+          "tier": "silver"
+        },
+        "boat_1": {
+          "name": "قبطان",
+          "desc": "ركّب قارب في الماء",
+          "tier": "bronze"
+        },
+        "boat_1km": {
+          "name": "بحّار",
+          "desc": "أبحر 1 كم",
+          "tier": "bronze"
+        },
+        "boat_10km": {
+          "name": "ذئب البحر",
+          "desc": "أبحر 10 كم",
+          "tier": "silver"
+        },
+        "walk_1km": {
+          "name": "مشّاء",
+          "desc": "امشِ 1 كم",
+          "tier": "bronze"
+        },
+        "walk_10km": {
+          "name": "رحلة طويلة",
+          "desc": "امشِ 10 كم",
+          "tier": "silver"
+        },
+        "walk_100km": {
+          "name": "حول العالم",
+          "desc": "امشِ 100 كم",
+          "tier": "gold"
+        },
+        "high": {
+          "name": "فوق الغيوم",
+          "desc": "وصّل ارتفاع 80 م",
+          "tier": "silver"
+        },
+        "deep": {
+          "name": "قاع العالم",
+          "desc": "انزل تحت مستوى −30 م",
+          "tier": "silver"
+        },
+        "sea_1": {
+          "name": "ما رماه البحر",
+          "desc": "التقط غرض من البحر",
+          "tier": "bronze"
+        },
+        "sea_50": {
+          "name": "صيّاد الكنوز",
+          "desc": "التقط 50 غرض من البحر",
+          "tier": "silver"
+        },
+        "sea_250": {
+          "name": "سيد المحيط",
+          "desc": "التقط 250 غرض من البحر",
+          "tier": "gold"
+        },
+        "portal_build": {
+          "name": "بنّاء البوابات",
+          "desc": "ابنِ بوابة التنين بنفسك",
+          "tier": "silver"
+        },
+        "crystal_4": {
+          "name": "البلورات الأربع",
+          "desc": "حط 4 بلورات في قواعد البوابة",
+          "tier": "bronze"
+        },
+        "portal_1": {
+          "name": "العبور",
+          "desc": "ادخل البوابة",
+          "tier": "silver"
+        },
+        "dragon_land": {
+          "name": "أرض التنين",
+          "desc": "وصّل أرض التنين",
+          "tier": "silver"
+        },
+        "dragon_1": {
+          "name": "قاتل التنين",
+          "desc": "اهزم التنين ذو الرؤوس الثلاثة",
+          "tier": "gold"
+        },
+        "dragon_3": {
+          "name": "أسطورة",
+          "desc": "اهزم التنين 3 مرات",
+          "tier": "gold"
+        },
+        "story_1": {
+          "name": "البداية",
+          "desc": "خلّص الفصل الأول من القصة",
+          "tier": "bronze"
+        },
+        "story_2": {
+          "name": "الفصل الثاني",
+          "desc": "خلّص فصلين من القصة",
+          "tier": "bronze"
+        },
+        "story_3": {
+          "name": "نص الطريق",
+          "desc": "خلّص 3 فصول من القصة",
+          "tier": "silver"
+        },
+        "story_4": {
+          "name": "قبل النهاية",
+          "desc": "خلّص 4 فصول من القصة",
+          "tier": "silver"
+        },
+        "story_5": {
+          "name": "النهاية",
+          "desc": "خلّص القصة كاملة",
+          "tier": "gold"
+        },
+        "wire_1": {
+          "name": "كهربائي",
+          "desc": "مد أول سلك",
+          "tier": "bronze"
+        },
+        "wire_100": {
+          "name": "شبكة كهرباء",
+          "desc": "مد 100 سلك",
+          "tier": "silver"
+        },
+        "link_10": {
+          "name": "كل شي موصول",
+          "desc": "وصّل 10 أجهزة ببعض",
+          "tier": "silver"
+        },
+        "carry_1": {
+          "name": "على الكتف",
+          "desc": "شيل جثة على كتفك",
+          "tier": "bronze"
+        },
+        "carry_500": {
+          "name": "نقّال",
+          "desc": "امشِ 500 م وأنت شايل جثة",
+          "tier": "silver"
+        },
+        "online_1": {
+          "name": "مع الربع",
+          "desc": "العب أونلاين",
+          "tier": "bronze"
+        },
+        "online_1h": {
+          "name": "ربع السهرة",
+          "desc": "العب أونلاين ساعة",
+          "tier": "silver"
+        },
+        "cubes_1k": {
+          "name": "أول ألف",
+          "desc": "اكسب 1,000 كيوب",
+          "tier": "bronze"
+        },
+        "cubes_10k": {
+          "name": "غني",
+          "desc": "اكسب 10,000 كيوب",
+          "tier": "silver"
+        },
+        "cubes_100k": {
+          "name": "مليونير المكعبات",
+          "desc": "اكسب 100,000 كيوب",
+          "tier": "gold"
         }
       }
     },
