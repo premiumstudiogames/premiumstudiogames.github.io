@@ -258,7 +258,10 @@ service cloud.firestore {
         allow read: if isMe(uid);
         allow write: if isMe(uid) && ((d == 'prefs' && request.resource.data.keys().hasOnly(['fav', 'hidden'])
           && request.resource.data.fav is list && request.resource.data.fav.size() <= 200 && request.resource.data.hidden is list && request.resource.data.hidden.size() <= 200)
-          || (d == 'security' && request.resource.data.keys().hasOnly(['signOutBefore']) && request.resource.data.signOutBefore == request.time));
+          || (d == 'security' && request.resource.data.keys().hasOnly(['signOutBefore']) && request.resource.data.signOutBefore == request.time)
+          // install a game on your PC from another device (your phone): the app on the PC picks it up
+          || (d == 'remote' && request.resource.data.keys().hasOnly(['install', 'at']) && request.resource.data.at == request.time
+              && request.resource.data.install is string && request.resource.data.install.matches('^[a-z0-9-]{1,40}--(demo|std|gold|dev)$')));
       }
       // the devices you signed in from
       match /devices/{dev} {

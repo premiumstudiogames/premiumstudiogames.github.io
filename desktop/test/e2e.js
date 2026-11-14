@@ -9,6 +9,11 @@ if (FIRST) fs.rmSync(tmp, { recursive: true, force: true });
 process.env.LOCALAPPDATA = path.join(tmp, 'Local');
 app.setPath('userData', path.join(tmp, 'ud'));
 if (FIRST) fs.rmSync(path.join(app.getPath('appData'), '.terravolt'), { recursive: true, force: true });
+// the app used to be "Premium Studio": leave an old icon and an old screenshots folder, the app must carry them over
+const oldLnk = path.join(os.homedir(), 'Desktop', 'Premium Studio.lnk'), newLnk = path.join(os.homedir(), 'Desktop', 'Premium Games.lnk');
+const oldShots = path.join(app.getPath('pictures'), 'Premium Studio', 'Old Game');
+if (FIRST) { try { fs.rmSync(newLnk, { force: true }); require('electron').shell.writeShortcutLink(oldLnk, { target: process.execPath, description: 'Premium Studio' });
+  fs.mkdirSync(oldShots, { recursive: true }); fs.writeFileSync(path.join(oldShots, 'old.png'), 'x'); } catch (e) { console.log('legacy setup:', e.message); } }
 require('../main.js');
 const ev = { senderFrame: { url: 'https://premiumstudiogames.github.io/' } };
 const call = (ch, ...a) => ipcMain._invokeHandlers.get(ch)(ev, ...a);
@@ -28,6 +33,19 @@ app.whenReady().then(async () => {
   for (const w of BrowserWindow.getAllWindows()) w.webContents.reload();
   await sleep(2000);
   try {
+    // ---- the new name: one icon, old files kept
+    ok('old "Premium Studio" icon renamed to "Premium Games" (one icon)', !fs.existsSync(oldLnk) && fs.existsSync(newLnk));
+    ok('old screenshots carried over', fs.existsSync(path.join(app.getPath('pictures'), 'Premium Games', 'Old Game', 'old.png')));
+        // ---- console mode
+    let st = await call('ps:setSettings', { consoleBoot: true, sounds: false, glyphs: 'ps' });
+    st = await call('ps:getSettings');
+    ok('console mode settings are saved', st.consoleBoot === true && st.sounds === false && st.glyphs === 'ps', JSON.stringify(st));
+    await call('ps:setSettings', { consoleBoot: false });
+    let bad = false; try { await call('ps:power', 'format-c'); } catch (e) { bad = true; }
+    ok('power menu rejects unknown commands', bad);
+    app.emit('second-instance', {}, [process.execPath, '--console']);
+    ok('--console opens straight into console mode', await waitFor(() => BrowserWindow.getAllWindows().some(w => !w.isDestroyed() && /#bigpicture$/.test(w.webContents.getURL())), 15000));
+    await call('ps:fullscreen', false);
     await call('ps:setUser', { username: 'e2etest', name: 'E2E', pid: '0000000001', email: 'e2e@test.local', uid: 'E2E', refreshToken: '' });
     // ---- التسجيل الأخير
     await call('ps:install', 'last-recording--std', { edition: 'std' });
@@ -38,17 +56,23 @@ app.whenReady().then(async () => {
     // F12 takes a screenshot; Shift+Tab opens the overlay
     const gw = BrowserWindow.getAllWindows().find(w => w.webContents.getURL().startsWith('psgame'));
     if (gw) { gw.focus(); gw.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F12' }); }
-    const shotDir = path.join(app.getPath('pictures'), 'Premium Studio');
+    const shotDir = path.join(app.getPath('pictures'), 'Premium Games');
     ok('F12 saves a screenshot', await waitFor(() => { try { return fs.readdirSync(shotDir).some(d => fs.readdirSync(path.join(shotDir, d)).some(f => f.endsWith('.png'))); } catch (e) { return false; } }, 10000));
     if (gw) gw.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab', modifiers: ['shift'] });
     ok('Shift+Tab opens the overlay', await waitFor(() => BrowserWindow.getAllWindows().some(w => !w.isDestroyed() && w.webContents.getURL().startsWith('data:') && w.isVisible() && /%D8%A7%D9%84%D8%A5%D9%86%D8%AC%D8%A7%D8%B2%D8%A7%D8%AA|الإنجازات/.test(decodeURIComponent(w.webContents.getURL()).slice(0, 20000))), 10000));
     if (gw) gw.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab', modifiers: ['shift'] });
     await sleep(800);
+    // the controller's Home button opens the overlay too
+    const ovVisible = () => BrowserWindow.getAllWindows().some(w => !w.isDestroyed() && w.webContents.getURL().startsWith('data:') && w.isVisible() && /الإنجازات/.test(decodeURIComponent(w.webContents.getURL()).slice(0, 20000)));
+    if (gw) ipcMain.emit('game:guide', { sender: gw.webContents });
+    ok('controller Home button opens the overlay', await waitFor(ovVisible, 10000));
+    if (gw) ipcMain.emit('game:guide', { sender: gw.webContents });
+    await sleep(800);
     // F9 records a clip, F9 again saves it
     if (gw) { gw.focus(); gw.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F9' }); }
     await sleep(4000);
     if (gw) gw.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F9' });
-    const clipDir = path.join(app.getPath('videos'), 'Premium Studio');
+    const clipDir = path.join(app.getPath('videos'), 'Premium Games');
     ok('F9 records a clip', await waitFor(() => { try { return fs.readdirSync(clipDir).some(d => fs.readdirSync(path.join(clipDir, d)).some(f => f.endsWith('.webm') && fs.statSync(path.join(clipDir, d, f)).size > 1000)); } catch (e) { return false; } }, 15000));
     await call('ps:stop', 'last-recording--std');
     ok('horror game closes', await waitFor(async () => !(await call('ps:getRunning'))['last-recording--std'], 20000));

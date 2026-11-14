@@ -1,5 +1,5 @@
 'use strict';
-// Bridge between the Premium Studio store page and the desktop client.
+// Bridge between the Premium Games store page and the desktop client.
 const { contextBridge, ipcRenderer } = require('electron');
 
 const ok = (() => {
@@ -33,6 +33,9 @@ if (ok) {
     getSettings: () => ipcRenderer.invoke('ps:getSettings'),
     setParental: o => ipcRenderer.invoke('ps:setParental', o),
     setSettings: o => ipcRenderer.invoke('ps:setSettings', o),
+    power: what => ipcRenderer.invoke('ps:power', what),
+    focusMain: () => ipcRenderer.invoke('ps:focusMain'),
+    consoleMode: true,
     openShots: file => ipcRenderer.invoke('ps:openShots', file),
     openClips: () => ipcRenderer.invoke('ps:openClips'),
     retryOnline: () => ipcRenderer.invoke('ps:retryOnline'),

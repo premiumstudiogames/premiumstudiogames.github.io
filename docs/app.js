@@ -1,4 +1,4 @@
-import { makeBP } from "./bp.js?v=1";
+import { makeBP } from "./bp.js?v=2";
 import { makeRTC } from "./rtc.js?v=1";
 import { SOON, SOON_GENRES } from "./soon.js?v=1";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
@@ -18,10 +18,10 @@ const firebaseConfig = {
   measurementId: "G-MXDZK8WSVN"
 };
 const ADMIN_EMAIL = "abdullra7manx@gmail.com";
-/* PS COIN balances are stored as whole ten-thousandths (1 = 0.0001 PS COIN) so sums stay exact. 1 PS COIN = $100,000. */
+/* PG COIN balances are stored as whole ten-thousandths (1 = 0.0001 PG COIN) so sums stay exact. 1 PG COIN = $100,000. */
 const COIN_UNIT = 10000;
 const COIN_USD = 100000;
-const SIGNUP_BONUS = 1;     // 0.0001 PS COIN for every new account
+const SIGNUP_BONUS = 1;     // 0.0001 PG COIN for every new account
 const PACKS = [             // must match coinPacks() in firestore.rules (coins in ten-thousandths)
   {id:"u1",     coins:1,      price:10},
   {id:"u100",   coins:100,    price:1000},
@@ -30,7 +30,7 @@ const PACKS = [             // must match coinPacks() in firestore.rules (coins 
   {id:"u100000",coins:100000, price:1000000}
 ];
 const coins = n => ((n || 0) / COIN_UNIT).toLocaleString("en-US", {minimumFractionDigits:0, maximumFractionDigits:4});
-const SITE_VERSION = "00.00.26";
+const SITE_VERSION = "00.00.27";
 const APP_DL = "downloads/PremiumStudioSetup.exe";
 
 const fb = initializeApp(firebaseConfig);
@@ -38,7 +38,7 @@ const auth = getAuth(fb);
 const fs = getFirestore(fb);
 setPersistence(auth, browserLocalPersistence).catch(()=>{});
 
-/* desktop app bridge (only present inside the Premium Studio app) */
+/* desktop app bridge (only present inside the Premium Games app) */
 const PS = window.premiumStudio || null;
 const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 
@@ -181,7 +181,7 @@ if (PS) {
   fetch("https://api.github.com/repos/premiumstudiogames/premiumstudiogames.github.io/releases/latest").then(r => r.json()).then(j => {
     const lv = String(j.tag_name || "").replace(/^v/, "").split(".").map(n => n.padStart(2, "0")).join(".");
     if (lv && PS.version && PS.version < lv && !PS.updatesItself) { const b = document.createElement("div"); b.className = "updbar";
-      b.innerHTML = `نسخة جديدة من Premium Studio (${lv}) جاهزة. اضغط بالزر اليمين على أيقونة PS جنب الساعة ← «خروج»، وافتحه، ويتحدّث. بعدها التحديثات تنزل لحالها. <a href="downloads/PremiumStudioSetup.exe" download>أو حمّلها من هنا</a>`;
+      b.innerHTML = `نسخة جديدة من Premium Games (${lv}) جاهزة. اضغط بالزر اليمين على أيقونة PS جنب الساعة ← «خروج»، وافتحه، ويتحدّث. بعدها التحديثات تنزل لحالها. <a href="downloads/PremiumStudioSetup.exe" download>أو حمّلها من هنا</a>`;
       document.body.prepend(b); } }).catch(() => {});
   if (PS.onRunning) { PS.onRunning(r => { RUNNING = r || {}; render(); }); PS.getRunning().then(r => { RUNNING = r || {}; render(); }).catch(() => {}); }
   refreshInstalled();
@@ -224,7 +224,7 @@ function renderDlBar(){
 }
 function renderDownloads(light){
   const box = $("#downloads"); if (!box) return;
-  if (!PS) { box.innerHTML = '<div class="empty"><b style="color:var(--text)">التحميلات تشتغل في تطبيق Premium Studio</b><a class="btn buy" href="#download">حمّل التطبيق</a></div>'; return; }
+  if (!PS) { box.innerHTML = '<div class="empty"><b style="color:var(--text)">التحميلات تشتغل في تطبيق Premium Games</b><a class="btn buy" href="#download">حمّل التطبيق</a></div>'; return; }
   const act = Object.values(PROGRESS), sp = totalSpeed();
   if (light && box.querySelector(".dl-net")) {   // just refresh numbers while downloading
     box.querySelector("[data-net]").textContent = fmtSpeed(sp); box.querySelector("[data-peak]").textContent = fmtSpeed(PEAK);
@@ -267,7 +267,7 @@ function fmtPlay(gid){
 function installBlock(g){
   const eds = ownedEds(g.id);
   if (!eds.length) return "";
-  if (!PS && isMobile) return `<div class="inststate"><span>اللعبة للكمبيوتر. افتح الموقع من الكمبيوتر عشان تثبّتها.</span></div>`;
+  if (!PS) return `<div class="inststate remote"><span>تقدر تثبّتها على كمبيوترك من هنا: تبدأ تنزل أول ما يكون تطبيق Premium Games شغّال عليه.</span>${eds.map(ed => `<button class="btn mini" type="button" data-remote="${g.id}--${ed}">📲 ثبّت ${esc(ED_TAG[ed] || ed)} على كمبيوتري</button>`).join("")}</div>${isMobile ? "" : `<div class="edinsts">${eds.map(ed => edInstall(g, ed)).join("")}</div>`}`;
   return `<div class="edinsts">${fmtPlay(g.id)}${eds.map(ed => edInstall(g, ed)).join("")}</div>`;
 }
 function edInstall(g, ed){
@@ -275,7 +275,7 @@ function edInstall(g, ed){
   const a = `data-g="${key}" data-gid="${g.id}" data-ed="${ed}"`;
   const head = `<div class="edinst-h"><b>${esc(g.en || g.title)}${ED_TAG[ed] ? ` <span class="tag">${ED_TAG[ed]}</span>` : ""}</b>`;
   if (!PS) return `<div class="edinst">${head}</div><button class="btn inst" data-act="getapp" ${a}>تثبيت</button></div>`;
-  if (!PS.multiEdition) return `<div class="edinst">${head}</div><span class="muted" style="font-size:13px">حدّث تطبيق Premium Studio: اقفله وافتحه.</span></div>`;
+  if (!PS.multiEdition) return `<div class="edinst">${head}</div><span class="muted" style="font-size:13px">حدّث تطبيق Premium Games: اقفله وافتحه.</span></div>`;
   if (prog) return `<div class="edinst">${head}<span class="num" data-progt>${progText(prog)}</span></div><div class="bar" data-prog="${key}"><i style="width:${pct(prog)}%"></i></div></div>`;
   if (inst && RUNNING[key]) {
     const mins = Math.max(0, Math.floor((Date.now() - RUNNING[key].since) / 60000));
@@ -314,8 +314,8 @@ document.addEventListener("click", async e => {
 });
 function getAppModal(g, ed, key){
   openModal(`<div class="eyebrow">INSTALL</div><h1 class="mbox-t">ثبّت ${esc(g.en || g.title)}${ED_TAG[ed] ? " " + ED_TAG[ed] : ""}</h1>
-    <p class="mbox-t">الألعاب تنثبت من تطبيق Premium Studio على الكمبيوتر، مثل ستيم. التطبيق يحط أيقونة اللعبة على سطح المكتب.</p>
-    <a class="btn buy" href="${APP_DL}" download>تحميل تطبيق Premium Studio</a>
+    <p class="mbox-t">الألعاب تنثبت من تطبيق Premium Games على الكمبيوتر، مثل ستيم. التطبيق يحط أيقونة اللعبة على سطح المكتب.</p>
+    <a class="btn buy" href="${APP_DL}" download>تحميل تطبيق Premium Games</a>
     <a class="btn" href="premiumstudio://${key ? "install/" + key : "game/" + g.id}">عندي التطبيق، ثبّتها فيه</a>
     <button class="btn ghost" data-close>إغلاق</button>`);
 }
@@ -375,11 +375,11 @@ const stPill = s => { const [c, n] = ST[s] || ST.free; return `<span class="st $
 function renderGame(g){
   const v = $("#gameView"), {best, pending} = ent(g.id), m = MANIFEST.games[g.id];
   const mineRank = best ? RANK[best.edition] : -1;
-  v.innerHTML = `<div class="banner"><div class="shade"></div><div class="cap"><div class="eyebrow">PREMIUM STUDIO${g.en ? " · " + esc(g.en) : ""}</div><h1 class="gtitle ${g.ar ? "ar" : ""}">${esc(g.title)}</h1><div class="muted">${esc(g.tagline)}</div></div></div>
+  v.innerHTML = `<div class="banner"><div class="shade"></div><div class="cap"><div class="eyebrow">PREMIUM GAMES${g.en ? " · " + esc(g.en) : ""}</div><h1 class="gtitle ${g.ar ? "ar" : ""}">${esc(g.title)}</h1><div class="muted">${esc(g.tagline)}</div></div></div>
   <div class="gp"><div class="about">
     <div>${g.about.map(p => `<p>${esc(p)}</p>`).join("")}</div>
     <div><div class="sec-h" style="margin-bottom:12px"><h2>المميزات</h2><small>FEATURES</small></div><ul class="feat">${g.feat.map(f => `<li>${esc(f)}</li>`).join("")}</ul></div>
-    <dl class="specs"><dt>المطوّر</dt><dd>Premium Studio</dd><dt>المنصة</dt><dd>Windows 10 / 11</dd><dt>النوع</dt><dd>${g.tags.map(esc).join(" · ")}</dd>${LATEST[g.id] ? `<dt>آخر إصدار</dt><dd class="num">${esc(LATEST[g.id].game || LATEST[g.id].version)}</dd>` : ""}</dl>
+    <dl class="specs"><dt>المطوّر</dt><dd>Premium Games</dd><dt>المنصة</dt><dd>Windows 10 / 11</dd><dt>النوع</dt><dd>${g.tags.map(esc).join(" · ")}</dd>${LATEST[g.id] ? `<dt>آخر إصدار</dt><dd class="num">${esc(LATEST[g.id].game || LATEST[g.id].version)}</dd>` : ""}</dl>
   </div>
   <aside class="eds">
     ${best ? `<div class="ownbox"><div class="row" style="justify-content:space-between"><b>في مكتبتك</b>${stPill(best.status)}</div><div class="muted" style="font-size:13px">${esc(edName(g, best.edition))} · ${fdate(best.at)}</div>${installBlock(g)}</div>` : ""}
@@ -462,7 +462,7 @@ function renderLibGame(main, g){
 function renderLib(){
   const box = $("#lib"), bar = $("#libBar"); bar.innerHTML = "";
   if (!user) { box.innerHTML = '<div class="empty"><b style="color:var(--text)">المكتبة للمسجّلين فقط</b><span>سجّل دخولك عشان تضيف ألعاب لمكتبتك وتثبّتها.</span><button class="btn buy" type="button" data-login>تسجيل الدخول</button></div>'; return; }
-  if (!PS && !isMobile) bar.innerHTML = `<span>عشان تثبّت ألعابك على الكمبيوتر تحتاج تطبيق Premium Studio.</span><a class="btn mini buy" href="#download">حمّل التطبيق</a>`;
+  if (!PS && !isMobile) bar.innerHTML = `<span>عشان تثبّت ألعابك على الكمبيوتر تحتاج تطبيق Premium Games.</span><a class="btn mini buy" href="#download">حمّل التطبيق</a>`;
   if (!box.querySelector("#libSide")) {
     box.innerHTML = `<div class="libwrap"><aside class="libside" id="libSide"><button class="ls-home" id="libHome" type="button">الرئيسية</button>
       <div class="ls-tools"><input id="libQ" type="search" placeholder="ابحث في مكتبتك" autocomplete="off"><select id="libF" aria-label="فلتر"><option value="">الكل</option><option value="fav">المفضلة ★</option><option value="inst">مثبتة</option><option value="no">غير مثبتة</option><option value="hidden">المخفية</option></select></div>
@@ -492,7 +492,7 @@ const BADGES = [
   {id:"h100", icon:"💎", name:"100 ساعة", desc:"لعبت 100 ساعة", ok:s => s.minutes >= 6000},
   {id:"social", icon:"🤝", name:"اجتماعي", desc:"عندك صديق", ok:s => s.friends >= 1},
   {id:"popular", icon:"🌟", name:"مشهور", desc:"عندك 10 أصدقاء", ok:s => s.friends >= 10},
-  {id:"coin", icon:"🪙", name:"صاحب عملات", desc:"عندك 1 PS COIN أو أكثر", ok:s => s.coins >= 10000}
+  {id:"coin", icon:"🪙", name:"صاحب عملات", desc:"عندك 1 PG COIN أو أكثر", ok:s => s.coins >= 10000}
 ];
 function myStats(){
   const owned = GAMES.filter(g => ownedEds(g.id).length);
@@ -571,7 +571,7 @@ function gameExtras(g, v, best){
 function gameProps(g){
   const eds = ownedEds(g.id).map(ed => [ed, ...instOf(g.id, ed)]).filter(x => x[2]);
   openModal(`<div class="eyebrow">PROPERTIES</div><h1 class="mbox-t">خصائص ${esc(g.en || g.title)}</h1>
-    ${!PS ? '<p class="muted">الخصائص في تطبيق Premium Studio.</p>' : !eds.length ? '<p class="muted">ما فيه نسخة مثبتة.</p>' : eds.map(([ed, key, inst]) => `<div class="prop"><b>${esc(edName(g, ed))}</b><span class="muted num" style="font-size:12px">${esc(inst.version || "")} · ${mb(inst.size || 0)}</span>
+    ${!PS ? '<p class="muted">الخصائص في تطبيق Premium Games.</p>' : !eds.length ? '<p class="muted">ما فيه نسخة مثبتة.</p>' : eds.map(([ed, key, inst]) => `<div class="prop"><b>${esc(edName(g, ed))}</b><span class="muted num" style="font-size:12px">${esc(inst.version || "")} · ${mb(inst.size || 0)}</span>
       <div class="row" style="gap:6px;flex-wrap:wrap"><button class="btn mini" data-pv="${key}">تحقق من سلامة الملفات</button><button class="btn mini" data-ps="${key}">أيقونة على سطح المكتب</button><button class="btn mini" data-act="folder" data-g="${key}" data-gid="${g.id}" data-ed="${ed}">المجلد</button><button class="btn mini danger" data-act="uninstall" data-g="${key}" data-gid="${g.id}" data-ed="${ed}">حذف</button></div></div>`).join("")}
     <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" type="button" data-close>إغلاق</button></div>`);
   const box = $("#mbox");
@@ -669,9 +669,9 @@ function partyModal(){
   $("#pGo").onclick = () => { const ids = [...document.querySelectorAll("#mbox input:checked")].map(x => x.value).slice(0, 5); if (!ids.length) return toast("اختر صديق");
     const names = {}; ids.forEach(id => names[id] = FRIENDS[id].username); closeModal(); rtc().start("party", ids, names).catch(() => {}); };
 }
-// Remote Play Together: share a game that runs inside Premium Studio
+// Remote Play Together: share a game that runs inside Premium Games
 function remoteModal(fid){
-  if (!PS || !PS.shareGame) return toast("العب عن بعد من تطبيق Premium Studio");
+  if (!PS || !PS.shareGame) return toast("العب عن بعد من تطبيق Premium Games");
   const run = Object.entries(RUNNING).filter(([k]) => (MANIFEST.games[(INSTALLED[k] || {}).game] || {}).type === "manifest");
   if (!run.length) return toast("شغّل «التسجيل الأخير» أول، وبعدين ادعُ صديقك يلعب معك");
   const [key] = run[0]; rtc().start("remote", [fid], {[fid]:FRIENDS[fid].username}, {key, game:(INSTALLED[key] || {}).game}).catch(() => {});
@@ -681,7 +681,7 @@ function remoteModal(fid){
 let DEVICES = {}, SECURITY = {};
 const DEV_KEY = "ps-device", LOGIN_KEY = "ps-login-at";
 const deviceId = () => { try { let d = localStorage.getItem(DEV_KEY); if (!d) { d = Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem(DEV_KEY, d); } return d; } catch(e) { return "web"; } };
-function deviceName(){ const ua = navigator.userAgent; const os = /Windows/.test(ua) ? "Windows" : /Android/.test(ua) ? "Android" : /iPhone|iPad/.test(ua) ? "iPhone/iPad" : /Mac/.test(ua) ? "Mac" : "جهاز"; return (PS ? "تطبيق Premium Studio · " : "المتصفح · ") + os; }
+function deviceName(){ const ua = navigator.userAgent; const os = /Windows/.test(ua) ? "Windows" : /Android/.test(ua) ? "Android" : /iPhone|iPad/.test(ua) ? "iPhone/iPad" : /Mac/.test(ua) ? "Mac" : "جهاز"; return (PS ? "تطبيق Premium Games · " : "المتصفح · ") + os; }
 function registerDevice(){
   if (!user) return; const id = deviceId();
   try { if (!localStorage.getItem(LOGIN_KEY + user.uid)) localStorage.setItem(LOGIN_KEY + user.uid, String(Date.now())); } catch(e) {}
@@ -783,7 +783,7 @@ function watchShared(){
     render(); }, () => {}));
 }
 
-/* ---------------- trading cards, badges and the market (PS COIN) ---------------- */
+/* ---------------- trading cards, badges and the market (PG COIN) ---------------- */
 const CARDSET = {
   "blockfall": [["الناجي","🧍"],["الحفّار","⛏"],["البنّاء","🧱"],["السائق","🚙"],["الرادار","📡"]],
   "last-recording": [["الكاميرا","📹"],["الشريط","📼"],["الحارس","🔦"],["المول","🏬"],["الظل","👤"]]
@@ -814,7 +814,7 @@ function cardsBox(){
         <div class="cards">${CARDSET[g.id].map((c, i) => `<div class="tcard${have[i] ? " got" : ""}"><span>${c[1]}</span><b>${esc(c[0])}</b>${have[i] ? `<small class="num">×${have[i]}</small>` : ""}</div>`).join("")}</div></div>`; }).join("")}`;
 }
 async function listCard(cid){
-  const v = prompt(`سعر «${cardName(cid)}» بـ PS COIN (مثلاً 0.0005)`); if (!v) return;
+  const v = prompt(`سعر «${cardName(cid)}» بـ PG COIN (مثلاً 0.0005)`); if (!v) return;
   const price = Math.round(parseFloat(v) * COIN_UNIT); if (!(price >= 1)) return toast("اكتب سعر صحيح (أقل شي 0.0001)");
   const ref = doc(collection(fs, "listings")), b = writeBatch(fs);
   b.set(ref, {seller:user.uid, sellerName:(PROFILE && PROFILE.username) || "", card:cid, game:cid.replace(/_\d$/, ""), price, status:"open", at:serverTimestamp()});
@@ -823,7 +823,7 @@ async function listCard(cid){
 }
 async function buyListing(l){
   if (!user) return showAuth("login");
-  const mine = (PROFILE && PROFILE.coins) || 0; if (mine < l.price) return toast("رصيدك من PS COIN ما يكفي");
+  const mine = (PROFILE && PROFILE.coins) || 0; if (mine < l.price) return toast("رصيدك من PG COIN ما يكفي");
   const b = writeBatch(fs);
   b.update(doc(fs, "listings", l.id), {status:"sold", buyer:user.uid, soldAt:serverTimestamp()});
   b.update(doc(fs, "users", user.uid), {coins:mine - l.price, lastTrade:l.id});
@@ -840,9 +840,9 @@ function renderMarket(){
   const box = $("#market"); if (!box) return;
   if (!user) { box.innerHTML = '<div class="empty"><b style="color:var(--text)">السوق للمسجّلين</b><button class="btn buy" type="button" data-login>تسجيل الدخول</button></div>'; return; }
   const mineCards = Object.entries(CARDS).filter(([, c]) => c.count > 0);
-  box.innerHTML = `<div class="mk-bal">رصيدك: <b class="num">${coins((PROFILE && PROFILE.coins) || 0)}</b> PS COIN</div>
+  box.innerHTML = `<div class="mk-bal">رصيدك: <b class="num">${coins((PROFILE && PROFILE.coins) || 0)}</b> PG COIN</div>
     <div class="sec-h"><h2>معروض للبيع</h2><small>LISTINGS</small></div>
-    <div class="mk-grid">${LISTINGS.length ? LISTINGS.map((l, i) => `<div class="tcard got big"><span>${cardIcon(l.card)}</span><b>${esc(cardName(l.card))}</b><small>${esc((byId(l.game) || {}).en || (byId(l.game) || {}).title || l.game)} · @${esc(l.sellerName || "")}</small><b class="num">${coins(l.price)} PS COIN</b>
+    <div class="mk-grid">${LISTINGS.length ? LISTINGS.map((l, i) => `<div class="tcard got big"><span>${cardIcon(l.card)}</span><b>${esc(cardName(l.card))}</b><small>${esc((byId(l.game) || {}).en || (byId(l.game) || {}).title || l.game)} · @${esc(l.sellerName || "")}</small><b class="num">${coins(l.price)} PG COIN</b>
       ${l.seller === user.uid ? `<button class="btn mini ghost" type="button" data-mkc="${i}">اسحبها</button>` : `<button class="btn mini buy" type="button" data-mkb="${i}">شراء</button>`}</div>`).join("") : '<p class="muted">ما فيه شي معروض الحين.</p>'}</div>
     <div class="sec-h"><h2>بطاقاتك</h2><small>YOUR CARDS</small></div>
     <div class="mk-grid">${mineCards.length ? mineCards.map(([cid, c]) => `<div class="tcard got"><span>${cardIcon(cid)}</span><b>${esc(cardName(cid))}</b><small class="num">×${c.count}</small><button class="btn mini" type="button" data-mks="${cid}">اعرضها للبيع</button></div>`).join("") : '<p class="muted">ما عندك بطاقات للحين. العب وتطيح لك.</p>'}</div>`;
@@ -887,9 +887,9 @@ function renderAccount(){
     sb.querySelectorAll("[data-st]").forEach(b => b.onclick = () => setStatus(b.dataset.st)); }
   const a = $("#acct");
   if (!user) { a.innerHTML = '<div class="empty" style="grid-column:1/-1"><b style="color:var(--text)">ما سجّلت دخول</b><button class="btn buy" type="button" data-login>تسجيل الدخول</button></div>'; return; }
-  a.innerHTML = `<div class="panel"><h3>معلوماتك</h3><dl class="kv"><dt>PS ID</dt><dd class="num ltr">${fmtPid(PROFILE && PROFILE.pid)}</dd><dt>PS COIN</dt><dd class="num ltr">${coins(PROFILE && PROFILE.coins)}</dd><dt>اسم المستخدم</dt><dd class="ltr" id="aUser"></dd><dt>الاسم</dt><dd id="aName"></dd><dt>الإيميل</dt><dd class="ltr" id="aMail"></dd><dt>التحقق</dt><dd>${user.emailVerified ? '<span class="st paid">الإيميل مؤكد</span>' : '<span class="st pending">غير مؤكد</span>'}</dd><dt>عضو من</dt><dd>${fdate(PROFILE && PROFILE.joined)}</dd></dl>
+  a.innerHTML = `<div class="panel"><h3>معلوماتك</h3><dl class="kv"><dt>PG ID</dt><dd class="num ltr">${fmtPid(PROFILE && PROFILE.pid)}</dd><dt>PG COIN</dt><dd class="num ltr">${coins(PROFILE && PROFILE.coins)}</dd><dt>اسم المستخدم</dt><dd class="ltr" id="aUser"></dd><dt>الاسم</dt><dd id="aName"></dd><dt>الإيميل</dt><dd class="ltr" id="aMail"></dd><dt>التحقق</dt><dd>${user.emailVerified ? '<span class="st paid">الإيميل مؤكد</span>' : '<span class="st pending">غير مؤكد</span>'}</dd><dt>عضو من</dt><dd>${fdate(PROFILE && PROFILE.joined)}</dd></dl>
     ${user.emailVerified ? "" : '<div class="row"><button class="btn mini" id="aVerify" type="button">أرسل رابط التأكيد مرة ثانية</button><button class="btn mini ghost" id="aReload" type="button">أكدت، حدّث</button></div>'}</div>
-    <div class="panel"><h3>الحساب</h3><p class="muted" style="font-size:14px">نفس الحساب يشتغل في الموقع وفي تطبيق Premium Studio.</p><div class="row"><button class="btn mini" id="aReset" type="button">تغيير كلمة السر</button><button class="btn mini danger" id="aOut" type="button">تسجيل الخروج</button></div></div>`;
+    <div class="panel"><h3>الحساب</h3><p class="muted" style="font-size:14px">نفس الحساب يشتغل في الموقع وفي تطبيق Premium Games.</p><div class="row"><button class="btn mini" id="aReset" type="button">تغيير كلمة السر</button><button class="btn mini danger" id="aOut" type="button">تسجيل الخروج</button></div></div>`;
   $("#aUser").textContent = PROFILE && PROFILE.username ? "@" + PROFILE.username : "—"; $("#aName").textContent = (PROFILE && PROFILE.name) || user.displayName || "—"; $("#aMail").textContent = user.email;
   $("#aOut").onclick = async () => { await signOut(auth); toast("سجّلت خروج"); location.hash = "#store"; };
   $("#aReset").onclick = async () => { try { await sendPasswordResetEmail(auth, user.email); toast("أرسلنا رابط تغيير كلمة السر لإيميلك"); } catch(e) { toast(authErr(e)); } };
@@ -1076,7 +1076,7 @@ function renderStudio(){
   const coBy = {}; COINORDERS.forEach(o => (coBy[o.uid] = coBy[o.uid] || []).push(o));
   if (!list.length) tb.innerHTML = `<tr><td colspan="6" class="muted" style="text-align:center;padding:24px">${Object.keys(USERS).length ? "ما فيه نتائج تطابق البحث" : "ما سجّل أحد للحين."}</td></tr>`;
   list.forEach(p => { const tr = document.createElement("tr");
-    tr.innerHTML = `<td class="pidtag">${fmtPid(p.pid)}</td><td><b></b></td><td class="ltr"></td><td><div class="row" style="gap:6px;flex-wrap:nowrap"><span class="coin" aria-hidden="true"></span><b class="num">${coins(p.coins)}</b><button class="btn mini" data-coins>تعديل</button></div><div class="row" style="gap:4px;margin-top:6px;flex-wrap:nowrap"><select data-gsel aria-label="نسخة">${GAMES.map(g => g.editions.map(e => `<option value="${g.id}__${e.id}">${esc(e.name)}</option>`).join("")).join("")}</select><button class="btn mini" data-grant>منح</button></div></td><td>${fdate(p.joined)}</td><td><div class="gl">${(coBy[p.id] || []).filter(o => o.status === "pending").map(o => `<div class="gi"><span class="num">${coins(o.coins)} PS COIN</span><span class="num muted">${money(o.price)}</span>${stPill("pending")}<button class="btn mini" data-copay="${esc(o.ref.id)}">تأكيد الدفع</button><button class="btn mini danger" data-corej="${esc(o.ref.id)}">رفض</button></div>`).join("")}${p.orders.length ? p.orders.map((o, i) => { const g = byId(o.game);
+    tr.innerHTML = `<td class="pidtag">${fmtPid(p.pid)}</td><td><b></b></td><td class="ltr"></td><td><div class="row" style="gap:6px;flex-wrap:nowrap"><span class="coin" aria-hidden="true"></span><b class="num">${coins(p.coins)}</b><button class="btn mini" data-coins>تعديل</button></div><div class="row" style="gap:4px;margin-top:6px;flex-wrap:nowrap"><select data-gsel aria-label="نسخة">${GAMES.map(g => g.editions.map(e => `<option value="${g.id}__${e.id}">${esc(e.name)}</option>`).join("")).join("")}</select><button class="btn mini" data-grant>منح</button></div></td><td>${fdate(p.joined)}</td><td><div class="gl">${(coBy[p.id] || []).filter(o => o.status === "pending").map(o => `<div class="gi"><span class="num">${coins(o.coins)} PG COIN</span><span class="num muted">${money(o.price)}</span>${stPill("pending")}<button class="btn mini" data-copay="${esc(o.ref.id)}">تأكيد الدفع</button><button class="btn mini danger" data-corej="${esc(o.ref.id)}">رفض</button></div>`).join("")}${p.orders.length ? p.orders.map((o, i) => { const g = byId(o.game);
       return `<div class="gi"><span>${esc(g ? (g.en || g.title) : o.game)} · ${esc(g ? edName(g, o.edition) : o.edition)}</span><span class="num muted">${money(o.price || 0)}</span>${o.code ? `<span class="tag ltr">${esc(o.code)}</span>` : ""}${stPill(o.status)}${o.status === "pending" ? `<button class="btn mini" data-pay="${i}">تأكيد الدفع</button><button class="btn mini" data-gift="${i}">منح مجاني</button><button class="btn mini danger" data-rej="${i}">رفض</button>` : ""}${(() => { const r = ALLREFUNDS[p.id + "/" + o.ref.id]; return r && r.status === "pending" ? `<span class="st pending">يطلب استرجاع · لعب ${r.minutes} د</span><button class="btn mini" data-rfok="${i}">وافق وارجع ${money(r.price)}</button><button class="btn mini danger" data-rfno="${i}">ارفض</button>` : ""; })()}</div>`; }).join("") : '<span class="muted">ما عنده ألعاب</span>'}</div></td>`;
     tr.children[1].firstChild.textContent = p.name || "—"; if (p.username) { const sm = document.createElement("div"); sm.className = "muted ltr"; sm.style.fontSize = "12px"; sm.textContent = "@" + p.username; tr.children[1].appendChild(sm); } tr.children[2].textContent = p.email || "—";
     tr.querySelector("[data-coins]").onclick = () => coinAdjust(p);
@@ -1084,7 +1084,7 @@ function renderStudio(){
       try { await setDoc(doc(fs, "users", p.id, "library", v), {game, edition, price:0, status:"granted", at:serverTimestamp()}); toast(`انمنحت ${edName(byId(game), edition)} لـ ${p.name || "اللاعب"} ✓`); }
       catch(e) { toast("ما انمنحت: " + (e.code || e.message)); } b.disabled = false; };
     tr.querySelectorAll("[data-copay]").forEach(b => b.onclick = async () => { const o = (coBy[p.id] || []).find(x => x.ref.id === b.dataset.copay); if (!o) return; b.disabled = true;
-      try { const bt = writeBatch(fs); bt.update(o.ref, {status:"paid", paidAt:serverTimestamp()}); bt.update(doc(fs, "users", p.id), {coins:increment(o.coins)}); await bt.commit(); toast(`انضاف ${coins(o.coins)} PS COIN لـ ${p.name || "اللاعب"} ✓`); }
+      try { const bt = writeBatch(fs); bt.update(o.ref, {status:"paid", paidAt:serverTimestamp()}); bt.update(doc(fs, "users", p.id), {coins:increment(o.coins)}); await bt.commit(); toast(`انضاف ${coins(o.coins)} PG COIN لـ ${p.name || "اللاعب"} ✓`); }
       catch(e) { b.disabled = false; toast("ما تحدّث الطلب: " + e.code); } });
     tr.querySelectorAll("[data-corej]").forEach(b => b.onclick = () => confirmModal("رفض طلب العملات؟", "ينحذف الطلب وما تنضاف عملات.", "رفض", async () => { const o = (coBy[p.id] || []).find(x => x.ref.id === b.dataset.corej); try { await deleteDoc(o.ref); toast("انرفض الطلب"); } catch(e) { toast("ما انحذف: " + e.code); } }));
     const setSt = async (b, i, status, msg) => { b.disabled = true; try { await updateDoc(p.orders[i].ref, {status, paidAt:serverTimestamp()}); toast(msg); } catch(e) { b.disabled = false; toast("ما تحدّث الطلب: " + e.code); } };
@@ -1100,29 +1100,29 @@ function renderStudio(){
 ["#q", "#fGame", "#fSt"].forEach(s => $(s).addEventListener("input", renderStudio));
 
 function coinAdjust(p){
-  openModal(`<div class="eyebrow">PS COIN</div><h1 class="mbox-t">عملات ${esc(p.name || "")}</h1><p class="mbox-t">الرصيد الحالي: <b class="num">${coins(p.coins)}</b> · PS ID <span class="num">${fmtPid(p.pid)}</span></p>
-    <label class="fld">كم PS COIN تضيف؟ (بالسالب للخصم، مثل -0.0001)<input id="caN" type="number" step="0.0001" dir="ltr" value="0.0001"></label><div class="err" id="caErr"></div>
+  openModal(`<div class="eyebrow">PG COIN</div><h1 class="mbox-t">عملات ${esc(p.name || "")}</h1><p class="mbox-t">الرصيد الحالي: <b class="num">${coins(p.coins)}</b> · PG ID <span class="num">${fmtPid(p.pid)}</span></p>
+    <label class="fld">كم PG COIN تضيف؟ (بالسالب للخصم، مثل -0.0001)<input id="caN" type="number" step="0.0001" dir="ltr" value="0.0001"></label><div class="err" id="caErr"></div>
     <div class="row"><button class="btn buy" id="caOk" type="button">تطبيق</button><button class="btn ghost" data-close type="button">إلغاء</button></div>`);
   $("#caOk").onclick = async () => { const n = Math.round(+$("#caN").value * COIN_UNIT);
     if (!n) { $("#caErr").textContent = "اكتب رقم غير صفر"; return; }
     if ((p.coins || 0) + n < 0) { $("#caErr").textContent = "الرصيد ما يصير أقل من صفر"; return; }
     $("#caOk").disabled = true;
-    try { await updateDoc(doc(fs, "users", p.id), {coins:increment(n)}); closeModal(); toast(n > 0 ? `انضاف ${coins(n)} PS COIN ✓` : `انخصم ${coins(-n)} PS COIN`); }
+    try { await updateDoc(doc(fs, "users", p.id), {coins:increment(n)}); closeModal(); toast(n > 0 ? `انضاف ${coins(n)} PG COIN ✓` : `انخصم ${coins(-n)} PG COIN`); }
     catch(e) { $("#caOk").disabled = false; $("#caErr").textContent = "ما تحدّث الرصيد: " + e.code; } };
 }
 
-/* ---------------- PS COIN wallet ---------------- */
+/* ---------------- PG COIN wallet ---------------- */
 function renderCoins(){
   const w = $("#wallet"), pk = $("#packs"), ol = $("#coinOrders");
   if (!user) { w.innerHTML = '<div class="empty" style="flex:1"><b style="color:var(--text)">سجّل دخولك عشان تشوف رصيدك</b><button class="btn buy" type="button" data-login>تسجيل الدخول</button></div>'; pk.innerHTML = ""; ol.innerHTML = ""; return; }
-  w.innerHTML = `<span class="coin big" aria-hidden="true"></span><div><div class="lbl">PS COIN</div><div class="bal">${coins(PROFILE && PROFILE.coins)}</div></div><div class="muted" style="margin-inline-start:auto;font-size:14px;max-width:40ch">عملات بريميوم ستوديو. العملة الوحدة بـ $100,000. كل حساب جديد ياخذ ${coins(SIGNUP_BONUS)} PS COIN هدية.</div>`;
+  w.innerHTML = `<span class="coin big" aria-hidden="true"></span><div><div class="lbl">PG COIN</div><div class="bal">${coins(PROFILE && PROFILE.coins)}</div></div><div class="muted" style="margin-inline-start:auto;font-size:14px;max-width:40ch">عملات بريميوم جيمز. العملة الوحدة بـ $100,000. كل حساب جديد ياخذ ${coins(SIGNUP_BONUS)} PG COIN هدية.</div>`;
   pk.innerHTML = PACKS.map(x => `<div class="pack"><div class="amt"><span class="coin" aria-hidden="true"></span>${coins(x.coins)}</div><div class="price" style="font-size:18px">${money(x.price)}</div><button class="btn buy" type="button" data-pack="${x.id}">شراء</button></div>`).join("");
   pk.querySelectorAll("[data-pack]").forEach(b => b.onclick = () => buyPack(PACKS.find(x => x.id === b.dataset.pack)));
   const list = MYCO.slice().sort((a, b) => tsMs(b.at) - tsMs(a.at));
-  ol.innerHTML = list.length ? list.map(o => `<div class="li" style="grid-template-columns:minmax(0,1fr) auto"><div class="info"><b class="num"><span class="coin" style="display:inline-block;vertical-align:-3px;margin-inline-end:6px"></span>${coins(o.coins)} PS COIN</b><span class="muted" style="font-size:12px">${fdate(o.at)} · <span class="num">${money(o.price)}</span></span></div><div>${stPill(o.status)}</div></div>`).join("") : '<div class="empty">ما عندك طلبات عملات.</div>';
+  ol.innerHTML = list.length ? list.map(o => `<div class="li" style="grid-template-columns:minmax(0,1fr) auto"><div class="info"><b class="num"><span class="coin" style="display:inline-block;vertical-align:-3px;margin-inline-end:6px"></span>${coins(o.coins)} PG COIN</b><span class="muted" style="font-size:12px">${fdate(o.at)} · <span class="num">${money(o.price)}</span></span></div><div>${stPill(o.status)}</div></div>`).join("") : '<div class="empty">ما عندك طلبات عملات.</div>';
 }
 function buyPack(x){
-  openModal(`<div class="eyebrow">PS COIN</div><h1 class="mbox-t">${coins(x.coins)} PS COIN</h1><div class="row" style="justify-content:space-between"><span class="muted">باقة عملات</span><span class="price">${money(x.price)}</span></div>
+  openModal(`<div class="eyebrow">PG COIN</div><h1 class="mbox-t">${coins(x.coins)} PG COIN</h1><div class="row" style="justify-content:space-between"><span class="muted">باقة عملات</span><span class="price">${money(x.price)}</span></div>
     <p class="mbox-t">الدفع الإلكتروني ما تفعّل للحين. لما تأكد الطلب يوصل للاستوديو بحالة «بانتظار الدفع»، وتنضاف العملات لرصيدك أول ما يتأكد الدفع.</p><div class="err" id="pkErr"></div>
     <div class="row"><button class="btn buy" id="pkOk" type="button">تأكيد الطلب</button><button class="btn ghost" data-close type="button">إلغاء</button></div>`);
   $("#pkOk").onclick = async () => { $("#pkOk").disabled = true;
@@ -1198,6 +1198,10 @@ function confirmModal(title, text, okLabel, fn){
   $("#cOk").onclick = () => { closeModal(); fn(); };
 }
 document.addEventListener("click", e => { if (e.target.closest("[data-login]")) showAuth("login"); });
+document.addEventListener("click", async e => { const b = e.target.closest("[data-remote]"); if (!b || !user) return;
+  b.disabled = true;
+  try { await setDoc(doc(fs, "users", user.uid, "meta", "remote"), {install:b.dataset.remote, at:serverTimestamp()}); toast("✓ انرسل لكمبيوترك. يبدأ التثبيت أول ما يكون التطبيق شغّال"); }
+  catch(err) { toast("ما قدرنا نرسله، جرّب مرة ثانية"); b.disabled = false; } });
 $("#signIn").onclick = () => showAuth("login");
 
 /* ---------------- routing ---------------- */
@@ -1219,8 +1223,15 @@ function guestNote(){
   if (!n) { n = document.createElement("div"); n.className = "guestnote"; n.innerHTML = '<span>أنت تتصفح كضيف. تقدر تتفرج بس، وللشراء والتثبيت لازم تسجّل دخولك.</span><button class="btn buy mini" type="button" data-login>تسجيل الدخول</button>'; v.prepend(n); }
 }
 let BP = null;
+function achOf(gid){ const all = (MANIFEST.games[gid] || {}).achievements || {};
+  const list = Object.entries(all).map(([id, d]) => ({id, name:d.name, desc:d.desc, got:!!ACH[gid + "__" + id]})).sort((a, b) => b.got - a.got);
+  return {all:list.length, got:list.filter(a => a.got).length, list}; }
 function bigPicture(){ if (!BP) BP = makeBP({$, esc, GAMES, ownedEds, instOf, ED_TAG, PS, toast, cover, money, ent, keyTitle, pct, progText,
+  byId, lastPlayed, SOON, soonArt, notes, pendingUpdates, achOf, sendMsg,
+  call:fid => rtc().start("voice", [fid], {[fid]:(FRIENDS[fid] || {}).username}).catch(() => {}),
+  padConnected:async () => { try { if (PS && PS.getSettings && (await PS.getSettings()).consolePad && document.hasFocus()) { location.hash = "#bigpicture"; } } catch(e) {} },
   state:() => ({user, PROFILE, FRIENDS, PLAY, RUNNING, PROGRESS, online:isOnline, playing:playingNow})}); return BP; }
+if (PS) setTimeout(() => bigPicture(), 0);
 function render(){
   try { publishProfile(); } catch(e) {}
   try { renderBell(); } catch(e) {}
@@ -1256,7 +1267,7 @@ const AUTH_ERR = {
   "auth/unauthorized-domain":"هذا الموقع مو مضاف في Firebase (Authorized domains)."
 };
 const authErr = e => AUTH_ERR[e && e.code] || ("صار خطأ" + (e && e.code ? " (" + e.code + ")" : ""));
-const brandHTML = '<div class="brand"><span class="mark"><i>P</i><i>S</i></span><b>PREMIUM <span>STUDIO</span></b></div>';
+const brandHTML = '<div class="brand"><span class="mark"><i>P</i><i>G</i></span><b>PREMIUM <span>GAMES</span></b></div>';
 function showAuth(mode, note){
   closeModal();
   const login = mode === "login";
@@ -1266,7 +1277,7 @@ function showAuth(mode, note){
       ${login ? "" : '<label class="fld">اسم المستخدم (ما يتكرر، إنجليزي وأرقام و _ و .)<input id="aU" dir="ltr" autocomplete="username" maxlength="20" required placeholder="xox_gamer"></label><div class="muted" id="aUmsg" style="font-size:12px;min-height:1em"></div><label class="fld">اسم اللاعب<input id="aN" autocomplete="nickname" maxlength="32" required></label>'}
       <label class="fld">الإيميل<input id="aE" type="email" dir="ltr" autocomplete="email" maxlength="120" required placeholder="name@example.com"></label>
       <label class="fld">كلمة السر<input id="aP" type="password" dir="ltr" autocomplete="${login ? "current-password" : "new-password"}" minlength="6" required></label>
-      ${login ? '<button class="link" type="button" id="aForgot">نسيت كلمة السر؟</button>' : '<label class="fld">أعد كلمة السر<input id="aP2" type="password" dir="ltr" autocomplete="new-password" required></label><label class="chk"><input type="checkbox" id="aAgree">أوافق إن بريميوم ستوديو يحفظ اسمي وإيميلي ومشترياتي</label>'}
+      ${login ? '<button class="link" type="button" id="aForgot">نسيت كلمة السر؟</button>' : '<label class="fld">أعد كلمة السر<input id="aP2" type="password" dir="ltr" autocomplete="new-password" required></label><label class="chk"><input type="checkbox" id="aAgree">أوافق إن بريميوم جيمز يحفظ اسمي وإيميلي ومشترياتي</label>'}
       <div class="err" id="aErr"></div>
       <button class="btn buy" id="aGo" type="submit">${login ? "دخول" : "إنشاء الحساب"}</button>
     </form><div class="or">أو</div><button class="btn ghost" id="aGuest" type="button">تصفّح كضيف</button>`;
@@ -1353,7 +1364,7 @@ function sendUserToApp(){ if (!PS || !PS.setUser || !user) return;
 function setAdmin(){ isAdmin = !!(user && user.email && user.email.toLowerCase() === ADMIN_EMAIL && user.emailVerified); $("#tabStudio").hidden = !isAdmin; }
 function applyChrome(){
   $("#me").hidden = !user; $("#guestBar").hidden = !!user || !authReady;
-  if (user) { const n = (PROFILE && PROFILE.name) || user.displayName || user.email; $("#meName").textContent = n; $("#meAv").textContent = (n || "?").trim().charAt(0).toUpperCase(); $("#mePid").textContent = PROFILE && PROFILE.username ? "@" + PROFILE.username : (PROFILE && PROFILE.pid ? "PS ID " + PROFILE.pid : ""); }
+  if (user) { const n = (PROFILE && PROFILE.name) || user.displayName || user.email; $("#meName").textContent = n; $("#meAv").textContent = (n || "?").trim().charAt(0).toUpperCase(); $("#mePid").textContent = PROFILE && PROFILE.username ? "@" + PROFILE.username : (PROFILE && PROFILE.pid ? "PG ID " + PROFILE.pid : ""); }
   $("#coinChip").hidden = !user; if (user) $("#coinBal").textContent = coins(PROFILE && PROFILE.coins);
 }
 onAuthStateChanged(auth, async u => {
@@ -1380,6 +1391,13 @@ onAuthStateChanged(auth, async u => {
     unsubs.push(onSnapshot(doc(fs, "users", u.uid, "meta", "security"), s => { SECURITY = s.exists() ? s.data() : {}; checkSignOutAll(); }, () => {}));
     if (PS && PS.getSettings) PS.getSettings().then(x => { PARENTAL = x && x.parental; document.body.classList.toggle("kidmode", !!(PARENTAL && PARENTAL.on)); }).catch(() => {});
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "wishlist"), s => { WISH = {}; s.forEach(d => WISH[d.id] = d.data()); render(); }, () => {}));
+    // install from your phone: the store on another device asks, this PC's app installs it (like Steam's remote downloads)
+    if (PS && PS.install) unsubs.push(onSnapshot(doc(fs, "users", u.uid, "meta", "remote"), s => { if (!s.exists()) return; const r = s.data(), at = tsMs(r.at);
+      let done = 0; try { done = +localStorage.getItem("pg-remote-done") || 0; } catch(e) {}
+      if (!at || at <= done || Date.now() - at > 7 * 864e5) return; try { localStorage.setItem("pg-remote-done", String(at)); } catch(e) {}
+      const [gid, ed] = String(r.install || "").split("--"), g = byId(gid); if (!g || !ownedEds(gid).includes(ed)) return;
+      const [k, inst] = instOf(gid, ed); if (inst || PROGRESS[k]) return;
+      PS.install(k, {edition:ed}).then(() => {}).catch(e => toast(String(e && e.message || e))); toast(`📲 بدأ تثبيت ${edName(g, ed)} — طلبته من جهاز ثاني`); }, () => {}));
     unsubs.push(onSnapshot(doc(fs, "users", u.uid, "meta", "prefs"), s => { PREFS = s.exists() ? {fav:[], hidden:[], ...s.data()} : {fav:[], hidden:[]}; render(); }, () => {}));
     beat();
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "refunds"), s => { REFUNDS = {}; s.forEach(d => REFUNDS[d.id] = d.data()); render(); }, () => {}));

@@ -1,9 +1,9 @@
 {
   "name": "premium-studio",
   "productName": "Premium Studio",
-  "version": "0.0.26",
-  "description": "Premium Studio — game library and launcher",
-  "author": "Premium Studio",
+  "version": "0.0.27",
+  "description": "Premium Games — game library and launcher",
+  "author": "Premium Games",
   "license": "UNLICENSED",
   "main": "main.js",
   "scripts": {
@@ -22,22 +22,24 @@
   "build": {
     "appId": "com.premiumstudio.client",
     "productName": "Premium Studio",
-    "copyright": "© 2026 Premium Studio",
+    "copyright": "© 2026 Premium Games",
     "directories": { "buildResources": "build", "output": "dist" },
     "files": ["main.js", "preload.js", "game-preload.js", "recorder-preload.js",
       "recorder.html", "offline.html", "build/icon.png", "build/icon.ico"],
-    "protocols": [{ "name": "Premium Studio", "schemes": ["premiumstudio"] }],
+    "protocols": [{ "name": "Premium Games", "schemes": ["premiumstudio"] }],
     "win": {
       "target": [{ "target": "nsis", "arch": ["x64"] }],
       "icon": "build/icon.ico",
-      "artifactName": "PremiumStudioSetup.exe"
+      "artifactName": "PremiumStudioSetup.exe",
+      "legalTrademarks": "Premium Games"
     },
     "nsis": {
       "oneClick": true,
       "perMachine": false,
       "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
-      "shortcutName": "Premium Studio",
+      "shortcutName": "Premium Games",
+      "uninstallDisplayName": "Premium Games",
       "runAfterFinish": true,
       "deleteAppDataOnUninstall": false
     },

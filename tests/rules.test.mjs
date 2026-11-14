@@ -78,6 +78,10 @@ await ok('others read the world', assertSucceeds(getDoc(doc(C, 'workshop/W1/part
 await ok('register a device', assertSucceeds(setDoc(doc(A, 'users/A/devices/d1'), { name: 'Windows', first: serverTimestamp(), last: serverTimestamp() })));
 await ok('sign out everywhere', assertSucceeds(setDoc(doc(A, 'users/A/meta/security'), { signOutBefore: serverTimestamp() })));
 await ok('nobody else sees your devices', assertFails(getDocs(collection(B, 'users/A/devices'))));
+// install on your PC from your phone
+await ok('ask your PC to install a game', assertSucceeds(setDoc(doc(A, 'users/A/meta/remote'), { install: 'blockfall--gold', at: serverTimestamp() })));
+await ok('the request must name a real edition', assertFails(setDoc(doc(A, 'users/A/meta/remote'), { install: 'blockfall--free', at: serverTimestamp() })));
+await ok('nobody can ask your PC to install', assertFails(setDoc(doc(B, 'users/A/meta/remote'), { install: 'blockfall--gold', at: serverTimestamp() })));
 // existing features still work
 await ok('player still adds a demo', assertSucceeds(setDoc(doc(B, 'users/B/library/last-recording__demo'), { game: 'last-recording', edition: 'demo', price: 0, status: 'free', at: serverTimestamp() })));
 await ok('player still renames', assertSucceeds(updateDoc(doc(B, 'users/B'), { name: 'Bobby' })));

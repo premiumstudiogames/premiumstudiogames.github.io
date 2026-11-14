@@ -1,5 +1,5 @@
 'use strict';
-// Premium Studio desktop client: hosts the store, installs / launches / removes games.
+// Premium Games desktop client: hosts the store, installs / launches / removes games.
 const { app, BrowserWindow, ipcMain, shell, protocol, net, Menu, Tray, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -52,7 +52,7 @@ function installedNow() {
   return out;
 }
 
-/* ---------------- the signed-in Premium Studio account (games play under it) ---------------- */
+/* ---------------- the signed-in Premium Games account (games play under it) ---------------- */
 const USER_FILE = path.join(app.getPath('userData'), 'ps-user.json');
 let currentUser = (() => { try { return JSON.parse(fs.readFileSync(USER_FILE, 'utf8')); } catch (e) { return null; } })();
 async function setUser(u) {
@@ -73,7 +73,7 @@ function closeRunningGames() {
   return Promise.all([...gameWins.keys()].map(closeWebGame));
 }
 const playerName = () => (currentUser && (currentUser.username || currentUser.name)) || '';
-// BLOCKFALL's launcher: the Premium Studio account it should play under
+// BLOCKFALL's launcher: the Premium Games account it should play under
 function writeBfAccount() {
   try {
     const f = path.join(BF_DATA, 'premium_account.json');
@@ -106,7 +106,7 @@ function createMain(hash, query) {
   const { screen } = require('electron'), wa = screen.getPrimaryDisplay().workAreaSize;
   mainWin = new BrowserWindow({
     width: ws && ws.w || Math.min(1600, wa.width), height: ws && ws.h || Math.min(980, wa.height), x: ws ? ws.x : undefined, y: ws ? ws.y : undefined, minWidth: 900, minHeight: 600,
-    backgroundColor: '#0a0d14', title: 'Premium Studio', icon: ICON, autoHideMenuBar: true, show: false,
+    backgroundColor: '#0a0d14', title: 'Premium Games', icon: ICON, autoHideMenuBar: true, show: false,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false }
   });
   mainWin.once('ready-to-show', () => { if (!ws ? wa.width <= 1920 : ws.max) mainWin.maximize(); mainWin.show(); });
@@ -126,6 +126,26 @@ function createMain(hash, query) {
   mainWin.on('closed', () => { mainWin = null; });
   mainWin.webContents.on('did-finish-load', () => mainWin && mainWin.webContents.send('ps:running', runningList()));
   return mainWin;
+}
+/* ---------------- the app used to be called "Premium Studio": carry everything over to "Premium Games" ----------------
+   Same install, account and games; only the name changes. The old desktop / Start-menu icons are renamed (never two icons),
+   and the screenshot, clip and game-shortcut folders keep their files. */
+function renameLegacy() {
+  if (process.platform !== 'win32') return;
+  const H = app.getPath('home'), AD = app.getPath('appData');
+  const desk = [app.getPath('desktop'), path.join(process.env.PUBLIC || 'C:\\Users\\Public', 'Desktop')];
+  const menu = path.join(AD, 'Microsoft', 'Windows', 'Start Menu', 'Programs');
+  const pairs = desk.map(d => [path.join(d, 'Premium Studio.lnk'), path.join(d, 'Premium Games.lnk')]).concat([[path.join(menu, 'Premium Studio.lnk'), path.join(menu, 'Premium Games.lnk')]]);
+  for (const [o, n] of pairs) { try { if (!fs.existsSync(o)) continue;
+      if (fs.existsSync(n)) fs.rmSync(o, { force: true });
+      else { const d = shell.readShortcutLink(o); shell.writeShortcutLink(n, 'create', Object.assign({}, d, { description: 'Premium Games' })); fs.rmSync(o, { force: true }); } } catch (e) {} }
+  for (const [o, n] of [[path.join(app.getPath('pictures'), 'Premium Studio'), path.join(app.getPath('pictures'), 'Premium Games')],
+                        [path.join(app.getPath('videos'), 'Premium Studio'), path.join(app.getPath('videos'), 'Premium Games')],
+                        [path.join(menu, 'Premium Studio'), path.join(menu, 'Premium Games')]]) {
+    try { if (!fs.existsSync(o)) continue; if (!fs.existsSync(n)) { fs.renameSync(o, n); continue; }
+      for (const f of fs.readdirSync(o)) { const a = path.join(o, f), b = path.join(n, f); if (!fs.existsSync(b)) fs.renameSync(a, b); }
+      fs.rmSync(o, { recursive: true, force: true }); } catch (e) {} }
+  void H;
 }
 /* ---------------- running games (like Steam: the app knows what you're playing) ---------------- */
 const running = new Map();   // install key -> {since, game, name}
@@ -283,7 +303,7 @@ async function stopGame(key) {
 async function quitApp() {
   if (running.size) {
     const { dialog } = require('electron');
-    const r = await dialog.showMessageBox({ type: 'question', title: 'Premium Studio', icon: ICON, message: 'فيه لعبة شغالة', detail: [...running.values()].map(x => x.name).join('، ') + '\nتنقفل اللعبة (بعد ما تحفظ) ويطلع Premium Studio.', buttons: ['أقفلها واطلع', 'إلغاء'], defaultId: 0, cancelId: 1 });
+    const r = await dialog.showMessageBox({ type: 'question', title: 'Premium Games', icon: ICON, message: 'فيه لعبة شغالة', detail: [...running.values()].map(x => x.name).join('، ') + '\nتنقفل اللعبة (بعد ما تحفظ) ويطلع Premium Games.', buttons: ['أقفلها واطلع', 'إلغاء'], defaultId: 0, cancelId: 1 });
     if (r.response !== 0) return;
     await Promise.all([...running.keys()].map(k => stopGame(k)));
   }
@@ -303,9 +323,9 @@ function updateTray() {
   ];
   if (running.size) for (const [k, r] of running) items.push({ label: `■ إغلاق ${r.name}`, click: () => stopGame(k) });
   else for (const [k, v] of games.slice(0, 8)) items.push({ label: v.name, click: () => playFromOutside(k) });
-  items.push({ type: 'separator' }, { label: 'خروج من Premium Studio', click: () => quitApp() });
+  items.push({ type: 'separator' }, { label: 'خروج من Premium Games', click: () => quitApp() });
   tray.setContextMenu(Menu.buildFromTemplate(items));
-  tray.setToolTip(running.size ? 'Premium Studio — ' + [...running.values()].map(r => r.name).join('، ') : 'Premium Studio');
+  tray.setToolTip(running.size ? 'Premium Games — ' + [...running.values()].map(r => r.name).join('، ') : 'Premium Games');
 }
 function makeTray() {
   try {
@@ -325,7 +345,7 @@ function openExternal(url) { if (/^https?:\/\//.test(url)) shell.openExternal(ur
 
 // Before starting a game that updates from its own manifest, pull the newest version (like the game's standalone app does).
 /* ---------------- screenshots (F12) and the in-game overlay (Shift+Tab), like Steam ---------------- */
-const SHOTS = () => path.join(app.getPath('pictures'), 'Premium Studio');
+const SHOTS = () => path.join(app.getPath('pictures'), 'Premium Games');
 const gameFolder = key => { const g = readReg()[key] || {}; return String(g.base || g.name || key).replace(/[\\/:*?"<>|]/g, '').trim() || 'Game'; };
 async function screenshot(key) {
   try {
@@ -357,9 +377,9 @@ ipcMain.handle('ps:screenshots', guard(async gid => {
 }));
 ipcMain.handle('ps:openShots', guard(async file => { if (typeof file === 'string' && path.resolve(file).startsWith(SHOTS())) shell.showItemInFolder(file); else { await fsp.mkdir(SHOTS(), { recursive: true }); shell.openPath(SHOTS()); } return true; }));
 
-// game recording (F9 starts, F9 again saves), like Steam's — saved to Videos\Premium Studio\<game>
+// game recording (F9 starts, F9 again saves), like Steam's — saved to Videos\Premium Games\<game>
 let recWin = null, recKey = '', recT = null;
-const CLIPS = () => path.join(app.getPath('videos'), 'Premium Studio');
+const CLIPS = () => path.join(app.getPath('videos'), 'Premium Games');
 async function toggleRecord(key) {
   if (recKey) { if (recWin && !recWin.isDestroyed()) recWin.webContents.send('rec:stop'); return; }
   try {
@@ -425,7 +445,7 @@ function ovHTML(d) {
   .ach{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
   .a{padding:12px;background:#1a2232;border:1px solid #2c3446;opacity:.35}.a.got{opacity:1;border-color:#6b5512}.a b{display:block;font-size:14px}.a small{font-size:12px;color:#9aa4b8}
   footer{padding:14px;text-align:center;color:#8c96aa;font-size:14px}
-  </style></head><body><header><span class="ps"><i>P</i><i>S</i></span><h1>${esc(d.name)}</h1><span class="t">تلعب من ${d.mins} دقيقة · ${esc(d.clock)}</span></header>
+  </style></head><body><header><span class="ps"><i>P</i><i>G</i></span><h1>${esc(d.name)}</h1><span class="t">تلعب من ${d.mins} دقيقة · ${esc(d.clock)}</span></header>
   <main><div class="card"><h2>اختصارات</h2><a href="#shot">📸 لقطة شاشة (F12)</a><a href="#rec">🎬 سجّل مقطع (F9)</a><a href="#shots">🖼 لقطاتي</a><a href="#friends">👥 الأصدقاء والدردشة</a><a href="#back">↩ ارجع للعبة</a><a class="red" href="#close">■ إغلاق اللعبة</a></div>
   <div class="card"><h2>الإنجازات ${all.length ? `(${got.size}/${all.length})` : ''}</h2>${all.length ? `<div class="ach">${all.map(([id, v]) => `<div class="a${got.has(id) ? ' got' : ''}"><b>🏆 ${esc(v.name)}</b><small>${esc(v.desc || '')}</small></div>`).join('')}</div>` : '<p class="t">هذي اللعبة ما فيها إنجازات للحين.</p>'}</div></main>
   <footer>Shift+Tab أو Esc يرجعك للعبة</footer></body></html>`;
@@ -487,7 +507,7 @@ function splashHTML(name, cover) {
   .ps{position:absolute;bottom:8px;left:12px;font:700 11px sans-serif;color:#5c667a}.ps b{color:#ffcc1f}
   </style></head><body><a class="x" href="#close">✕</a><div class="art"></div>
   <div class="side"><small>جاري تشغيل اللعبة</small><h1>${esc(name)}</h1><div id="st">يتحقق من التحديثات…</div><div class="bar"><i></i></div>
-  <a class="open" href="#open">افتح Premium Studio</a></div></body></html>`;
+  <a class="open" href="#open">افتح Premium Games</a></div></body></html>`;
 }
 function showSplash(key) {
   closeSplash();
@@ -587,7 +607,7 @@ function migrateReg() {
     if (changed) writeReg(reg).catch(() => {});
   } catch (e) {}
 }
-/* BLOCKFALL's launcher program: Premium Studio brings its app files up to date before starting it
+/* BLOCKFALL's launcher program: Premium Games brings its app files up to date before starting it
    (the same files the launcher would fetch for itself), so an older launcher never runs. */
 const vnum = v => String(v || '0').split('.').map(n => +n || 0);
 const vgt = (a, b) => { const x = vnum(a), y = vnum(b); for (let i = 0; i < Math.max(x.length, y.length); i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; };
@@ -605,7 +625,7 @@ async function bfAppUpdate(m) {
     try { const pj = path.join(dir, 'package.json'), j = JSON.parse(fs.readFileSync(pj, 'utf8')); j.version = A.version; fs.writeFileSync(pj, JSON.stringify(j, null, 2)); } catch (e) {}
   } catch (e) { /* offline: the launcher updates itself next time */ }
 }
-// BLOCKFALL's own "BLOCKFALL 3001" icon (from installs made before Premium Studio managed it) is replaced by ours, one per edition
+// BLOCKFALL's own "BLOCKFALL 3001" icon (from installs made before Premium Games managed it) is replaced by ours, one per edition
 function fixBfShortcuts() {
   const own = Object.entries(installedNow()).filter(([, v]) => v.type === 'bf-launcher');
   try { fs.rmSync(path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'BLOCKFALL 3001.lnk'), { force: true }); } catch (e) {}
@@ -614,7 +634,7 @@ function fixBfShortcuts() {
 }
 
 // BLOCKFALL's launcher reads its edition from %APPDATA%\.terravolt\license.json and keeps a local unlock while its
-// fingerprint is listed in the launcher's shop.json. Premium Studio owners of Standard or Gold open it already unlocked.
+// fingerprint is listed in the launcher's shop.json. Premium Games owners of Standard or Gold open it already unlocked.
 function writeBfLicense(edition, unlock) {
   try {
     const file = path.join(BF_DATA, 'license.json');
@@ -798,7 +818,7 @@ function shortcutPaths(g) {
   const safe = String(g.name).replace(/[\\/:*?"<>|]/g, '').trim() || 'Game';
   return [
     path.join(app.getPath('desktop'), safe + '.lnk'),
-    path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Premium Studio', safe + '.lnk')
+    path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Premium Games', safe + '.lnk')
   ];
 }
 function makeShortcuts(id, g) {
@@ -808,7 +828,7 @@ function makeShortcuts(id, g) {
       fs.mkdirSync(path.dirname(p), { recursive: true });
       shell.writeShortcutLink(p, 'create', {
         target: process.execPath, args: `--launch=${id}`, cwd: path.dirname(process.execPath),
-        icon: path.join(gameDir(id, g), g.icon || 'icon.ico'), iconIndex: 0, description: g.name + ' — Premium Studio'
+        icon: path.join(gameDir(id, g), g.icon || 'icon.ico'), iconIndex: 0, description: g.name + ' — Premium Games'
       });
     } catch (e) {}
   }
@@ -829,7 +849,7 @@ function registerGameProtocol() {
       let html = fs.readFileSync(file, 'utf8');
       // Demo owners: the game's own demo switch, applied to the entry page as it's served
       if (u.searchParams.get('demo') === '1' && g.demoPatch) html = html.split(g.demoPatch[0]).join(g.demoPatch[1]);
-      // Play under the Premium Studio account: the game's saved player name is the username, and its name box is locked
+      // Play under the Premium Games account: the game's saved player name is the username, and its name box is locked
       if (g.account) html = html.replace(/<head[^>]*>/i, m => m + accountScript(g.account));
       return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } });
     }
@@ -841,7 +861,7 @@ function accountScript(a) {
   const J = v => JSON.stringify(String(v || ''));
   return `<script>(function(){var u=window.PREMIUM_STUDIO&&window.PREMIUM_STUDIO.user;if(!u||!u.username)return;
 try{var k=${J(a.store)},o=JSON.parse(localStorage.getItem(k)||'{}');o[${J(a.nickKey || 'nick')}]=u.username;localStorage.setItem(k,JSON.stringify(o));}catch(e){}
-var f=${J(a.nickField)};if(!f)return;var lock=function(){var i=document.getElementById(f);if(i&&!i.readOnly){i.readOnly=true;i.value=u.username;i.title='Premium Studio';i.style.opacity='.75';}};
+var f=${J(a.nickField)};if(!f)return;var lock=function(){var i=document.getElementById(f);if(i&&!i.readOnly){i.readOnly=true;i.value=u.username;i.title='Premium Games';i.style.opacity='.75';}};
 new MutationObserver(lock).observe(document.documentElement,{childList:true,subtree:true});})();</script>`;
 }
 
@@ -869,7 +889,8 @@ ipcMain.handle('ps:setOwned', guard(async o => {
   if (JSON.stringify(owned) === JSON.stringify(currentUser.owned || {})) return true;
   currentUser.owned = owned; try { fs.writeFileSync(USER_FILE, JSON.stringify(currentUser)); } catch (e) {} writeBfAccount(); return true;
 }));
-ipcMain.handle('ps:getSettings', guard(async () => { const x = settings(); return { limit: x.limit || 0, parental: parentalPublic() }; }));
+const pubSettings = x => ({ limit: x.limit || 0, parental: parentalPublic(), consoleBoot: !!x.consoleBoot, consolePad: x.consolePad !== false, startup: x.startup !== false, sounds: x.sounds !== false, glyphs: x.glyphs || 'auto' });
+ipcMain.handle('ps:getSettings', guard(async () => pubSettings(settings())));
 /* ---- parental controls (on this PC): a PIN, which games are allowed, and minutes per day ---- */
 const pinHash = p => crypto.createHash('sha256').update('ps-parental:' + String(p || '')).digest('hex');
 const today = () => new Date().toISOString().slice(0, 10);
@@ -897,8 +918,26 @@ setInterval(() => {
   p.used += 1; saveParental(p);
   if (p.daily && p.used >= p.daily) { flash('⏰ خلص وقت اللعب اليوم'); for (const k of [...running.keys()]) stopGame(k); }
 }, 60000);
-ipcMain.handle('ps:setSettings', guard(async o => { const cur = settings(); if (o && typeof o === 'object') { if ('limit' in o) cur.limit = Math.max(0, Math.min(1e9, +o.limit || 0)); }
-  fs.writeFileSync(SETTINGS_FILE(), JSON.stringify(cur)); return { limit: cur.limit || 0, parental: parentalPublic() }; }));
+ipcMain.handle('ps:setSettings', guard(async o => { const cur = settings(); if (o && typeof o === 'object') { if ('limit' in o) cur.limit = Math.max(0, Math.min(1e9, +o.limit || 0));
+    for (const k of ['consoleBoot', 'consolePad', 'startup', 'sounds']) if (k in o) cur[k] = !!o[k];
+    if ('glyphs' in o && ['auto', 'xbox', 'ps'].includes(o.glyphs)) cur.glyphs = o.glyphs; }
+  fs.writeFileSync(SETTINGS_FILE(), JSON.stringify(cur)); applyStartup(cur); return pubSettings(cur); }));
+// start with Windows (like a console that's always ready); with console mode on, the PC boots straight into it
+function applyStartup(x) { if (!app.isPackaged || process.platform !== 'win32') return; x = x || settings();
+  try { app.setLoginItemSettings({ openAtLogin: x.startup !== false, args: x.consoleBoot ? ['--hidden', '--console'] : ['--hidden'] }); } catch (e) {} }
+// power menu in console mode: sleep / restart / shut down the PC, like a console
+ipcMain.handle('ps:power', guard(async what => {
+  if (process.platform !== 'win32') throw new Error('غير مدعوم');
+  const { execFile } = require('child_process');
+  if (what === 'sleep') execFile('rundll32.exe', ['powrprof.dll,SetSuspendState', '0,1,0']);
+  else if (what === 'restart' || what === 'shutdown') { if (running.size) await Promise.all([...running.keys()].map(k => stopGame(k)));
+    execFile('shutdown.exe', [what === 'restart' ? '/r' : '/s', '/t', '0']); }
+  else if (what === 'quit') setTimeout(() => quitApp(), 50);
+  else if (what === 'desktop') { if (mainWin && !mainWin.isDestroyed()) { mainWin.setFullScreen(false); mainWin.minimize(); } }
+  else throw new Error('أمر غير معروف');
+  return true; }));
+// back to the console screen when a game closes (like a console does)
+ipcMain.handle('ps:focusMain', guard(async () => { if (mainWin && !mainWin.isDestroyed()) { if (mainWin.isMinimized()) mainWin.restore(); mainWin.show(); mainWin.focus(); } return true; }));
 // game properties: check the files (download again what's wrong or missing), put the icon back on the desktop
 ipcMain.handle('ps:verify', guard(async id => { if (!validId(id) || !readReg()[id]) throw new Error('مو مثبتة'); if (running.has(id)) throw new Error('اقفل اللعبة أول'); await install(id, { force: true, edition: readReg()[id].edition }); return true; }));
 ipcMain.handle('ps:shortcut', guard(async id => { const g = readReg()[id]; if (!g) throw new Error('مو مثبتة'); makeShortcuts(id, g); return true; }));
@@ -959,6 +998,7 @@ ipcMain.on('game:achieve', (e, aid) => {
   fbCommit([{ update: { name: `${FB_DB}/users/${currentUser.uid}/achievements/${game}__${aid}`, fields: { game: { stringValue: game }, id: { stringValue: aid } } },
     currentDocument: { exists: false }, updateTransforms: [{ fieldPath: 'at', setToServerValue: 'REQUEST_TIME' }] }]);
 });
+ipcMain.on('game:guide', e => { for (const [k, w] of gameWins) if (w && !w.isDestroyed() && w.webContents === e.sender) { toggleOverlay(k); break; } });
 ipcMain.on('game:exit', e => { const w = BrowserWindow.fromWebContents(e.sender); if (w) w.close(); });
 ipcMain.on('game:nick', e => { e.returnValue = playerName(); });
 ipcMain.on('game:user', e => { e.returnValue = currentUser && currentUser.username ? { username: currentUser.username, name: currentUser.name, pid: currentUser.pid, email: currentUser.email } : null; });
@@ -986,6 +1026,8 @@ function handleArgv(argv, firstRun) {
   const link = argv.find(a => a.startsWith('premiumstudio://'));
   if (launch && validId(launch) && installedNow()[launch]) { playFromOutside(launch); return true; }
   if (link) { handleDeepLink(link); return true; }
+  const consoleBoot = argv.includes('--console') || (firstRun && settings().consoleBoot);
+  if (consoleBoot) { createMain('bigpicture'); return true; }   // console mode: straight to the big screen
   if (firstRun && argv.includes('--hidden') && !argv.includes('--show')) return true;   // started with Windows: stay in the tray
   createMain(); return true;
 }
@@ -995,12 +1037,12 @@ function handleArgv(argv, firstRun) {
    While running: checks every 30 minutes and installs as soon as no game is running or installing. */
 const PENDING = path.join(app.getPath('userData'), 'pending-start.json');
 function updaterWindow() {
-  const w = new BrowserWindow({ width: 420, height: 170, frame: false, resizable: false, alwaysOnTop: true, show: false, backgroundColor: '#11151f', title: 'Premium Studio', icon: ICON, webPreferences: { sandbox: true, contextIsolation: true } });
+  const w = new BrowserWindow({ width: 420, height: 170, frame: false, resizable: false, alwaysOnTop: true, show: false, backgroundColor: '#11151f', title: 'Premium Games', icon: ICON, webPreferences: { sandbox: true, contextIsolation: true } });
   w.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(`<!doctype html><html dir="rtl"><head><meta charset="utf-8"><style>
     *{box-sizing:border-box;margin:0}body{font-family:"Segoe UI",Tahoma,sans-serif;background:#11151f;color:#e8ecf3;height:100vh;padding:22px;border:1px solid #2c3446;-webkit-app-region:drag;user-select:none}
     .ps{display:inline-block;background:#000;border:1px solid #2c3446;border-radius:5px;padding:3px 8px;font:700 20px sans-serif;direction:ltr}.ps i{font-style:normal;color:#fff}.ps i+i{color:#ffcc1f}
     h1{font-size:17px;margin:14px 0 6px}#t{color:#9aa4b8;font-size:13px}.bar{height:5px;background:#0b0f16;margin-top:14px}.bar i{display:block;height:100%;width:0;background:#ffcc1f;transition:width .3s}
-    </style></head><body><span class="ps"><i>P</i><i>S</i></span><h1>يتحدّث Premium Studio</h1><div id="t">يتحقق من التحديثات…</div><div class="bar"><i id="b"></i></div></body></html>`));
+    </style></head><body><span class="ps"><i>P</i><i>G</i></span><h1>يتحدّث Premium Games</h1><div id="t">يتحقق من التحديثات…</div><div class="bar"><i id="b"></i></div></body></html>`));
   w.once('ready-to-show', () => { if (!w.isDestroyed()) w.show(); });
   const set = (t, pct) => { if (!w.isDestroyed()) w.webContents.executeJavaScript(`document.getElementById('t').textContent=${JSON.stringify(t)};${pct != null ? `document.getElementById('b').style.width='${pct}%'` : ''}`).catch(() => {}); };
   return { w, set };
@@ -1019,7 +1061,7 @@ async function startupUpdate(argv) {
     await Promise.race([autoUpdater.downloadUpdate(), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 10 * 60000))]);
   } catch (e) { if (ui && !ui.w.isDestroyed()) ui.w.destroy(); return false; }   // couldn't update now: open normally, try again later
   if (ui) ui.set('يثبّت التحديث ويرجع يفتح…', 100);
-  try { fs.writeFileSync(PENDING, JSON.stringify({ at: Date.now(), argv: argv.filter(a => a.startsWith('--launch=') || a.startsWith('premiumstudio://') || a === '--hidden') })); } catch (e) {}
+  try { fs.writeFileSync(PENDING, JSON.stringify({ at: Date.now(), argv: argv.filter(a => a.startsWith('--launch=') || a.startsWith('premiumstudio://') || a === '--hidden' || a === '--console') })); } catch (e) {}
   quitting = true;
   setTimeout(() => { try { autoUpdater.quitAndInstall(true, true); } catch (e) { app.relaunch(); app.exit(0); } }, 600);
   return true;
@@ -1048,6 +1090,7 @@ if (!app.requestSingleInstanceLock()) {
     Menu.setApplicationMenu(null);
     registerGameProtocol();
     migrateReg();
+    renameLegacy();
     // the store may use the microphone (voice chat) and share a game window (Remote Play); nothing else
     const { session, desktopCapturer } = require('electron');
     session.defaultSession.setPermissionRequestHandler((wc, perm, cb, d) => cb((recWin && !recWin.isDestroyed() && wc === recWin.webContents && perm === 'media') || (isTrusted(d && d.requestingUrl) && ['media', 'notifications', 'fullscreen', 'clipboard-sanitized-write'].includes(perm))));
@@ -1059,13 +1102,13 @@ if (!app.requestSingleInstanceLock()) {
     });
     if (Object.values(installedNow()).some(v => v.type === 'bf-launcher')) fixBfShortcuts();   // leftover icon from older installs
     makeTray();
-    // like Steam: on start, bring Premium Studio up to date first (download, restart), then do what was asked
+    // like Steam: on start, bring Premium Games up to date first (download, restart), then do what was asked
     let argv = process.argv;
     try { const p = JSON.parse(fs.readFileSync(PENDING, 'utf8')); fs.rmSync(PENDING, { force: true }); if (Date.now() - p.at < 300000) argv = p.argv; } catch (e) {}
     if (app.isPackaged && await startupUpdate(argv)) return;
     handleArgv(argv, true);
     // start with Windows, quietly in the tray (like Steam)
-    if (app.isPackaged && process.platform === 'win32') { try { app.setLoginItemSettings({ openAtLogin: true, args: ['--hidden'] }); } catch (e) {} }
+    applyStartup();
     if (app.isPackaged) backgroundUpdates();
   });
   app.on('window-all-closed', () => { if (!tray) app.quit(); });   // otherwise keep running in the tray

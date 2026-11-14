@@ -17,3 +17,10 @@ try {
 // as the game closes, hand its saved data to the app (it goes to your account)
 const handOver = () => { try { ipcRenderer.sendSync('game:save', JSON.stringify(Object.assign({}, localStorage))); } catch (e) {} };
 window.addEventListener('beforeunload', handOver); window.addEventListener('pagehide', handOver);
+// the controller's Home / Guide button opens the overlay (like a console)
+(function pad(){ let was = false;
+  const tick = () => { try { const ps = navigator.getGamepads ? [...navigator.getGamepads()].filter(Boolean) : [];
+      const now = ps.some(p => p.buttons[16] && p.buttons[16].pressed);
+      if (now && !was) ipcRenderer.send('game:guide'); was = now; } catch (e) {}
+    requestAnimationFrame(tick); };
+  window.addEventListener('DOMContentLoaded', () => requestAnimationFrame(tick)); })();

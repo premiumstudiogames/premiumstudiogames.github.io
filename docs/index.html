@@ -3,18 +3,18 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Premium Studio</title>
-<meta name="description" content="متجر ألعاب بريميوم ستوديو: BLOCKFALL 3001 والتسجيل الأخير">
+<title>Premium Games</title>
+<meta name="description" content="متجر ألعاب بريميوم جيمز: BLOCKFALL 3001 والتسجيل الأخير">
 <meta name="theme-color" content="#0a0d14">
 <link rel="icon" type="image/png" href="img/icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;700&family=Reem+Kufi:wght@500;700&family=Readex+Pro:wght@300;400;500;600&family=JetBrains+Mono:wght@500;700&display=swap">
-<link rel="stylesheet" href="style.css?v=17">
+<link rel="stylesheet" href="style.css?v=18">
 </head>
 <body>
 <header class="top"><div class="in">
-  <a class="brand" href="#store"><span class="mark"><i>P</i><i>S</i></span><b>PREMIUM <span>STUDIO</span></b></a>
+  <a class="brand" href="#store"><span class="mark"><i>P</i><i>G</i></span><b>PREMIUM <span>GAMES</span></b></a>
   <nav class="tabs" id="tabs">
     <a href="#store" data-v="store">المتجر</a>
     <a href="#library" data-v="library">المكتبة</a>
@@ -27,7 +27,7 @@
   </nav>
   <div class="bell" id="bell" hidden><button type="button" class="bellbtn" aria-label="الإشعارات" id="bellBtn">🔔<span class="nb" hidden>0</span></button><div class="belllist" id="bellList" hidden></div></div>
   <a class="bpbtn" href="#bigpicture" title="الشاشة الكبيرة (وضع الكونسل)" aria-label="الشاشة الكبيرة">⛶</a>
-  <a class="coinchip" id="coinChip" href="#coins" hidden><span class="coin" aria-hidden="true"></span><b class="num" id="coinBal">0</b><small>PS COIN</small></a>
+  <a class="coinchip" id="coinChip" href="#coins" hidden><span class="coin" aria-hidden="true"></span><b class="num" id="coinBal">0</b><small>PG COIN</small></a>
   <div class="dlchip" id="dlChip" hidden><span class="spin"></span><span id="dlChipT"></span></div>
   <a class="me" id="me" href="#account" hidden><span class="av" id="meAv"></span><span class="mewho"><b id="meName"></b><small class="num ltr" id="mePid"></small></span></a>
   <div class="me" id="guestBar" hidden><span class="tag">ضيف</span><button class="btn buy mini" id="signIn" type="button">تسجيل الدخول</button></div>
@@ -52,8 +52,8 @@
     <div class="dlhero">
       <div class="dlart"><img src="img/icon.png" alt="" width="120" height="120"></div>
       <div class="dlside">
-        <div class="eyebrow">PREMIUM STUDIO FOR WINDOWS</div>
-        <h1 class="gtitle">تطبيق Premium Studio</h1>
+        <div class="eyebrow">PREMIUM GAMES FOR WINDOWS</div>
+        <h1 class="gtitle">تطبيق Premium Games</h1>
         <p class="muted">التطبيق هو المكان اللي تثبّت منه ألعابك وتشغّلها، مثل ستيم. يحط أيقونة كل لعبة على سطح المكتب، ويوريك وش المثبت، وتقدر تحذف أي لعبة منه.</p>
         <div class="row"><a class="btn buy big" id="dlBtn" href="downloads/PremiumStudioSetup.exe" download>تحميل لويندوز</a><span class="muted num" style="font-size:13px">Windows 10 / 11 · 64-bit</span></div>
         <p class="muted" id="dlInApp" hidden>أنت فاتح المتجر من داخل التطبيق ✓</p>
@@ -87,7 +87,7 @@
   </section>
 
   <section class="view" data-view="coins" hidden>
-    <div class="sec-h"><h2>PS COIN</h2><small>WALLET</small></div>
+    <div class="sec-h"><h2>PG COIN</h2><small>WALLET</small></div>
     <div class="wallet" id="wallet"></div>
     <div class="sec-h"><h2>اشحن عملات</h2><small>COIN PACKS</small></div>
     <div class="packs" id="packs"></div>
@@ -106,7 +106,7 @@
     <div class="sec-h"><h2>لوحة الاستوديو</h2><small>STUDIO DASHBOARD</small></div>
     <div class="kpis" id="kpis"></div>
     <div class="filter"><input id="q" type="search" placeholder="ابحث بالاسم أو الإيميل"><select id="fGame"><option value="">كل الألعاب</option></select><select id="fSt"><option value="">كل الحالات</option><option value="paid">مدفوع</option><option value="pending">بانتظار الدفع</option><option value="free">ديمو مجاني</option></select></div>
-    <div class="tbl"><table><thead><tr><th>PS ID</th><th>اللاعب</th><th>الإيميل</th><th>PS COIN</th><th>تاريخ التسجيل</th><th>الطلبات</th></tr></thead><tbody id="rows"></tbody></table></div>
+    <div class="tbl"><table><thead><tr><th>PG ID</th><th>اللاعب</th><th>الإيميل</th><th>PG COIN</th><th>تاريخ التسجيل</th><th>الطلبات</th></tr></thead><tbody id="rows"></tbody></table></div>
     <p class="muted" id="studioNote" style="margin:0;font-size:13px"></p>
     <div class="sec-h"><h2>هدايا تنتظر التأكيد</h2><small>GIFTS</small></div>
     <div class="panel" id="giftRows"></div>
@@ -123,15 +123,15 @@
   </section>
 </main>
 
-<footer class="foot"><div class="in"><span class="ltr">© 2026 Premium Studio</span><span class="muted" id="ver"></span></div></footer>
+<footer class="foot"><div class="in"><span class="ltr">© 2026 Premium Games</span><span class="muted" id="ver"></span></div></footer>
 
-<div class="gate" id="gate"><div class="gbox" id="gbox"><div class="brand"><span class="mark"><i>P</i><i>S</i></span><b>PREMIUM <span>STUDIO</span></b></div><h1>جاري التحميل…</h1></div></div>
+<div class="gate" id="gate"><div class="gbox" id="gbox"><div class="brand"><span class="mark"><i>P</i><i>G</i></span><b>PREMIUM <span>GAMES</span></b></div><h1>جاري التحميل…</h1></div></div>
 <div class="modal" id="modal" hidden><div class="gbox" id="mbox"></div></div>
 <div class="toast" id="toast" role="status"></div>
 <nav class="dlbar" id="dlBar" hidden></nav>
 <div class="callbar" id="callBar" hidden></div>
 <div class="ringbox" id="ringBox" hidden></div>
 
-<script type="module" src="app.js?v=26"></script>
+<script type="module" src="app.js?v=27"></script>
 </body>
 </html>
