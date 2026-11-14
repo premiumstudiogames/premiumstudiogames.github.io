@@ -78,6 +78,16 @@ await ok('others read the world', assertSucceeds(getDoc(doc(C, 'workshop/W1/part
 await ok('register a device', assertSucceeds(setDoc(doc(A, 'users/A/devices/d1'), { name: 'Windows', first: serverTimestamp(), last: serverTimestamp() })));
 await ok('sign out everywhere', assertSucceeds(setDoc(doc(A, 'users/A/meta/security'), { signOutBefore: serverTimestamp() })));
 await ok('nobody else sees your devices', assertFails(getDocs(collection(B, 'users/A/devices'))));
+// sales
+await ok('players cannot start a sale', assertFails(setDoc(doc(A, 'sales/blockfall'), { pct: 50, ends: new Date(Date.now() + 864e5), title: '', at: serverTimestamp() })));
+await ok('no sale price without a sale', assertFails(setDoc(doc(B, 'users/B/library/last-recording__std'), { game: 'last-recording', edition: 'std', price: 69.99 * 75 / 100, status: 'pending', sale: true, at: serverTimestamp() })));
+await ok('studio starts a sale', assertSucceeds(setDoc(doc(ADM, 'sales/last-recording'), { pct: 25, ends: new Date(Date.now() + 864e5), title: 'عرض', at: serverTimestamp() })));
+await ok('anyone sees sales', assertSucceeds(getDoc(doc(env.unauthenticatedContext().firestore(), 'sales/last-recording'))));
+await ok('buy at the sale price', assertSucceeds(setDoc(doc(B, 'users/B/library/last-recording__std'), { game: 'last-recording', edition: 'std', price: 69.99 * (100 - 25) / 100, status: 'pending', sale: true, at: serverTimestamp() })));
+await ok('not below the sale price', assertFails(setDoc(doc(C, 'users/C/library/last-recording__std'), { game: 'last-recording', edition: 'std', price: 1, status: 'pending', sale: true, at: serverTimestamp() })));
+await ok('sale over: no sale price', assertFails((async () => { await env.withSecurityRulesDisabled(c => setDoc(doc(c.firestore(), 'sales/last-recording'), { pct: 25, ends: new Date(Date.now() - 1000), title: '', at: new Date() }));
+  await setDoc(doc(C, 'users/C/library/last-recording__std'), { game: 'last-recording', edition: 'std', price: 69.99 * 75 / 100, status: 'pending', sale: true, at: serverTimestamp() }); })()));
+await ok('sale over 90% refused', assertFails(setDoc(doc(ADM, 'sales/blockfall'), { pct: 95, ends: new Date(Date.now() + 864e5), title: '', at: serverTimestamp() })));
 // install on your PC from your phone
 await ok('ask your PC to install a game', assertSucceeds(setDoc(doc(A, 'users/A/meta/remote'), { install: 'blockfall--gold', at: serverTimestamp() })));
 await ok('the request must name a real edition', assertFails(setDoc(doc(A, 'users/A/meta/remote'), { install: 'blockfall--free', at: serverTimestamp() })));

@@ -1,4 +1,4 @@
-import { makeBP } from "./bp.js?v=2";
+import { makeBP } from "./bp.js?v=3";
 import { makeRTC } from "./rtc.js?v=1";
 import { SOON, SOON_GENRES } from "./soon.js?v=1";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
@@ -30,7 +30,7 @@ const PACKS = [             // must match coinPacks() in firestore.rules (coins 
   {id:"u100000",coins:100000, price:1000000}
 ];
 const coins = n => ((n || 0) / COIN_UNIT).toLocaleString("en-US", {minimumFractionDigits:0, maximumFractionDigits:4});
-const SITE_VERSION = "00.00.27";
+const SITE_VERSION = "00.00.28";
 const APP_DL = "downloads/PremiumStudioSetup.exe";
 
 const fb = initializeApp(firebaseConfig);
@@ -73,6 +73,22 @@ const GAMES = [
 ];
 const RANK = {demo:0, std:1, gold:2, dev:3};
 const byId = id => GAMES.find(g => g.id === id);
+// what you need to run each game
+const REQ = {
+  blockfall:{min:[["النظام","Windows 10 64-bit"],["المعالج","Intel Core i3 / AMD Ryzen 3"],["الذاكرة","4 GB RAM"],["كرت الشاشة","Intel UHD 620 أو أفضل (WebGL 2)"],["المساحة","500 MB"]],
+             rec:[["النظام","Windows 11 64-bit"],["المعالج","Intel Core i5 / AMD Ryzen 5"],["الذاكرة","8 GB RAM"],["كرت الشاشة","NVIDIA GTX 1050 / AMD RX 560"],["المساحة","1 GB SSD"]]},
+  "last-recording":{min:[["النظام","Windows 10 64-bit"],["المعالج","Intel Core i3 / AMD Ryzen 3"],["الذاكرة","4 GB RAM"],["كرت الشاشة","Intel UHD 620 أو أفضل (WebGL 2)"],["المساحة","100 MB"]],
+             rec:[["النظام","Windows 11 64-bit"],["المعالج","Intel Core i5 / AMD Ryzen 5"],["الذاكرة","8 GB RAM"],["كرت الشاشة","NVIDIA GTX 1050 / AMD RX 560"],["المساحة","200 MB"]]}
+};
+/* ---------------- sales: the studio sets a % off with an end time; prices drop everywhere and a countdown shows ---------------- */
+let SALES = {};
+const saleOf = gid => { const s = SALES[gid]; return s && s.pct > 0 && tsMs(s.ends) > Date.now() ? s : null; };
+const salePrice = (gid, p) => { const s = saleOf(gid); return s && p > 0 ? finalPrice(p, s.pct) : p; };
+const cdText = ms => { if (ms <= 0) return "انتهى"; const s = Math.floor(ms / 1000), d = Math.floor(s / 86400), p = n => String(n).padStart(2, "0");
+  return (d ? d + (d > 2 ? " أيام " : " يوم ") : "") + `${p(Math.floor(s % 86400 / 3600))}:${p(Math.floor(s % 3600 / 60))}:${p(s % 60)}`; };
+const cdHTML = gid => { const s = saleOf(gid); return s ? `<span class="cd" data-ends="${tsMs(s.ends)}">ينتهي بعد <b class="num">${cdText(tsMs(s.ends) - Date.now())}</b></span>` : ""; };
+const priceHTML = (gid, p) => { const s = saleOf(gid); return s && p > 0 ? `<span class="salepct">-${s.pct}%</span><s class="was">${money(p)}</s>${money(Math.round(finalPrice(p, s.pct) * 100) / 100)}` : money(p); };
+setInterval(() => { let gone = false; document.querySelectorAll(".cd[data-ends]").forEach(el => { const left = +el.dataset.ends - Date.now(); if (left <= 0) gone = true; const b = el.querySelector("b"); if (b) b.textContent = cdText(left); }); if (gone) render(); }, 1000);
 const edName = (g, id) => (g.editions.find(e => e.id === id) || {name:id}).name;
 GAMES.forEach(g => { for (const sel of ["#fGame", "#cGame"]) { const o = document.createElement("option"); o.value = g.id; o.textContent = g.en || g.title; $(sel).appendChild(o); } });
 let MANIFEST = {games:{}};
@@ -322,7 +338,8 @@ function getAppModal(g, ed, key){
 
 /* ---------------- views ---------------- */
 let heroIdx = 0, heroT = 0;
-function lowPrice(g){ return Math.min(...g.editions.filter(e => e.price > 0).map(e => e.price)); }
+function lowPrice(g){ return Math.min(...g.editions.filter(e => e.price > 0).map(e => salePrice(g.id, e.price))); }
+const lowBase = g => Math.min(...g.editions.filter(e => e.price > 0).map(e => e.price));
 function renderHero(){
   const g = GAMES[heroIdx], {best} = ent(g.id);
   const h = $("#hero"); h.innerHTML = `<div class="art"></div><div class="side">
@@ -330,7 +347,7 @@ function renderHero(){
     <h1 class="gtitle ${g.ar ? "ar" : ""}">${esc(g.title)}</h1>
     <div class="muted">${esc(g.tagline)}</div>
     <div class="tags">${g.tags.map(t => `<span class="tag">${esc(t)}</span>`).join("")}</div>
-    <div class="price">${best ? '<span class="own">في مكتبتك ✓</span>' : `<small>يبدأ من </small>${money(lowPrice(g))}`}</div>
+    <div class="price">${best ? '<span class="own">في مكتبتك ✓</span>' : `<small>يبدأ من </small>${priceHTML(g.id, lowBase(g))}`}</div>${best ? "" : cdHTML(g.id)}
     <div class="row"><a class="btn buy" href="#${g.id}">صفحة اللعبة</a>${best ? "" : `<button class="btn ghost" data-demo="${g.id}">جرّب الديمو مجانًا</button>`}</div>
     <div class="dots">${GAMES.map((x, i) => `<button aria-label="${esc(x.en || x.title)}" aria-current="${i === heroIdx}" data-i="${i}"></button>`).join("")}</div></div>`;
   cover(h.querySelector(".art"), g.id);
@@ -343,7 +360,7 @@ function renderGrid(){
   GAMES.forEach(g => { const {best} = ent(g.id);
     const a = document.createElement("a"); a.className = "card"; a.href = "#" + g.id;
     a.innerHTML = `<div class="art"></div><div class="body"><div class="t ${g.ar ? "ar" : ""}">${esc(g.title)}</div><div class="muted" style="font-size:13px">${esc(g.sub)}</div>
-      <div class="ft">${best ? `<span class="own">في مكتبتك · ${esc(edName(g, best.edition))}${anyInstalled(g.id) ? " · مثبتة" : ""}</span>` : '<span class="tag">ديمو مجاني</span>'}<span class="price" style="font-size:16px">${money(lowPrice(g))}</span></div></div>`;
+      <div class="ft">${best ? `<span class="own">في مكتبتك · ${esc(edName(g, best.edition))}${anyInstalled(g.id) ? " · مثبتة" : ""}</span>` : '<span class="tag">ديمو مجاني</span>'}<span class="price" style="font-size:16px">${priceHTML(g.id, lowBase(g))}</span></div>${saleOf(g.id) ? cdHTML(g.id) : ""}</div>`;
     box.appendChild(a); cover(a.querySelector(".art"), g.id); });
   renderSoon();
 }
@@ -380,12 +397,15 @@ function renderGame(g){
     <div>${g.about.map(p => `<p>${esc(p)}</p>`).join("")}</div>
     <div><div class="sec-h" style="margin-bottom:12px"><h2>المميزات</h2><small>FEATURES</small></div><ul class="feat">${g.feat.map(f => `<li>${esc(f)}</li>`).join("")}</ul></div>
     <dl class="specs"><dt>المطوّر</dt><dd>Premium Games</dd><dt>المنصة</dt><dd>Windows 10 / 11</dd><dt>النوع</dt><dd>${g.tags.map(esc).join(" · ")}</dd>${LATEST[g.id] ? `<dt>آخر إصدار</dt><dd class="num">${esc(LATEST[g.id].game || LATEST[g.id].version)}</dd>` : ""}</dl>
+    ${REQ[g.id] ? `<div><div class="sec-h" style="margin-bottom:12px"><h2>متطلبات التشغيل</h2><small>SYSTEM REQUIREMENTS</small></div><div class="reqs">${[["الحد الأدنى", REQ[g.id].min], ["المستحسن", REQ[g.id].rec]].map(([t, l]) => `<dl class="specs req"><dt class="rh">${t}</dt><dd class="rh"></dd>${l.map(([k, v]) => `<dt>${esc(k)}</dt><dd><bdi>${esc(v)}</bdi></dd>`).join("")}</dl>`).join("")}</div></div>` : ""}
+    ${m && m.achievements && Object.keys(m.achievements).length ? `<div><div class="sec-h" style="margin-bottom:12px"><h2>الإنجازات · ${Object.keys(m.achievements).length}</h2><small>ACHIEVEMENTS</small></div><div class="achpub">${Object.entries(m.achievements).map(([id, a]) => `<span class="${ACH[g.id + "__" + id] ? "got" : ""}" title="${esc(a.desc)}">${ACH[g.id + "__" + id] ? "🏆" : "🔒"} <b>${esc(a.name)}</b><small>${esc(a.desc)}</small></span>`).join("")}</div></div>` : ""}
   </div>
   <aside class="eds">
-    ${best ? `<div class="ownbox"><div class="row" style="justify-content:space-between"><b>في مكتبتك</b>${stPill(best.status)}</div><div class="muted" style="font-size:13px">${esc(edName(g, best.edition))} · ${fdate(best.at)}</div>${installBlock(g)}</div>` : ""}
+    ${saleOf(g.id) ? `<div class="salebox"><b>🔥 تخفيض ${saleOf(g.id).pct}%${saleOf(g.id).title ? " · " + esc(saleOf(g.id).title) : ""}</b>${cdHTML(g.id)}</div>` : ""}
+    ${best ?`<div class="ownbox"><div class="row" style="justify-content:space-between"><b>في مكتبتك</b>${stPill(best.status)}</div><div class="muted" style="font-size:13px">${esc(edName(g, best.edition))} · ${fdate(best.at)}</div>${installBlock(g)}</div>` : ""}
     ${pending ? `<div class="ownbox pend"><div class="row" style="justify-content:space-between"><b>${esc(edName(g, pending.edition))}</b>${stPill("pending")}</div><div class="muted" style="font-size:13px">طلبك وصل للاستوديو. تقدر تلعب بعد تأكيد الدفع.</div></div>` : ""}
     ${g.editions.map(e => { const has = (LIB[`${g.id}__${e.id}`] && LIB[`${g.id}__${e.id}`].status !== "pending") || (e.price > 0 && RANK[e.id] <= mineRank), isPend = pending && pending.edition === e.id;
-      return `<div class="ed ${e.gold ? "gold" : ""}${e.studio ? " studio" : ""}"><div class="h"><span class="n">${esc(e.name)}${e.egg ? '<span class="egg" aria-hidden="true"></span>' : ""}</span><span class="price" style="font-size:${e.studio ? 13 : 18}px">${e.studio ? "من الاستوديو" : money(e.price)}</span></div><div class="d">${esc(e.d)}</div>
+      return `<div class="ed ${e.gold ? "gold" : ""}${e.studio ? " studio" : ""}"><div class="h"><span class="n">${esc(e.name)}${e.egg ? '<span class="egg" aria-hidden="true"></span>' : ""}</span><span class="price" style="font-size:${e.studio ? 13 : 18}px">${e.studio ? "من الاستوديو" : priceHTML(g.id, e.price)}</span></div><div class="d">${esc(e.d)}</div>
       ${e.price > 0 && user ? `<button class="btn mini ghost giftbtn" type="button" data-gift-ed="${e.id}">🎁 أهدِها</button>` : ""}
       ${has ? '<button class="btn" disabled>عندك هذا الإصدار</button>' : e.studio ? '<button class="btn" disabled>يعطيها الاستوديو للمطورين</button>' : isPend ? '<button class="btn" disabled>بانتظار الدفع</button>' : `<button class="btn ${e.price ? "buy" : ""}" data-ed="${e.id}">${e.price ? (best ? "ترقية إلى هذا الإصدار" : "شراء") : "أضف الديمو للمكتبة"}</button>`}</div>`; }).join("")}
   </aside></div>`;
@@ -603,7 +623,7 @@ function notes(){
   for (const [k, v] of pendingUpdates()) out.push({t:`تحديث متوفر: ${keyTitle(k)}`, href:"#downloads", i:"⬇"});
   for (const [id, d] of Object.entries(DEVICES)) if (id !== deviceId() && Date.now() - tsMs(d.first) < 864e5) out.push({t:`دخول من جهاز جديد: ${d.name || ""}`, href:"#account", i:"🔐"});
   for (const [id, r] of Object.entries(REFUNDS)) if (r.status !== "pending" && Date.now() - tsMs(r.doneAt || r.at) < 7 * 864e5) out.push({t:r.status === "done" ? "تمت الموافقة على الاسترجاع" : "انرفض طلب الاسترجاع", href:"#library", i:"↩"});
-  for (const gid of Object.keys(WISH)) { const g = byId(gid); if (g && ent(gid).best) continue; }
+  for (const gid of Object.keys(WISH)) { const g = byId(gid), s = saleOf(gid); if (!g || ent(gid).best || !s) continue; out.push({t:`${g.en || g.title} من قائمة أمنياتك عليها خصم ${s.pct}%`, href:"#" + gid, i:"🔥"}); }
   return out;
 }
 document.addEventListener("click", e => { const l = $("#bellList"); if (!l) return;
@@ -1013,6 +1033,7 @@ async function playInvite(gid){
 }
 function renderFriendList(){
   const box = $("#frList"); if (!box || !user) return;
+  try { renderFriendAct(); } catch(e) {}
   const all = Object.entries(FRIENDS).map(([id, f]) => ({id, ...f})).sort((a, b) => a.username.localeCompare(b.username));
   const ok = all.filter(f => f.status === "ok").sort((a, b) => (unread(b.id) - unread(a.id)) || (!!playingNow(b.id) - !!playingNow(a.id)) || (msMs(LASTMSG[b.id] && LASTMSG[b.id].at) * !!LASTMSG[b.id] - msMs(LASTMSG[a.id] && LASTMSG[a.id].at) * !!LASTMSG[a.id]));
   const inc = all.filter(f => f.status === "in"), out = all.filter(f => f.status === "out");
@@ -1032,6 +1053,7 @@ function renderFriends(){
   if (!$("#frList")) {
     box.innerHTML = `<div class="row" style="justify-content:flex-end;margin-bottom:10px"><button class="btn" type="button" id="partyB">🎉 حفلة صوتية</button></div><form class="fradd" id="frForm" novalidate><label class="fld">أضف صديق باسم المستخدم<input id="frU" dir="ltr" maxlength="21" autocomplete="off" placeholder="@username"></label><button class="btn buy" type="submit">إضافة</button></form>
       <div class="err" id="frErr" style="margin:-10px 0 12px"></div>
+      <div class="fract" id="frAct"></div>
       <div class="frcols"><div class="panel" id="frList"></div><div class="panel chat" id="chat"></div></div>`;
     $("#partyB").onclick = partyModal;
     $("#frForm").onsubmit = async ev => { ev.preventDefault(); const btn = ev.target.querySelector("button"); btn.disabled = true; const m = await addFriend($("#frU").value); btn.disabled = false; if (m) $("#frErr").textContent = m; else { $("#frU").value = ""; $("#frErr").textContent = ""; } };
@@ -1039,6 +1061,12 @@ function renderFriends(){
   }
   renderFriendList();
   if (CHAT_WITH) { markRead(CHAT_WITH); frBadge(); }
+}
+// what your friends are doing right now
+function renderFriendAct(){
+  const act =Object.entries(FRIENDS).filter(([id, f]) => f.status === "ok" && (isOnline(id) || playingNow(id))).map(([id, f]) => ({id, f, pl:playingNow(id)})).sort((a, b) => !!b.pl - !!a.pl);
+  const ab = $("#frAct"); if (ab) ab.innerHTML = act.length ? `<div class="sec-h" style="margin:0 0 10px"><h2>نشاط الأصدقاء</h2><small>ACTIVITY</small></div><div class="fract-row">${act.map(x => `<div class="fract-i${x.pl ? " pl" : ""}"><span class="av">${esc((x.f.username || "?")[0].toUpperCase())}</span><div><b>@${esc(x.f.username)}</b><small>${x.pl ? "🎮 يلعب " + esc(x.pl) : "متصل"}</small></div>${x.pl ? `<button class="btn mini" type="button" data-joinmsg="${x.id}">💬 أنا بعد</button>` : ""}</div>`).join("")}</div>` : "";
+  if (ab) ab.querySelectorAll("[data-joinmsg]").forEach(b => b.onclick = async () => { b.disabled = true; try { await sendMsg(b.dataset.joinmsg, "أشوفك تلعب، أبي أدخل معك 🎮"); toast("انرسلت ✓"); } catch(e) { b.disabled = false; } });
 }
 
 let USERS = {}, ORDERS = [], COINORDERS = [], MYCO = [], ALLREFUNDS = {};
@@ -1060,7 +1088,22 @@ function renderGifts(){
       bt.update(g.ref, {status:"sent", sentAt:serverTimestamp()}); await bt.commit(); toast("وصلت الهدية ✓"); } catch(e) { b.disabled = false; toast("ما تم: " + e.code); } });
   box.querySelectorAll("[data-gx]").forEach(b => b.onclick = async () => { const g = l[+b.dataset.gx]; try { await updateDoc(g.ref, {status:"rejected", sentAt:serverTimestamp()}); } catch(e) { toast("ما تم: " + e.code); } });
 }
+function renderSales(){
+  const box = $("#saleRows"); if (!box) return;
+  box.innerHTML = GAMES.map(g => { const s = saleOf(g.id);
+    return `<div class="prop salerow"><b>${esc(g.en || g.title)}</b>${s ? `<span class="okmsg">شغّال: خصم ${s.pct}%${s.title ? " · " + esc(s.title) : ""} · ${cdHTML(g.id)}</span>` : '<span class="muted">ما عليها تخفيض</span>'}
+      <div class="row" style="gap:6px;flex-wrap:wrap"><label class="fld mini">الخصم %<input type="number" min="1" max="90" step="1" value="${s ? s.pct : 20}" data-sp="${g.id}" dir="ltr"></label>
+      <label class="fld mini">المدة (أيام)<input type="number" min="1" max="60" step="1" value="3" data-sd="${g.id}" dir="ltr"></label>
+      <label class="fld mini">اسم العرض<input maxlength="30" value="${esc(s && s.title || "")}" data-st="${g.id}" placeholder="عرض الويكند"></label>
+      <button class="btn mini buy" type="button" data-sgo="${g.id}">${s ? "حدّث التخفيض" : "ابدأ التخفيض"}</button>${s ? `<button class="btn mini danger" type="button" data-sstop="${g.id}">أوقف</button>` : ""}</div></div>`; }).join("");
+  box.querySelectorAll("[data-sgo]").forEach(b => b.onclick = async () => { const gid = b.dataset.sgo;
+    const pct = Math.round(+box.querySelector(`[data-sp="${gid}"]`).value), days = +box.querySelector(`[data-sd="${gid}"]`).value, title = box.querySelector(`[data-st="${gid}"]`).value.trim().slice(0, 30);
+    if (!(pct >= 1 && pct <= 90) || !(days > 0 && days <= 60)) return toast("الخصم من 1 إلى 90% والمدة من يوم إلى 60");
+    b.disabled = true; try { await setDoc(doc(fs, "sales", gid), {pct, ends:new Date(Date.now() + days * 864e5), title, at:serverTimestamp()}); toast("بدأ التخفيض ✓"); } catch(e) { toast("ما تم: " + e.code); b.disabled = false; } });
+  box.querySelectorAll("[data-sstop]").forEach(b => b.onclick = async () => { try { await deleteDoc(doc(fs, "sales", b.dataset.sstop)); toast("انتهى التخفيض"); } catch(e) { toast("ما تم: " + e.code); } });
+}
 function renderStudio(){
+  renderSales();
   renderGifts();
   const byUser = {}; ORDERS.forEach(o => (byUser[o.uid] = byUser[o.uid] || []).push(o));
   const paid = ORDERS.filter(o => o.status === "paid").reduce((a, o) => a + (o.price || 0), 0), pend = ORDERS.filter(o => o.status === "pending").length;
@@ -1165,8 +1208,9 @@ function buy(g, e){
     <p class="mbox-t" id="bNote">${e.price ? "الدفع الإلكتروني ما تفعّل للحين. لما تأكد الطلب يوصل للاستوديو بحالة «بانتظار الدفع»، وتقدر تلعب أول ما يتأكد الدفع." : "الديمو مجاني ويتضاف لمكتبتك على طول."}</p>
     <div class="err" id="bErr"></div>
     <div class="row"><button class="btn buy" id="bOk" type="button">${e.price ? "تأكيد الطلب" : "أضف للمكتبة"}</button><button class="btn ghost" data-close type="button">إلغاء</button></div>`);
-  const showPrice = () => { const fp = applied ? finalPrice(e.price, applied.pct) : e.price;
-    $("#bPrice").innerHTML = applied ? `<span class="strike">${money(e.price)}</span>${money(Math.round(fp * 100) / 100)}` : money(e.price);
+  const onSale = () => !applied && e.price > 0 && !!saleOf(g.id);
+  const showPrice = () => { const fp = applied ? finalPrice(e.price, applied.pct) : salePrice(g.id, e.price);
+    $("#bPrice").innerHTML = applied || onSale() ? `<span class="strike">${money(e.price)}</span>${money(Math.round(fp * 100) / 100)}${onSale() ? ` <span class="salepct">-${saleOf(g.id).pct}%</span>` : ""}` : money(e.price);
     if (applied && fp === 0) { $("#bNote").textContent = "الكود يخلي اللعبة مجانية. تنضاف لمكتبتك وتقدر تلعبها على طول."; $("#bOk").textContent = "أضف للمكتبة"; } };
   const ap = $("#bApply"); if (ap) ap.onclick = async () => {
     const id = normCode($("#bCode").value), msg = $("#bCodeMsg"); msg.className = "okmsg"; msg.textContent = ""; applied = null; showPrice();
@@ -1180,9 +1224,10 @@ function buy(g, e){
     catch(x) { msg.className = "err"; msg.textContent = typeof x === "string" ? x : "ما قدرت أتحقق من الكود"; }
     ap.disabled = false; };
   $("#bOk").onclick = async () => { const btn = $("#bOk"); btn.disabled = true;
-    const price = applied ? finalPrice(e.price, applied.pct) : e.price;
+    const sale = onSale();
+    const price = applied ? finalPrice(e.price, applied.pct) : sale ? finalPrice(e.price, saleOf(g.id).pct) : e.price;
     const status = e.price === 0 ? "free" : price === 0 ? "granted" : "pending";
-    const data = {game:g.id, edition:e.id, price, status, at:serverTimestamp()}; if (applied) data.code = applied.id;
+    const data = {game:g.id, edition:e.id, price, status, at:serverTimestamp()}; if (applied) data.code = applied.id; else if (sale) data.sale = true;
     try { await setDoc(doc(fs, "users", user.uid, "library", g.id + "__" + e.id), data);
       closeModal(); toast(status === "pending" ? "وصل طلبك ✓ تلقاه في مكتبتك" : "انضافت لمكتبتك ✓"); }
     catch(err) { btn.disabled = false; $("#bErr").textContent = "ما انحفظ الطلب (" + (err.code || "خطأ") + "). جرّب مرة ثانية."; } };
@@ -1227,11 +1272,12 @@ function achOf(gid){ const all = (MANIFEST.games[gid] || {}).achievements || {};
   const list = Object.entries(all).map(([id, d]) => ({id, name:d.name, desc:d.desc, got:!!ACH[gid + "__" + id]})).sort((a, b) => b.got - a.got);
   return {all:list.length, got:list.filter(a => a.got).length, list}; }
 function bigPicture(){ if (!BP) BP = makeBP({$, esc, GAMES, ownedEds, instOf, ED_TAG, PS, toast, cover, money, ent, keyTitle, pct, progText,
-  byId, lastPlayed, SOON, soonArt, notes, pendingUpdates, achOf, sendMsg,
+  byId, lastPlayed, SOON, soonArt, notes, pendingUpdates, achOf, sendMsg, lowPrice, saleOf,
   call:fid => rtc().start("voice", [fid], {[fid]:(FRIENDS[fid] || {}).username}).catch(() => {}),
   padConnected:async () => { try { if (PS && PS.getSettings && (await PS.getSettings()).consolePad && document.hasFocus()) { location.hash = "#bigpicture"; } } catch(e) {} },
   state:() => ({user, PROFILE, FRIENDS, PLAY, RUNNING, PROGRESS, online:isOnline, playing:playingNow})}); return BP; }
 if (PS) setTimeout(() => bigPicture(), 0);
+onSnapshot(collection(fs, "sales"), s => { SALES = {}; s.forEach(d => SALES[d.id] = d.data()); render(); }, () => {});
 function render(){
   try { publishProfile(); } catch(e) {}
   try { renderBell(); } catch(e) {}

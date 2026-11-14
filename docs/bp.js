@@ -77,8 +77,8 @@ export function makeBP(H){
   function vStore(){ const ql = q.trim().toLowerCase(), m = x => !ql || (x.title + " " + (x.en || "") + " " + (x.genreAr || "")).toLowerCase().includes(ql);
     const gs = GAMES.filter(m), ss = H.SOON.filter(m);
     return `<div class="bp-search"><button class="bp-input" data-bp="search">${q ? esc(q) : '<span>ابحث عن لعبة…</span>'}</button><span class="bp-hint">${G("y")} بحث</span></div>
-      ${gs.length ? `<h3 class="bp-h">الألعاب</h3><div class="bp-grid">${gs.map(g => { const e = ent(g.id), low = g.editions.filter(x => x.price > 0).map(x => x.price);
-        return `<button class="bp-card" data-bp="game" data-g="${g.id}"><span class="art" data-cover="${g.id}"></span><b>${esc(g.en || g.title)}</b><small>${e.best ? "في مكتبتك ✓" : low.length ? "من " + money(Math.min(...low)) + " · ديمو مجاني" : "مجانية"}</small></button>`; }).join("")}</div>` : ""}
+      ${gs.length ? `<h3 class="bp-h">الألعاب</h3><div class="bp-grid">${gs.map(g => { const e = ent(g.id), s = H.saleOf(g.id);
+        return `<button class="bp-card" data-bp="game" data-g="${g.id}"><span class="art" data-cover="${g.id}">${s && !e.best ? `<i class="bp-soon sale">-${s.pct}%</i>` : ""}</span><b>${esc(g.en || g.title)}</b><small>${e.best ? "في مكتبتك ✓" : "من " + money(Math.round(H.lowPrice(g) * 100) / 100) + (s ? " · تخفيض" : " · ديمو مجاني")}</small></button>`; }).join("")}</div>` : ""}
       ${ss.length ? `<h3 class="bp-h">قريبًا · ${ss.length}</h3><div class="bp-grid">${ss.slice(0, 48).map(x => `<button class="bp-card" data-bp="soon" data-s="${x.id}"><span class="art">${H.soonArt(x)}<i class="bp-soon">قريبًا</i></span><b>${esc(x.title)}</b><small>${esc(x.genreAr)} · ${esc(x.when)}</small></button>`).join("")}</div>` : ""}
       ${!gs.length && !ss.length ? `<div class="bp-empty">ما لقينا شي باسم «${esc(q)}»</div>` : ""}`; }
   function friendChip(id, f){ const s = S(), pl = s.playing(id), onl = s.online(id);
@@ -116,7 +116,7 @@ export function makeBP(H){
         ${eds.length > 1 ? `<div class="bp-eds">${eds.map(x => `<span class="${x === ed ? "on" : ""}">${esc(ED_TAG[x] || x)}</span>`).join("")}<small>${G("x")} غيّر النسخة</small></div>` : ed ? `<div class="bp-eds"><span class="on">${esc(ED_TAG[ed] || ed)}</span></div>` : ""}
         <p class="bp-desc">${esc(g.tagline || "")}</p>
         <div class="bp-acts">${actBtn(g, ed, true)}${eds.length ? "" : `<button class="bp-btn ghost" data-bp="buy" data-g="${g.id}">الإصدارات والأسعار</button>`}</div>
-        <div class="bp-stats">${eds.length ? `<div><b>${m ? hrs(m) : "—"}</b><small>وقت اللعب</small></div><div><b>${lp ? ago(lp) : "—"}</b><small>آخر مرة</small></div>` : `<div><b>${money(Math.min(...g.editions.filter(x => x.price > 0).map(x => x.price)))}</b><small>يبدأ من</small></div><div><b>مجاني</b><small>الديمو</small></div>`}
+        <div class="bp-stats">${eds.length ? `<div><b>${m ? hrs(m) : "—"}</b><small>وقت اللعب</small></div><div><b>${lp ? ago(lp) : "—"}</b><small>آخر مرة</small></div>` : `<div><b>${money(Math.round(H.lowPrice(g) * 100) / 100)}</b><small>يبدأ من${H.saleOf(g.id) ? " · خصم " + H.saleOf(g.id).pct + "%" : ""}</small></div><div><b>مجاني</b><small>الديمو</small></div>`}
           ${ach.all ? `<div><b>${ach.got}/${ach.all}</b><small>الإنجازات</small></div>` : ""}${e && e.d ? `<div><b>${esc(e.d)}</b><small>${esc(e.name)}</small></div>` : ""}</div>
         ${ach.all ? `<div class="bp-achs">${ach.list.map(a => `<span class="${a.got ? "got" : ""}" title="${esc(a.desc)}">${a.got ? "🏆" : "🔒"} ${esc(a.name)}</span>`).join("")}</div>` : ""}
         </div></div>`; }

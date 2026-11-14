@@ -303,6 +303,13 @@ service cloud.firestore {
               && request.resource.data.price == prices()[itemId] * (100 - codeOf(request.resource.data.code).pct) / 100
               && ((request.resource.data.price == 0 && request.resource.data.status == 'granted')
                   || (request.resource.data.price > 0 && request.resource.data.status == 'pending')))
+            // during a sale the studio started (sales/<game>), at the sale price
+            || (request.resource.data.keys().hasOnly(['game', 'edition', 'price', 'status', 'at', 'sale'])
+              && request.resource.data.sale == true
+              && prices()[itemId] > 0
+              && saleOn(request.resource.data.game)
+              && request.resource.data.price == prices()[itemId] * (100 - saleOf(request.resource.data.game).pct) / 100
+              && request.resource.data.status == 'pending')
           );
         // the studio can give any edition (also the Developer edition, which isn't sold)
         allow create: if isAdmin()
@@ -331,6 +338,21 @@ service cloud.firestore {
     match /codes/{code} {
       allow get: if signedIn();
       allow list, create, update, delete: if isAdmin();
+    }
+
+    // Sales: the studio sets a % off a game until a time; everyone sees it, purchases use it
+    function saleOf(g) { return get(/databases/$(database)/documents/sales/$(g)).data; }
+    function saleOn(g) {
+      return exists(/databases/$(database)/documents/sales/$(g))
+        && saleOf(g).pct is int && saleOf(g).pct >= 1 && saleOf(g).pct <= 90
+        && saleOf(g).ends > request.time;
+    }
+    match /sales/{g} {
+      allow read: if true;
+      allow create, update: if isAdmin() && request.resource.data.keys().hasOnly(['pct', 'ends', 'title', 'at'])
+        && request.resource.data.pct is int && request.resource.data.pct >= 1 && request.resource.data.pct <= 90
+        && request.resource.data.ends is timestamp && request.resource.data.title is string && request.resource.data.title.size() <= 30;
+      allow delete: if isAdmin();
     }
 
     // ---------------- BLOCKFALL 3001 servers (written by the BLOCKFALL launcher) ----------------
