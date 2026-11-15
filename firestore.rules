@@ -363,6 +363,32 @@ service cloud.firestore {
       allow delete: if signedIn() && resource.data.ownerId == request.auth.uid;
     }
 
+    // BLOCKFALL official content (published from the Developer launcher into the main game). Everyone reads it
+    // (the game reads it with the API key only); only publishers write: the studio account, plus the uids listed
+    // in settings/bfPublishers {uids: [...]} (the studio edits that list). Nothing is deleted, old revisions stay.
+    function bfPublisher() {
+      return isAdmin() || (signedIn() && exists(/databases/$(database)/documents/settings/bfPublishers)
+        && request.auth.uid in get(/databases/$(database)/documents/settings/bfPublishers).data.uids);
+    }
+    match /settings/bfPublishers {
+      allow read: if signedIn();
+      allow write: if isAdmin() && request.resource.data.keys().hasOnly(['uids']) && request.resource.data.uids is list && request.resource.data.uids.size() <= 50;
+    }
+    match /bfOfficial/{id} {
+      allow read: if true;
+      allow create, update: if bfPublisher() && (
+        // the pointer to the current revision
+        (id == 'blockfall' && request.resource.data.keys().hasOnly(['rev', 'parts', 'ver', 'seq', 'top', 'hist', 'by', 'byId', 'at', 'note', 'size'])
+          && request.resource.data.rev is int && request.resource.data.parts is int && request.resource.data.parts >= 0 && request.resource.data.parts <= 100
+          && request.resource.data.byId == request.auth.uid)
+        // one part of a revision: blockfall_r<rev>_<i>
+        || (id.matches('^blockfall_r[0-9]{1,9}_[0-9]{1,3}$') && request.resource.data.keys().hasOnly(['data', 'rev', 'i'])
+          && request.resource.data.data is string && request.resource.data.data.size() <= 700000
+          && request.resource.data.rev is int && request.resource.data.i is int
+          && id == 'blockfall_r' + string(request.resource.data.rev) + '_' + string(request.resource.data.i)));
+      allow delete: if false;
+    }
+
     // Sales: the studio sets a % off a game until a time; everyone sees it, purchases use it
     function saleOf(g) { return get(/databases/$(database)/documents/sales/$(g)).data; }
     function saleOn(g) {

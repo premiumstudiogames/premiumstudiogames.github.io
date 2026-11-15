@@ -97,6 +97,18 @@ await ok('member can leave', assertSucceeds(updateDoc(doc(B, 'bfDevProjects/p1')
 await ok('public project visible to everyone signed in', assertSucceeds((async () => { await updateDoc(doc(A, 'bfDevProjects/p1'), { public: true }); await getDocs(query(collection(C, 'bfDevProjects'), where('public', '==', true))); })()));
 await ok('project list by member', assertSucceeds(getDocs(query(collection(A, 'bfDevProjects'), where('memberIds', 'array-contains', 'A')))));
 await ok('owner deletes', assertSucceeds(deleteDoc(doc(A, 'bfDevProjects/p1'))));
+// BLOCKFALL official content
+const anon = env.unauthenticatedContext().firestore();
+const ptr = (by) => ({ rev: 1, parts: 1, ver: '00.00.72', seq: 1, top: 1, hist: [], by: 'x', byId: by, at: new Date(), note: 'n', size: 10 });
+await ok('studio publishes official content', assertSucceeds((async () => { await setDoc(doc(ADM, 'bfOfficial/blockfall_r1_0'), { data: '{}', rev: 1, i: 0 }); await setDoc(doc(ADM, 'bfOfficial/blockfall'), ptr('ADMIN')); })()));
+await ok('anyone reads it without signing in', assertSucceeds((async () => { await getDoc(doc(anon, 'bfOfficial/blockfall')); await getDoc(doc(anon, 'bfOfficial/blockfall_r1_0')); })()));
+await ok('a developer who is not a publisher cannot publish', assertFails(setDoc(doc(A, 'bfOfficial/blockfall'), ptr('A'))));
+await ok('studio adds a publisher', assertSucceeds(setDoc(doc(ADM, 'settings/bfPublishers'), { uids: ['B'] })));
+await ok('players cannot add themselves', assertFails(setDoc(doc(A, 'settings/bfPublishers'), { uids: ['A', 'B'] })));
+await ok('publisher publishes', assertSucceeds((async () => { await setDoc(doc(B, 'bfOfficial/blockfall_r2_0'), { data: 'x'.repeat(1000), rev: 2, i: 0 }); await setDoc(doc(B, 'bfOfficial/blockfall'), Object.assign(ptr('B'), { rev: 2 })); })()));
+await ok('part name must match its rev', assertFails(setDoc(doc(B, 'bfOfficial/blockfall_r9_0'), { data: '', rev: 3, i: 0 })));
+await ok('part max 700 KB', assertFails(setDoc(doc(B, 'bfOfficial/blockfall_r3_0'), { data: 'x'.repeat(700001), rev: 3, i: 0 })));
+await ok('official content is never deleted', assertFails(deleteDoc(doc(ADM, 'bfOfficial/blockfall_r1_0'))));
 // sales
 await ok('players cannot start a sale', assertFails(setDoc(doc(A, 'sales/blockfall'), { pct: 50, ends: new Date(Date.now() + 864e5), title: '', at: serverTimestamp() })));
 await ok('no sale price without a sale', assertFails(setDoc(doc(B, 'users/B/library/last-recording__std'), { game: 'last-recording', edition: 'std', price: 69.99 * 75 / 100, status: 'pending', sale: true, at: serverTimestamp() })));
