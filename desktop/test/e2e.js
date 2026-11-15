@@ -80,7 +80,7 @@ app.whenReady().then(async () => {
     if (gw) ipcMain.emit('game:guide', { sender: gw.webContents });
     ok('controller Home button opens the overlay', await waitFor(ovVisible, 10000));
     if (gw) ipcMain.emit('game:guide', { sender: gw.webContents });
-    await sleep(800);
+    await waitFor(() => !ovVisible(), 8000); await sleep(1500);   // overlay fully closed before recording
     // F9 records a clip, F9 again saves it
     if (gw) { gw.focus(); gw.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F9' }); }
     await sleep(4000);
