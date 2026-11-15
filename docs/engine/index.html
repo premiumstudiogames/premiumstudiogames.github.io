@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Premium Engine</title>
+<link rel="stylesheet" href="editor.css?v=1">
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.js", "three/addons/TransformControls.js": "./vendor/TransformControls.js", "cannon-es": "./vendor/cannon-es.js" } }</script>
+</head>
+<body>
+<div id="app">
+  <header id="menubar">
+    <span class="logo" title="Premium Engine"><i>P</i><i>E</i></span>
+    <nav id="menus"></nav>
+    <span class="grow"></span>
+    <span id="projName" class="projname"></span>
+    <a class="back" href="../#library" title="Back to Premium Games">Premium Games ↗</a>
+  </header>
+
+  <div id="toolbar">
+    <button class="tb" data-cmd="saveAll" title="Save All (Ctrl+S)"><span class="ic">💾</span></button>
+    <span class="sep"></span>
+    <div class="tbmenu" data-menu="mode"><button class="tb wide" title="Editor mode"><span class="ic">⬚</span> Selection Mode ▾</button></div>
+    <div class="tbmenu" data-menu="quickAdd"><button class="tb accent" title="Quickly add to the project"><span class="ic">＋</span> Add ▾</button></div>
+    <div class="tbmenu" data-menu="scripts"><button class="tb" title="Scripts"><span class="ic">{ }</span> Scripts ▾</button></div>
+    <span class="sep"></span>
+    <button class="tb play" data-cmd="play" title="Play (Alt+P)"><span class="ic">▶</span></button>
+    <button class="tb" data-cmd="simulate" title="Simulate (Alt+S)"><span class="ic">⏵⏵</span></button>
+    <button class="tb stop" data-cmd="stop" title="Stop (Esc)" disabled><span class="ic">■</span></button>
+    <div class="tbmenu" data-menu="playOpts"><button class="tb" title="Play options">⋮</button></div>
+    <span class="sep"></span>
+    <div class="tbmenu" data-menu="platforms"><button class="tb wide" title="Platforms"><span class="ic">▤</span> Platforms ▾</button></div>
+    <span class="grow"></span>
+    <div class="tbmenu" data-menu="settings"><button class="tb wide" title="Settings"><span class="ic">⚙</span> Settings ▾</button></div>
+  </div>
+
+  <main id="workspace">
+    <section id="placeActors" class="panel dock-left hidden">
+      <div class="ph"><b>Place Actors</b><button class="x" data-close="placeActors">✕</button></div>
+      <input class="search" id="paSearch" placeholder="Search Classes">
+      <div class="pa" id="paBody"></div>
+    </section>
+
+    <section id="viewportWrap">
+      <div class="vptop">
+        <div class="vgroup">
+          <div class="tbmenu" data-menu="vpView"><button class="vb">☰</button></div>
+          <div class="tbmenu" data-menu="vpCam"><button class="vb" id="vpCamLabel">Perspective</button></div>
+          <div class="tbmenu" data-menu="vpMode"><button class="vb" id="vpModeLabel">Lit</button></div>
+          <div class="tbmenu" data-menu="vpShow"><button class="vb">Show</button></div>
+        </div>
+        <span class="grow"></span>
+        <div class="vgroup">
+          <button class="vb tool on" data-tool="translate" title="Select and translate (W)">✥</button>
+          <button class="vb tool" data-tool="rotate" title="Select and rotate (E)">⟳</button>
+          <button class="vb tool" data-tool="scale" title="Select and scale (R)">⤢</button>
+          <button class="vb" id="spaceBtn" title="World / Local coordinates">🌐</button>
+          <span class="vsep"></span>
+          <button class="vb snap on" data-snap="t" title="Grid snap">#</button><div class="tbmenu" data-menu="snapT"><button class="vb num" id="snapT">0.5</button></div>
+          <button class="vb snap on" data-snap="r" title="Rotation snap">∠</button><div class="tbmenu" data-menu="snapR"><button class="vb num" id="snapR">15°</button></div>
+          <button class="vb snap" data-snap="s" title="Scale snap">⤡</button><div class="tbmenu" data-menu="snapS"><button class="vb num" id="snapS">0.25</button></div>
+          <span class="vsep"></span>
+          <div class="tbmenu" data-menu="camSpeed"><button class="vb" id="camSpeedBtn" title="Camera speed">🎥 4</button></div>
+        </div>
+      </div>
+      <canvas id="viewport" tabindex="0"></canvas>
+      <canvas id="playCanvas" class="hidden" tabindex="0"></canvas>
+      <div id="hud" class="hud"></div>
+      <div id="vpInfo" class="vpinfo"></div>
+      <div id="pieBanner" class="pie hidden">Playing in editor · <b>Esc</b> or <b>Shift+F1</b> to release the mouse · <button data-cmd="stop">Stop</button></div>
+    </section>
+
+    <div class="vsplit" data-split="right"></div>
+    <aside id="rightDock">
+      <section id="outliner" class="panel">
+        <div class="ph tabs"><button class="tab on">Outliner</button><span class="grow"></span><button class="x" data-close="outliner">✕</button></div>
+        <div class="row"><input class="search" id="olSearch" placeholder="Search..."><div class="tbmenu" data-menu="olAdd"><button class="mini">＋</button></div></div>
+        <div class="olhead"><span>👁</span><span>Item Label ▲</span><span>Type</span></div>
+        <div class="ol" id="olBody"></div>
+        <div class="olfoot" id="olFoot"></div>
+      </section>
+      <div class="hsplit" data-split="outliner"></div>
+      <section id="details" class="panel">
+        <div class="ph tabs"><button class="tab on" data-dtab="details">Details</button><button class="tab" data-dtab="world">World Settings</button><span class="grow"></span><button class="x" data-close="details">✕</button></div>
+        <div class="dt" id="dtBody"></div>
+      </section>
+    </aside>
+  </main>
+
+  <section id="drawer" class="hidden">
+    <div class="ph tabs"><button class="tab on" data-btab="content">Content Drawer</button><button class="tab" data-btab="log">Output Log</button><span class="grow"></span><button class="x" data-cmd="toggleDrawer">✕</button></div>
+    <div class="dbody" id="cbBody"></div>
+    <div class="dbody hidden" id="logBody"><div class="logtools"><input class="search" id="logFilter" placeholder="Search Log"><button class="mini" data-cmd="clearLog">Clear</button></div><div id="log" class="log"></div></div>
+  </section>
+
+  <footer id="statusbar">
+    <button class="sb" data-cmd="toggleDrawer" title="Content Drawer (Ctrl+Space)">🗀 Content Drawer</button>
+    <button class="sb" data-cmd="showLog">≣ Output Log</button>
+    <span class="cmd"><select id="cmdKind"><option>Cmd</option></select><input id="cmdInput" placeholder="Enter Console Command"></span>
+    <span class="grow"></span>
+    <span id="saveState" class="sb">All Saved</span>
+    <span class="sb ver" id="engVer"></span>
+  </footer>
+</div>
+
+<div id="menuPop" class="pop hidden"></div>
+<div id="modal" class="modal hidden"></div>
+<div id="toast" class="toast"></div>
+<script type="module" src="editor.js?v=1"></script>
+</body>
+</html>
