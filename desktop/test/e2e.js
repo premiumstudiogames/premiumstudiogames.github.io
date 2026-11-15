@@ -75,6 +75,8 @@ app.whenReady().then(async () => {
     await sleep(800);
     // the controller's Home button opens the overlay too
     const ovVisible = () => BrowserWindow.getAllWindows().some(w => !w.isDestroyed() && w.webContents.getURL().startsWith('data:') && w.isVisible() && /التروفيات/.test(decodeURIComponent(w.webContents.getURL()).slice(0, 20000)));
+    if (!(await waitFor(() => !ovVisible(), 5000)) && gw) { ipcMain.emit('game:guide', { sender: gw.webContents }); await waitFor(() => !ovVisible(), 5000); }   // make sure it's closed first
+    await sleep(500);
     if (gw) ipcMain.emit('game:guide', { sender: gw.webContents });
     ok('controller Home button opens the overlay', await waitFor(ovVisible, 10000));
     if (gw) ipcMain.emit('game:guide', { sender: gw.webContents });
