@@ -14,6 +14,17 @@ const oldLnk = path.join(os.homedir(), 'Desktop', 'Premium Studio.lnk'), newLnk 
 const oldShots = path.join(app.getPath('pictures'), 'Premium Studio', 'Old Game');
 if (FIRST) { try { fs.rmSync(newLnk, { force: true }); require('electron').shell.writeShortcutLink(oldLnk, { target: process.execPath, description: 'Premium Studio' });
   fs.mkdirSync(oldShots, { recursive: true }); fs.writeFileSync(path.join(oldShots, 'old.png'), 'x'); } catch (e) { console.log('legacy setup:', e.message); } }
+// an older version installed BLOCKFALL once per edition, with an icon per edition: the app must merge them into one
+const oldBf = ['BLOCKFALL 3001 Gold', 'BLOCKFALL 3001 Demo'].map(n => path.join(os.homedir(), 'Desktop', n + '.lnk'));
+if (FIRST) { try {
+  const exe = path.join(process.env.LOCALAPPDATA, 'Programs', 'TERRAVOLT', 'BLOCKFALL3001.exe'); fs.mkdirSync(path.dirname(exe), { recursive: true }); fs.writeFileSync(exe, 'old');
+  const gd = path.join(process.env.LOCALAPPDATA, 'PremiumStudio', 'games'); fs.mkdirSync(gd, { recursive: true });
+  const old = (ed, n) => ({ type: 'bf-launcher', game: 'blockfall', base: 'BLOCKFALL 3001', name: n, edition: ed, version: '01.00.00', entry: 'BLOCKFALL3001.exe', icon: 'resources/app/icon.ico' });
+  fs.writeFileSync(path.join(gd, 'installed.json'), JSON.stringify({ 'blockfall--gold': old('gold', 'BLOCKFALL 3001 Gold'), 'blockfall--demo': old('demo', 'BLOCKFALL 3001 Demo') }));
+  for (const l of oldBf) require('electron').shell.writeShortcutLink(l, { target: process.execPath, args: '--launch=blockfall--gold' });
+  fs.mkdirSync(path.join(app.getPath('appData'), '.terravolt'), { recursive: true });
+  fs.writeFileSync(path.join(app.getPath('appData'), '.terravolt', 'license.json'), JSON.stringify({ key: 'PREMIUM-STUDIO', ed: 'gold', ps: true }));
+} catch (e) { console.log('old BLOCKFALL setup:', e.message); } }
 require('../main.js');
 const ev = { senderFrame: { url: 'https://premiumstudiogames.github.io/' } };
 const call = (ch, ...a) => ipcMain._invokeHandlers.get(ch)(ev, ...a);
@@ -83,47 +94,47 @@ app.whenReady().then(async () => {
     let wrong = false; try { await call('ps:setParental', { pin: '0000', on: false }); } catch (e) { wrong = true; }
     ok('parental controls need the PIN', wrong);
     await call('ps:setParental', { pin: '4321', on: false, allowed: [] });
-    // ---- BLOCKFALL
+    // ---- BLOCKFALL: one game for Demo / Standard / Gold
+    let reg0 = await call('ps:getInstalled');
+    ok('old per-edition installs merged into one BLOCKFALL', !!reg0.blockfall && !Object.keys(reg0).some(k => k.startsWith('blockfall--')), Object.keys(reg0).join(','));
+    ok('old per-edition icons removed', oldBf.every(l => !fs.existsSync(l)));
+    ok('one "BLOCKFALL 3001" icon, opening through Premium Games', fs.existsSync(lnk) && require('electron').shell.readShortcutLink(lnk).target === process.execPath);
+    ok('our old license.json is gone', !fs.existsSync(path.join(bfData, 'license.json')));
     const t0 = Date.now();
-    await call('ps:install', 'blockfall--gold', { edition: 'gold' });
-    const inst = (await call('ps:getInstalled'))['blockfall--gold'];
-    ok('BLOCKFALL installs', !!inst, Math.round((Date.now() - t0) / 1000) + 's');
+    await call('ps:install', 'blockfall--gold', { edition: 'gold' });   // older store pages still send an edition: same one install
+    const inst = (await call('ps:getInstalled')).blockfall;
+    ok('BLOCKFALL installs (one install)', !!inst && inst.name === 'BLOCKFALL 3001' && !inst.edition && !Object.keys(await call('ps:getInstalled')).some(k => k.startsWith('blockfall--')), Math.round((Date.now() - t0) / 1000) + 's');
     const L = await (await fetch('https://abdullra7manx-cmyk.github.io/terravolt/launcher/launcher.json')).json();
     let appv = ''; try { appv = JSON.parse(fs.readFileSync(path.join(process.env.LOCALAPPDATA, 'Programs', 'TERRAVOLT', 'resources', 'app', 'package.json'), 'utf8')).version; } catch (e) {}
     ok('launcher program is current before first run', appv === L.app.version, appv + ' vs ' + L.app.version);
-    const hadLnk = fs.existsSync(lnk);
-    await call('ps:launch', 'blockfall--gold');
+    await call('ps:setOwned', { blockfall: ['demo', 'gold'], 'blockfall-dev': ['dev'] });
+    await call('ps:launch', 'blockfall');
     ok('BLOCKFALL opens (launcher reports open)', await waitFor(() => { const s = state(); return s && s.open && Date.now() - s.at < 15000; }, 90000), JSON.stringify(state()));
-    if (!(state() && state().open)) {   // diagnose: run the launcher directly and show what it says
-      console.log('alive?', procAlive(), 'files in .terravolt:', (() => { try { return fs.readdirSync(bfData).join(','); } catch (e) { return e.message; } })());
-      try { require('child_process').execSync('taskkill /IM BLOCKFALL3001.exe /F', { stdio: 'ignore' }); } catch (e) {}
-      const cp = require('child_process').spawn(path.join(process.env.LOCALAPPDATA, 'Programs', 'TERRAVOLT', 'BLOCKFALL3001.exe'), ['--premium', '--enable-logging'], { env: { ...process.env, ELECTRON_ENABLE_LOGGING: '1' } });
-      let out = ''; cp.stdout.on('data', d => out += d); cp.stderr.on('data', d => out += d);
-      let code = 'running'; cp.on('exit', c => code = c);
-      await sleep(30000);
-      console.log('---- launcher output (exit: ' + code + ') ----\n' + out.slice(-6000) + '\n---- state: ' + JSON.stringify(state()));
-      try { require('child_process').execSync('taskkill /IM BLOCKFALL3001.exe /F', { stdio: 'ignore' }); } catch (e) {}
-    }
-    let lic = null; try { lic = JSON.parse(fs.readFileSync(path.join(bfData, 'license.json'), 'utf8')); } catch (e) {}
-    ok('Gold edition handed to the launcher', lic && lic.ed === 'gold', lic && lic.ed);
-    ok('app shows BLOCKFALL as running', !!(await call('ps:getRunning'))['blockfall--gold']);
-    await sleep(5000);
-    ok('no extra BLOCKFALL desktop icon', hadLnk || !fs.existsSync(lnk));
-    await call('ps:stop', 'blockfall--gold');
-    ok('BLOCKFALL closes from the Close button', await waitFor(async () => !(await call('ps:getRunning'))['blockfall--gold'], 40000));
-    ok('BLOCKFALL process gone', await waitFor(() => !procAlive(), 15000));
-    // ---- the Developer edition and the editions the launcher can switch between
-    await call('ps:setOwned', { blockfall: ['demo', 'gold', 'dev'] });
     let acc = {}; try { acc = JSON.parse(fs.readFileSync(path.join(bfData, 'premium_account.json'), 'utf8')); } catch (e) {}
-    ok('launcher knows the owned editions', JSON.stringify((acc.owned || {}).blockfall) === '["demo","gold","dev"]', JSON.stringify(acc.owned));
-    await call('ps:install', 'blockfall--dev', { edition: 'dev' });
-    await call('ps:launch', 'blockfall--dev');
-    let lic2 = null; try { lic2 = JSON.parse(fs.readFileSync(path.join(bfData, 'license.json'), 'utf8')); } catch (e) {}
-    ok('Developer edition handed to the launcher', lic2 && lic2.ed === 'dev', lic2 && lic2.ed);
-    ok('BLOCKFALL Developer opens', await waitFor(() => { const s = state(); return s && s.open && Date.now() - s.at < 15000; }, 90000));
-    await call('ps:stop', 'blockfall--dev');
-    ok('BLOCKFALL Developer closes', await waitFor(async () => !(await call('ps:getRunning'))['blockfall--dev'], 40000));
-    await waitFor(() => !procAlive(), 15000);
+    ok('launcher gets the owned editions (no dev)', JSON.stringify((acc.owned || {}).blockfall) === '["demo","gold"]', JSON.stringify(acc.owned));
+    ok('no license.json written', !fs.existsSync(path.join(bfData, 'license.json')));
+    ok('app shows BLOCKFALL as running', !!(await call('ps:getRunning')).blockfall);
+    await sleep(5000);
+    const bfIcons = fs.readdirSync(desk).filter(f => /^BLOCKFALL/i.test(f));
+    ok('only one BLOCKFALL desktop icon', bfIcons.length === 1 && bfIcons[0] === 'BLOCKFALL 3001.lnk', bfIcons.join(','));
+    await call('ps:stop', 'blockfall');
+    ok('BLOCKFALL closes from the Close button', await waitFor(async () => !(await call('ps:getRunning')).blockfall, 40000));
+    ok('BLOCKFALL process gone', await waitFor(() => !procAlive(), 15000));
+    // ---- the Developer edition: its own program
+    const devData = path.join(app.getPath('appData'), '.terravolt-dev'), devExe = path.join(process.env.LOCALAPPDATA, 'Programs', 'BLOCKFALL3001-Dev', 'BLOCKFALL3001-Dev.exe');
+    const devLnk = path.join(desk, 'BLOCKFALL 3001 المطور.lnk');
+    const devState = () => { try { return JSON.parse(fs.readFileSync(path.join(devData, 'premium_state.json'), 'utf8')); } catch (e) { return null; } };
+    await call('ps:install', 'blockfall-dev');
+    ok('Developer edition installs in its own folder', fs.existsSync(devExe) && !!(await call('ps:getInstalled'))['blockfall-dev']);
+    ok('Developer icon "BLOCKFALL 3001 المطور"', fs.existsSync(devLnk));
+    await call('ps:launch', 'blockfall-dev');
+    let dacc = {}; try { dacc = JSON.parse(fs.readFileSync(path.join(devData, 'premium_account.json'), 'utf8')); } catch (e) {}
+    ok('Developer launcher gets its account with dev', JSON.stringify((dacc.owned || {}).blockfall) === '["dev"]' && dacc.uid === 'E2E', JSON.stringify(dacc.owned));
+    ok('BLOCKFALL Developer opens', await waitFor(() => { const s = devState(); return s && s.open && Date.now() - s.at < 15000; }, 90000), JSON.stringify(devState()));
+    ok('normal BLOCKFALL not started by it', !procAlive());
+    await call('ps:stop', 'blockfall-dev');
+    ok('BLOCKFALL Developer closes', await waitFor(async () => !(await call('ps:getRunning'))['blockfall-dev'], 40000));
+    await sleep(3000);
     // ---- started outside Premium Studio: must hand over and come back through the app (like Steam)
     app.on('second-instance', (e, argv) => console.log('second-instance argv:', JSON.stringify(argv)));
     const { app: _a, shell } = require('electron');

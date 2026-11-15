@@ -61,7 +61,7 @@ export function makeBP(H){
   function vHome(){
     const s = S(), l = mine(), g = H.byId(heroG) || l[0] || GAMES[0]; heroG = g.id;
     const on2 = Object.entries(s.FRIENDS).filter(([id, f]) => f.status === "ok" && s.online(id));
-    const notOwned = GAMES.filter(x => !ownedEds(x.id).length);
+    const notOwned = GAMES.filter(x => !x.hidden && !ownedEds(x.id).length);
     return `<section class="bp-hero" id="bpHero">${heroHTML(g)}</section>
       ${l.length ? `<h3 class="bp-h">كمّل اللعب</h3><div class="bp-row">${l.map(x => tile(x, ' data-hero="1"')).join("")}</div>` : `<div class="bp-note">مكتبتك فاضية. اختر لعبة من المتجر.</div>`}
       ${on2.length ? `<h3 class="bp-h">أصدقاء متصلين</h3><div class="bp-row">${on2.map(([id, f]) => friendChip(id, f)).join("")}</div>` : ""}
@@ -75,7 +75,7 @@ export function makeBP(H){
     return l.length ? `<div class="bp-grid lib">${l.map(x => tile(x)).join("")}</div>` : `<div class="bp-empty">مكتبتك فاضية.<button class="bp-btn" data-bp="tab" data-t="store">روح للمتجر</button></div>`; }
   let q = "";
   function vStore(){ const ql = q.trim().toLowerCase(), m = x => !ql || (x.title + " " + (x.en || "") + " " + (x.genreAr || "")).toLowerCase().includes(ql);
-    const gs = GAMES.filter(m), ss = H.SOON.filter(m);
+    const gs = GAMES.filter(x => (!x.hidden || ownedEds(x.id).length) && m(x)), ss = H.SOON.filter(m);
     return `<div class="bp-search"><button class="bp-input" data-bp="search">${q ? esc(q) : '<span>ابحث عن لعبة…</span>'}</button><span class="bp-hint">${G("y")} بحث</span></div>
       ${gs.length ? `<h3 class="bp-h">الألعاب</h3><div class="bp-grid">${gs.map(g => { const e = ent(g.id), s = H.saleOf(g.id);
         return `<button class="bp-card" data-bp="game" data-g="${g.id}"><span class="art" data-cover="${g.id}">${s && !e.best ? `<i class="bp-soon sale">-${s.pct}%</i>` : ""}</span><b>${esc(g.en || g.title)}</b><small>${e.best ? "في مكتبتك ✓" : "من " + money(Math.round(H.lowPrice(g) * 100) / 100) + (s ? " · تخفيض" : " · ديمو مجاني")}</small></button>`; }).join("")}</div>` : ""}

@@ -523,6 +523,17 @@
         }
       }
     },
+    "blockfall-dev": {
+      "type": "bf-launcher",
+      "name": "BLOCKFALL 3001 المطور",
+      "parts": "https://abdullra7manx-cmyk.github.io/terravolt/dl-dev/parts.json",
+      "gameManifest": "https://abdullra7manx-cmyk.github.io/terravolt/mc/game/version_manifest_v2.json",
+      "zipRoot": "BLOCKFALL3001-Dev/",
+      "launcher": true,
+      "installSize": 300000000,
+      "site": "https://abdullra7manx-cmyk.github.io/terravolt/",
+      "hidden": true
+    },
     "last-recording": {
       "type": "manifest",
       "name": "التسجيل الأخير",

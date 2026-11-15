@@ -1,4 +1,4 @@
-import { makeBP } from "./bp.js?v=4";
+import { makeBP } from "./bp.js?v=5";
 import { makeRTC } from "./rtc.js?v=1";
 import { SOON, SOON_GENRES } from "./soon.js?v=1";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
@@ -30,7 +30,7 @@ const PACKS = [             // must match coinPacks() in firestore.rules (coins 
   {id:"u100000",coins:100000, price:1000000}
 ];
 const coins = n => ((n || 0) / COIN_UNIT).toLocaleString("en-US", {minimumFractionDigits:0, maximumFractionDigits:4});
-const SITE_VERSION = "00.00.29";
+const SITE_VERSION = "00.00.30";
 const APP_DL = "downloads/PremiumStudioSetup.exe";
 
 const fb = initializeApp(firebaseConfig);
@@ -62,7 +62,13 @@ const GAMES = [
           "اجمع بلوكات بأحجام مختلفة من 20 سم إلى متر كامل، اصنع أدواتك وأسلحتك، وابنِ مركباتك فوق منصة الرفع."],
    feat:["قصة من 5 فصول تغطي 2998 إلى 3001","بلوكات بأحجام مختلفة ومركبات تبنيها بنفسك","صناعة مثل ماينكرافت وأكثر من 100 سلاح واقعي","زومبي بستة أنواع ومرتزقة بالـ AK-47","دعم يد PS5 و Xbox"],
    tags:["بناء","نجاة","قصة","أكشن"],
-   editions:[{id:"demo",name:"Demo",price:0,d:"جرّب أول العالم مجانًا"},{id:"std",name:"BLOCKFALL 3001",price:39.99,d:"اللعبة كاملة"},{id:"gold",name:"BLOCKFALL 3001 Gold",price:99.99,d:"الإصدار الذهبي",gold:true},{id:"dev",name:"BLOCKFALL 3001 المبرمج",price:null,studio:true,d:"فيه «المبرمج»: تعديل خلفية القائمة ومشهدها"}]},
+   editions:[{id:"demo",name:"Demo",price:0,d:"جرّب أول العالم مجانًا"},{id:"std",name:"BLOCKFALL 3001",price:39.99,d:"اللعبة كاملة"},{id:"gold",name:"BLOCKFALL 3001 Gold",price:99.99,d:"الإصدار الذهبي",gold:true}]},
+  // the Developer edition is its own program; it shows only for players who have it (the studio gives it)
+  {id:"blockfall-dev", title:"BLOCKFALL 3001 المطور", en:"BLOCKFALL 3001 DEV", ar:false, hidden:true, from:"blockfall", sub:"نسخة المطورين",
+   tagline:"نسخة المطورين من BLOCKFALL 3001: قائمة المطور وورشة المشاريع.",
+   about:["برنامج مستقل عن BLOCKFALL 3001 العادية، له أيقونته وعوالمه وإعداداته.", "يعطيها الاستوديو للمطورين."],
+   feat:["قائمة المطور","ورشة المشاريع","عوالم وإعدادات مستقلة"], tags:["مطورين"],
+   editions:[{id:"dev",name:"BLOCKFALL 3001 المطور",price:null,studio:true,d:"قائمة المطور وورشة المشاريع"}]},
   {id:"last-recording", title:"التسجيل الأخير", en:"THE LAST RECORDING", ar:true, sub:"رعب نفسي · قصة · أونلاين",
    tagline:"شريط واحد. ليلة واحدة. مول ما يطلع منه أحد.",
    about:["ليلة 3 نوفمبر 1999، الساعة 3:33 الفجر. مول متعدد الطوابق بإضاءة نيون، وكاميرا فيديو قديمة في يدك ما زالت تسجّل.",
@@ -73,6 +79,11 @@ const GAMES = [
 ];
 const RANK = {demo:0, std:1, gold:2, dev:3};
 const byId = id => GAMES.find(g => g.id === id);
+const SHOP = GAMES.filter(g => !g.hidden);   // what the store shows (hidden games show only in the owner's library)
+// BLOCKFALL's Developer edition is bought/given as blockfall__dev but is its own game here
+const libItem = v => v && v.game === "blockfall" && v.edition === "dev" ? {...v, game:"blockfall-dev"} : v;
+// games that install once for every edition (the player picks the edition inside the game's launcher)
+const oneInstall = gid => (MANIFEST.games[gid] || {}).type === "bf-launcher";
 // what you need to run each game
 const REQ = {
   blockfall:{min:[["النظام","Windows 10 64-bit"],["المعالج","Intel Core i3 / AMD Ryzen 3"],["الذاكرة","4 GB RAM"],["كرت الشاشة","Intel UHD 620 أو أفضل (WebGL 2)"],["المساحة","500 MB"]],
@@ -105,7 +116,7 @@ const cdHTML = gid => { const s = saleOf(gid); return s ? `<span class="cd" data
 const priceHTML = (gid, p) => { const s = saleOf(gid); return s && p > 0 ? `<span class="salepct">-${s.pct}%</span><s class="was">${money(p)}</s>${money(Math.round(finalPrice(p, s.pct) * 100) / 100)}` : money(p); };
 setInterval(() => { let gone = false; document.querySelectorAll(".cd[data-ends]").forEach(el => { const left = +el.dataset.ends - Date.now(); if (left <= 0) gone = true; const b = el.querySelector("b"); if (b) b.textContent = cdText(left); }); if (gone) render(); }, 1000);
 const edName = (g, id) => (g.editions.find(e => e.id === id) || {name:id}).name;
-GAMES.forEach(g => { for (const sel of ["#fGame", "#cGame"]) { const o = document.createElement("option"); o.value = g.id; o.textContent = g.en || g.title; $(sel).appendChild(o); } });
+SHOP.forEach(g => { for (const sel of ["#fGame", "#cGame"]) { const o = document.createElement("option"); o.value = g.id; o.textContent = g.en || g.title; $(sel).appendChild(o); } });
 let MANIFEST = {games:{}};
 /* latest versions straight from each game's own update source (the same one the game updates from) */
 let LATEST = {};
@@ -166,7 +177,7 @@ const covers = new Set();
 function cover(el, id){ const c = document.createElement("canvas"); el.prepend(c); const o = {c, id}; covers.add(o); paint(o); }
 function paint(o, t){ const box = o.c.parentElement; if (!box || !box.isConnected) return false; const dpr = Math.min(devicePixelRatio || 1, 2);
   const w = Math.max(40, box.clientWidth*dpr|0), h = Math.max(30, box.clientHeight*dpr|0); if (o.c.width !== w || o.c.height !== h){ o.c.width = w; o.c.height = h; }
-  const g = o.c.getContext("2d"); g.setTransform(1,0,0,1,0,0); g.shadowBlur = 0; g.textAlign = "left"; if (o.id === "blockfall") drawBlockfall(g,w,h); else drawHorror(g,w,h,t); return true; }
+  const g = o.c.getContext("2d"); g.setTransform(1,0,0,1,0,0); g.shadowBlur = 0; g.textAlign = "left"; if (o.id === "blockfall" || o.id === "blockfall-dev") drawBlockfall(g,w,h); else drawHorror(g,w,h,t); return true; }
 let rsT = 0; addEventListener("resize", () => { clearTimeout(rsT); rsT = setTimeout(() => { for (const o of [...covers]) if (!paint(o)) covers.delete(o); }, 150); });
 const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
 if (!reduce) setInterval(() => { const t = performance.now(); for (const o of [...covers]) { if (o.id !== "last-recording") continue; if (!o.c.isConnected) { covers.delete(o); continue; } paint(o, t); } }, 600);
@@ -230,7 +241,7 @@ const DONE_KEY = "ps-downloads-done";
 const loadDone = () => { try { return JSON.parse(localStorage.getItem(DONE_KEY) || "[]"); } catch(e) { return []; } };
 function addDone(key){ const l = loadDone().filter(d => d.key !== key); l.unshift({key, at:Date.now(), size:(SPEED[key] && SPEED[key].r) || 0}); try { localStorage.setItem(DONE_KEY, JSON.stringify(l.slice(0, 20))); } catch(e) {} delete SPEED[key]; }
 function clearDone(){ try { localStorage.removeItem(DONE_KEY); } catch(e) {} renderDownloads(); updateProgressUI(); }
-const keyTitle = key => { const v = INSTALLED[key], [gid, ed] = String(key).split("--"), g = byId(v ? v.game : gid), e = v ? v.edition : ed; return g ? (g.en || g.title) + (ED_TAG[e] ? " " + ED_TAG[e] : "") : key; };
+const keyTitle = key => { const v = INSTALLED[key], [gid, ed] = String(key).split("--"), g = byId(v ? v.game : gid), e = v ? v.edition : ed; return g ? (g.en || g.title) + (ED_TAG[e] && !oneInstall(g.id) ? " " + ED_TAG[e] : "") : key; };
 // updates waiting for an installed game (newer version on the server)
 const pendingUpdates = () => Object.entries(INSTALLED).filter(([k, v]) => { const L = LATEST[v.game], m = MANIFEST.games[v.game]; return m && m.type !== "bf-launcher" && L && L.version && v.version !== L.version && !PROGRESS[k]; });
 function updateProgressUI(){
@@ -282,11 +293,12 @@ const progText = p => p.phase === "extract" ? "جاري فك الملفات…" 
 
 /* the install / play block, Steam style. Every owned edition installs and plays as its own game. */
 const ED_TAG = {demo:"Demo", std:"Standard", gold:"Gold", dev:"المبرمج"};
-const sharedItems = () => Object.entries(SHARED).flatMap(([owner, o]) => Object.values(o.lib || {}).map(v => ({...v, owner, ownerName:o.name})));
+const sharedItems = () => Object.entries(SHARED).flatMap(([owner, o]) => Object.values(o.lib || {}).map(v => ({...libItem(v), owner, ownerName:o.name})));
 const ownedEds = gid => [...new Set(Object.values(LIB).filter(v => v.game === gid && v.status !== "pending").map(v => v.edition)
   .concat(sharedItems().filter(v => v.game === gid && v.status !== "pending").map(v => v.edition)))].sort((a, b) => RANK[a] - RANK[b]);
 const sharedFrom = gid => { const own = Object.values(LIB).some(v => v.game === gid && v.status !== "pending"); if (own) return ""; const x = sharedItems().find(v => v.game === gid && v.status !== "pending"); return x ? x.ownerName : ""; };
-const instOf = (gid, ed) => { for (const [k, v] of Object.entries(INSTALLED)) if (v.game === gid && v.edition === ed) return [k, v]; return [`${gid}--${ed}`, null]; };
+const instOf = (gid, ed) => { if (oneInstall(gid)) return [gid, INSTALLED[gid] || null];
+  for (const [k, v] of Object.entries(INSTALLED)) if (v.game === gid && v.edition === ed) return [k, v]; return [`${gid}--${ed}`, null]; };
 const anyInstalled = gid => Object.values(INSTALLED).some(v => v.game === gid);
 const keyGame = k => byId(INSTALLED[k] ? INSTALLED[k].game : String(k).split("--")[0]);
 function fmtPlay(gid){
@@ -298,13 +310,14 @@ function fmtPlay(gid){
 function installBlock(g){
   const eds = ownedEds(g.id);
   if (!eds.length) return "";
-  if (!PS) return `<div class="inststate remote"><span>تقدر تثبّتها على كمبيوترك من هنا: تبدأ تنزل أول ما يكون تطبيق Premium Games شغّال عليه.</span>${eds.map(ed => `<button class="btn mini" type="button" data-remote="${g.id}--${ed}">📲 ثبّت ${esc(ED_TAG[ed] || ed)} على كمبيوتري</button>`).join("")}</div>${isMobile ? "" : `<div class="edinsts">${eds.map(ed => edInstall(g, ed)).join("")}</div>`}`;
+  if (!PS) return `<div class="inststate remote"><span>تقدر تثبّتها على كمبيوترك من هنا: تبدأ تنزل أول ما يكون تطبيق Premium Games شغّال عليه.</span>${(oneInstall(g.id) ? eds.slice(-1) : eds).map(ed => `<button class="btn mini" type="button" data-remote="${g.id}--${ed}">📲 ثبّت ${oneInstall(g.id) ? "اللعبة" : esc(ED_TAG[ed] || ed)} على كمبيوتري</button>`).join("")}</div>${isMobile ? "" : `<div class="edinsts">${eds.map(ed => edInstall(g, ed)).join("")}</div>`}`;
+  if (oneInstall(g.id)) return `<div class="edinsts">${fmtPlay(g.id)}${edInstall(g, eds[eds.length - 1])}${eds.length > 1 ? `<span class="muted" style="font-size:12px">نسخك: ${eds.map(e => esc(ED_TAG[e] || e)).join(" · ")} — تختار النسخة من داخل اللانشر</span>` : ""}</div>`;
   return `<div class="edinsts">${fmtPlay(g.id)}${eds.map(ed => edInstall(g, ed)).join("")}</div>`;
 }
 function edInstall(g, ed){
   const m = MANIFEST.games[g.id], [key, inst] = instOf(g.id, ed), prog = PROGRESS[key];
   const a = `data-g="${key}" data-gid="${g.id}" data-ed="${ed}"`;
-  const head = `<div class="edinst-h"><b>${esc(g.en || g.title)}${ED_TAG[ed] ? ` <span class="tag">${ED_TAG[ed]}</span>` : ""}</b>`;
+  const head = `<div class="edinst-h"><b>${esc(g.en || g.title)}${ED_TAG[ed] && !oneInstall(g.id) ? ` <span class="tag">${ED_TAG[ed]}</span>` : ""}</b>`;
   if (!PS) return `<div class="edinst">${head}</div><button class="btn inst" data-act="getapp" ${a}>تثبيت</button></div>`;
   if (!PS.multiEdition) return `<div class="edinst">${head}</div><span class="muted" style="font-size:13px">حدّث تطبيق Premium Games: اقفله وافتحه.</span></div>`;
   if (prog) return `<div class="edinst">${head}<span class="num" data-progt>${progText(prog)}</span></div><div class="bar" data-prog="${key}"><i style="width:${pct(prog)}%"></i></div></div>`;
@@ -356,7 +369,7 @@ let heroIdx = 0, heroT = 0;
 function lowPrice(g){ return Math.min(...g.editions.filter(e => e.price > 0).map(e => salePrice(g.id, e.price))); }
 const lowBase = g => Math.min(...g.editions.filter(e => e.price > 0).map(e => e.price));
 function renderHero(){
-  const g = GAMES[heroIdx], {best} = ent(g.id);
+  const g = SHOP[heroIdx % SHOP.length], {best} = ent(g.id);
   const h = $("#hero"); h.innerHTML = `<div class="art"></div><div class="side">
     <div class="eyebrow">FEATURED · ${esc(g.en || g.title)}</div>
     <h1 class="gtitle ${g.ar ? "ar" : ""}">${esc(g.title)}</h1>
@@ -364,7 +377,7 @@ function renderHero(){
     <div class="tags">${g.tags.map(t => `<span class="tag">${esc(t)}</span>`).join("")}</div>
     <div class="price">${best ? '<span class="own">في مكتبتك ✓</span>' : `<small>يبدأ من </small>${priceHTML(g.id, lowBase(g))}`}</div>${best ? "" : cdHTML(g.id)}
     <div class="row"><a class="btn buy" href="#${g.id}">صفحة اللعبة</a>${best ? "" : `<button class="btn ghost" data-demo="${g.id}">جرّب الديمو مجانًا</button>`}</div>
-    <div class="dots">${GAMES.map((x, i) => `<button aria-label="${esc(x.en || x.title)}" aria-current="${i === heroIdx}" data-i="${i}"></button>`).join("")}</div></div>`;
+    <div class="dots">${SHOP.map((x, i) => `<button aria-label="${esc(x.en || x.title)}" aria-current="${i === heroIdx}" data-i="${i}"></button>`).join("")}</div></div>`;
   cover(h.querySelector(".art"), g.id);
   h.querySelectorAll(".dots button").forEach(b => b.onclick = () => { heroIdx = +b.dataset.i; renderHero(); restartHero(); });
   const d = h.querySelector("[data-demo]"); if (d) d.onclick = () => buy(g, g.editions[0]);
@@ -372,7 +385,7 @@ function renderHero(){
 function restartHero(){ clearInterval(heroT); if (!reduce) heroT = setInterval(() => { if (curView !== "store" || !$("#modal").hidden) return; heroIdx = (heroIdx + 1) % GAMES.length; renderHero(); }, 8000); }
 function renderGrid(){
   const box = $("#grid"); box.innerHTML = "";
-  GAMES.forEach(g => { const {best} = ent(g.id);
+  SHOP.forEach(g => { const {best} = ent(g.id);
     const a = document.createElement("a"); a.className = "card"; a.href = "#" + g.id;
     a.innerHTML = `<div class="art"></div><div class="body"><div class="t ${g.ar ? "ar" : ""}">${esc(g.title)}</div><div class="muted" style="font-size:13px">${esc(g.sub)}</div>
       <div class="ft">${best ? `<span class="own">في مكتبتك · ${esc(edName(g, best.edition))}${anyInstalled(g.id) ? " · مثبتة" : ""}</span>` : '<span class="tag">ديمو مجاني</span>'}<span class="price" style="font-size:16px">${priceHTML(g.id, lowBase(g))}</span></div>${saleOf(g.id) ? cdHTML(g.id) : ""}</div>`;
@@ -1104,7 +1117,7 @@ function renderGifts(){
 }
 function renderSales(){
   const box = $("#saleRows"); if (!box) return;
-  box.innerHTML = GAMES.map(g => { const s = saleOf(g.id);
+  box.innerHTML = SHOP.map(g => { const s = saleOf(g.id);
     return `<div class="prop salerow"><b>${esc(g.en || g.title)}</b>${s ? `<span class="okmsg">شغّال: خصم ${s.pct}%${s.title ? " · " + esc(s.title) : ""} · ${cdHTML(g.id)}</span>` : '<span class="muted">ما عليها تخفيض</span>'}
       <div class="row" style="gap:6px;flex-wrap:wrap"><label class="fld mini">الخصم %<input type="number" min="1" max="90" step="1" value="${s ? s.pct : 20}" data-sp="${g.id}" dir="ltr"></label>
       <label class="fld mini">المدة (أيام)<input type="number" min="1" max="60" step="1" value="3" data-sd="${g.id}" dir="ltr"></label>
@@ -1435,7 +1448,7 @@ onAuthStateChanged(auth, async u => {
     try { await ensureProfile(u, pendingName, pendingUname); } catch(e) { toast("ما قدرت أفتح حسابك في قاعدة البيانات: " + (e.code || e.message)); }
     unsubs.push(onSnapshot(doc(fs, "users", u.uid), s => { PROFILE = s.exists() ? s.data() : null; applyChrome(); sendUserToApp();
       if (PROFILE && PROFILE.pid && !PROFILE.username && !$("#uf")) askUsername(u); if (curView === "account") renderAccount(); if (curView === "coins") renderCoins(); }));
-    unsubs.push(onSnapshot(collection(fs, "users", u.uid, "library"), s => { LIB = {}; s.forEach(d => LIB[d.id] = d.data()); render(); autoInstall(); sendOwned(); }, e => toast("ما قدرت أقرأ مكتبتك: " + e.code)));
+    unsubs.push(onSnapshot(collection(fs, "users", u.uid, "library"), s => { LIB = {}; s.forEach(d => LIB[d.id] = libItem(d.data())); render(); autoInstall(); sendOwned(); }, e => toast("ما قدرت أقرأ مكتبتك: " + e.code)));
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "friends"), s => { FRIENDS = {}; s.forEach(d => FRIENDS[d.id] = d.data()); watchChats(); frBadge(); watchPresence(); if (curView === "friends") renderFriends(); }, () => {}));
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "achievements"), s => { ACH = {}; s.forEach(d => ACH[d.id] = d.data()); publishProfile(); if (curView === "account") renderProfile(); }, () => {}));
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "cards"), s => { CARDS = {}; s.forEach(d => CARDS[d.id] = d.data()); if (curView === "account") renderAccount(); if (curView === "market") renderMarket(); }, () => {}));
