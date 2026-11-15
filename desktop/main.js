@@ -576,9 +576,7 @@ function launchGame(id, edition) {
     const { spawn } = require('child_process');
     const child = spawn(V.exe, ['--premium'], { cwd: V.dir, detached: true, stdio: 'ignore' });
     // the starting window stays until BLOCKFALL shows up
-    (async () => { const t0 = Date.now(); while (splashKey === id && Date.now() - t0 < 30000) { await new Promise(r => setTimeout(r, 700)); if (await bfAlive(g.game || id)) break; } if (splashKey === id) closeSplash();
-      // launchers up to 1.8.6 delete any icon with their name when Premium Games runs them, ours included: put ours back
-      setTimeout(() => { const r = readReg()[id]; if (r) makeShortcuts(id, r); }, 4000); })();
+    (async () => { const t0 = Date.now(); while (splashKey === id && Date.now() - t0 < 30000) { await new Promise(r => setTimeout(r, 700)); if (await bfAlive(g.game || id)) break; } if (splashKey === id) closeSplash(); })();
     child.unref();
     markRunning(id);
     return;
