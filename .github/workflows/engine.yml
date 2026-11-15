@@ -33,7 +33,7 @@ jobs:
       - name: Software OpenGL for the test machine (the CI runner has no GPU)
         shell: bash
         run: |
-          gh release download 26.2.6 -R pal1000/mesa-dist-win -p "mesa3d-*-release-msvc.7z" -D mesa
+          gh release download 24.3.4 -R pal1000/mesa-dist-win -p "mesa3d-*-release-msvc.7z" -D mesa
           ls -la mesa
           7z x mesa/*.7z -omesa/x -y | tail -3
           find mesa/x -iname "*.dll" | head -60
