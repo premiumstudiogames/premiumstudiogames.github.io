@@ -1,7 +1,7 @@
 // Firestore rules tests (run in CI with the emulator)
 import { initializeTestEnvironment, assertSucceeds, assertFails } from '@firebase/rules-unit-testing';
 import { readFileSync } from 'fs';
-import { doc, setDoc, getDoc, getDocs, collection, writeBatch, serverTimestamp, updateDoc, increment, query, where } from 'firebase/firestore';
+import { doc, setDoc, getDoc, getDocs, collection, writeBatch, serverTimestamp, updateDoc, increment, query, where, deleteDoc } from 'firebase/firestore';
 const env = await initializeTestEnvironment({ projectId: 'premium-studio-test', firestore: { rules: readFileSync('firestore.rules', 'utf8'), host: '127.0.0.1', port: 8080 } });
 let failed = 0; const ok = async (name, p) => { try { await p; console.log('PASS', name); } catch (e) { failed++; console.log('FAIL', name, e.message.slice(0, 300)); } };
 await env.withSecurityRulesDisabled(async c => {
@@ -78,6 +78,25 @@ await ok('others read the world', assertSucceeds(getDoc(doc(C, 'workshop/W1/part
 await ok('register a device', assertSucceeds(setDoc(doc(A, 'users/A/devices/d1'), { name: 'Windows', first: serverTimestamp(), last: serverTimestamp() })));
 await ok('sign out everywhere', assertSucceeds(setDoc(doc(A, 'users/A/meta/security'), { signOutBefore: serverTimestamp() })));
 await ok('nobody else sees your devices', assertFails(getDocs(collection(B, 'users/A/devices'))));
+// developers' project library (BLOCKFALL Developer edition)
+await env.withSecurityRulesDisabled(async c => { const d = c.firestore();
+  await setDoc(doc(d, 'users/A/library/blockfall__dev'), { game: 'blockfall', edition: 'dev', status: 'granted', price: 0 });
+  await setDoc(doc(d, 'users/B/library/blockfall__dev'), { game: 'blockfall', edition: 'dev', status: 'granted', price: 0 }); });
+const proj = (o) => Object.assign({ kind: 'dungeon', key: 'k', name: 'مشروع', desc: '', data: '{}', ver: '00.00.69', byName: 'alice', updated: new Date(), public: false, ownerId: 'A', ownerName: 'alice', members: { A: { name: 'alice', role: 'owner' } }, memberIds: ['A'], rev: 1, created: new Date() }, o);
+await ok('developer saves a project', assertSucceeds(setDoc(doc(A, 'bfDevProjects/p1'), proj())));
+await ok('non-developer cannot save projects', assertFails(setDoc(doc(C, 'bfDevProjects/p2'), proj({ ownerId: 'C', memberIds: ['C'], members: { C: { name: 'carl', role: 'owner' } } }))));
+await ok('cannot create a project for someone else', assertFails(setDoc(doc(A, 'bfDevProjects/p3'), proj({ ownerId: 'B', memberIds: ['B'] }))));
+await ok('private project hidden from others', assertFails(getDoc(doc(B, 'bfDevProjects/p1'))));
+await ok('member adds a developer', assertSucceeds(updateDoc(doc(A, 'bfDevProjects/p1'), { 'members.B': { name: 'bob', role: 'editor' }, memberIds: ['A', 'B'] })));
+await ok('member reads and edits it', assertSucceeds((async () => { await getDoc(doc(B, 'bfDevProjects/p1')); await updateDoc(doc(B, 'bfDevProjects/p1'), { data: '{"x":1}', rev: 2, updated: new Date() }); })()));
+await ok('member cannot remove the owner', assertFails(updateDoc(doc(B, 'bfDevProjects/p1'), { memberIds: ['B'] })));
+await ok('member cannot take ownership', assertFails(updateDoc(doc(B, 'bfDevProjects/p1'), { ownerId: 'B' })));
+await ok('member cannot delete', assertFails(deleteDoc(doc(B, 'bfDevProjects/p1'))));
+await ok('max 20 developers', assertFails(updateDoc(doc(A, 'bfDevProjects/p1'), { memberIds: ['A', 'B', ...Array.from({ length: 19 }, (_, i) => 'x' + i)] })));
+await ok('member can leave', assertSucceeds(updateDoc(doc(B, 'bfDevProjects/p1'), { memberIds: ['A'] })));
+await ok('public project visible to everyone signed in', assertSucceeds((async () => { await updateDoc(doc(A, 'bfDevProjects/p1'), { public: true }); await getDocs(query(collection(C, 'bfDevProjects'), where('public', '==', true))); })()));
+await ok('project list by member', assertSucceeds(getDocs(query(collection(A, 'bfDevProjects'), where('memberIds', 'array-contains', 'A')))));
+await ok('owner deletes', assertSucceeds(deleteDoc(doc(A, 'bfDevProjects/p1'))));
 // sales
 await ok('players cannot start a sale', assertFails(setDoc(doc(A, 'sales/blockfall'), { pct: 50, ends: new Date(Date.now() + 864e5), title: '', at: serverTimestamp() })));
 await ok('no sale price without a sale', assertFails(setDoc(doc(B, 'users/B/library/last-recording__std'), { game: 'last-recording', edition: 'std', price: 69.99 * 75 / 100, status: 'pending', sale: true, at: serverTimestamp() })));

@@ -340,6 +340,29 @@ service cloud.firestore {
       allow list, create, update, delete: if isAdmin();
     }
 
+    // BLOCKFALL developers' project library (Developer launcher 1.8.9+). Only players who own the Developer edition
+    // write; members edit together; any member may add a developer (max 20); only the owner removes others (anyone may leave);
+    // the owner can't be removed; public projects are visible to every signed-in player.
+    function devOwner() { return signedIn() && ownsEd('blockfall', 'dev'); }
+    function projOk(d) {
+      return d.ownerId is string && d.memberIds is list && d.memberIds.size() >= 1 && d.memberIds.size() <= 20
+        && d.ownerId in d.memberIds && d.public is bool
+        && (!('data' in d) || (d.data is string && d.data.size() <= 900000))
+        && (!('name' in d) || (d.name is string && d.name.size() <= 60))
+        && (!('desc' in d) || (d.desc is string && d.desc.size() <= 500));
+    }
+    match /bfDevProjects/{id} {
+      allow read: if signedIn() && (resource.data.public == true || request.auth.uid in resource.data.memberIds || resource.data.ownerId == request.auth.uid);
+      allow create: if devOwner() && projOk(request.resource.data)
+        && request.resource.data.ownerId == request.auth.uid && request.resource.data.memberIds == [request.auth.uid];
+      allow update: if devOwner() && request.auth.uid in resource.data.memberIds && projOk(request.resource.data)
+        && request.resource.data.ownerId == resource.data.ownerId
+        && (resource.data.memberIds.toSet().difference(request.resource.data.memberIds.toSet()).size() == 0
+            || request.auth.uid == resource.data.ownerId
+            || resource.data.memberIds.toSet().difference(request.resource.data.memberIds.toSet()) == [request.auth.uid].toSet());
+      allow delete: if signedIn() && resource.data.ownerId == request.auth.uid;
+    }
+
     // Sales: the studio sets a % off a game until a time; everyone sees it, purchases use it
     function saleOf(g) { return get(/databases/$(database)/documents/sales/$(g)).data; }
     function saleOn(g) {
