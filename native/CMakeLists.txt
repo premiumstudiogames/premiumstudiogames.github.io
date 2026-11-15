@@ -114,4 +114,4 @@ endforeach()
 
 # engine tests (no window needed)
 add_executable(PremiumEngineTests tests/tests.cpp)
-target_link_libraries(PremiumEngineTests PRIVATE pgcore)
+target_link_libraries(PremiumEngineTests PRIVATE pgcore SDL2::SDL2main)   # tests.cpp includes SDL.h, which renames main
