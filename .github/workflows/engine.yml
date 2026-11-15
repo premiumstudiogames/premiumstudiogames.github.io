@@ -1,0 +1,95 @@
+name: Premium Engine (Windows)
+
+# Builds the C++ engine (editor + game player) with MSVC, runs the engine tests,
+# starts the editor and a packaged game for real (software OpenGL), and publishes
+# PremiumEngine-<version>-Windows.zip as a GitHub release.
+on:
+  push:
+    branches: [main]
+    paths: ['native/**', '.github/workflows/engine.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 75
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S native -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Engine tests (project files, physics, scripts, game rules)
+        run: build\Release\PremiumEngineTests.exe
+
+      - name: Software OpenGL for the test machine (the CI runner has no GPU)
+        shell: bash
+        run: |
+          gh release download 26.2.6 -R pal1000/mesa-dist-win -p "mesa3d-*-release-msvc.7z" -D mesa
+          7z x mesa/*.7z -omesa/x -y > /dev/null
+          mkdir -p run
+          cp -r build/Release/* run/
+          cp mesa/x/x64/*.dll run/
+
+      - name: Editor self-test (new project, play, package)
+        shell: bash
+        env:
+          GALLIUM_DRIVER: llvmpipe
+        run: |
+          mkdir -p selftest
+          ./run/PremiumEngine.exe --selftest "$PWD/selftest" || { cat selftest/editor-result.txt; exit 1; }
+          cat selftest/editor-result.txt | head -4
+
+      - name: Packaged game self-test (walks forward)
+        shell: bash
+        env:
+          GALLIUM_DRIVER: llvmpipe
+        run: |
+          GAME=$(ls -d "$USERPROFILE"/Documents/PremiumEngine/Builds/*/Windows | head -1)
+          NAME=$(basename "$(dirname "$GAME")")
+          cp mesa/x/x64/*.dll "$GAME/"
+          ls -la "$GAME"
+          "$GAME/$NAME.exe" --selftest "$PWD/selftest" || { cat selftest/player-result.txt; exit 1; }
+          cat selftest/player-result.txt
+
+      - name: Screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selftest
+          path: selftest
+
+      - name: Zip
+        id: zip
+        shell: bash
+        run: |
+          VER=$(cat build/version.txt)
+          mkdir -p dist/PremiumEngine
+          cp build/Release/PremiumEngine.exe build/Release/PremiumEnginePlayer.exe dist/PremiumEngine/
+          cp -r build/Release/assets dist/PremiumEngine/
+          cp native/README.md dist/PremiumEngine/README.md
+          cp native/THIRD_PARTY.md dist/PremiumEngine/THIRD_PARTY.md
+          cd dist && 7z a -tzip "PremiumEngine-$VER-Windows.zip" PremiumEngine > /dev/null
+          ls -la
+          echo "ver=$VER" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          VER=${{ steps.zip.outputs.ver }}
+          TAG="engine-$VER"
+          ZIP="dist/PremiumEngine-$VER-Windows.zip"
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" "$ZIP" --clobber
+          else
+            gh release create "$TAG" "$ZIP" --title "Premium Engine $VER (experimental)" --notes-file native/RELEASE.md
+          fi

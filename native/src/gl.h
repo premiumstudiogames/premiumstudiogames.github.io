@@ -1,0 +1,157 @@
+#pragma once
+// Minimal OpenGL 3.3 core loader (function pointers loaded through SDL).
+#include <GL/glcorearb.h>
+
+#define PGE_GL_FUNCS(X) \
+  X(PFNGLCLEARPROC, glClear) \
+  X(PFNGLCLEARCOLORPROC, glClearColor) \
+  X(PFNGLVIEWPORTPROC, glViewport) \
+  X(PFNGLENABLEPROC, glEnable) \
+  X(PFNGLDISABLEPROC, glDisable) \
+  X(PFNGLBLENDFUNCPROC, glBlendFunc) \
+  X(PFNGLDEPTHFUNCPROC, glDepthFunc) \
+  X(PFNGLDEPTHMASKPROC, glDepthMask) \
+  X(PFNGLCULLFACEPROC, glCullFace) \
+  X(PFNGLPOLYGONOFFSETPROC, glPolygonOffset) \
+  X(PFNGLLINEWIDTHPROC, glLineWidth) \
+  X(PFNGLPOLYGONMODEPROC, glPolygonMode) \
+  X(PFNGLREADPIXELSPROC, glReadPixels) \
+  X(PFNGLPIXELSTOREIPROC, glPixelStorei) \
+  X(PFNGLGETINTEGERVPROC, glGetIntegerv) \
+  X(PFNGLDRAWARRAYSPROC, glDrawArrays) \
+  X(PFNGLDRAWELEMENTSPROC, glDrawElements) \
+  X(PFNGLGENVERTEXARRAYSPROC, glGenVertexArrays) \
+  X(PFNGLBINDVERTEXARRAYPROC, glBindVertexArray) \
+  X(PFNGLDELETEVERTEXARRAYSPROC, glDeleteVertexArrays) \
+  X(PFNGLGENBUFFERSPROC, glGenBuffers) \
+  X(PFNGLBINDBUFFERPROC, glBindBuffer) \
+  X(PFNGLBUFFERDATAPROC, glBufferData) \
+  X(PFNGLBUFFERSUBDATAPROC, glBufferSubData) \
+  X(PFNGLDELETEBUFFERSPROC, glDeleteBuffers) \
+  X(PFNGLENABLEVERTEXATTRIBARRAYPROC, glEnableVertexAttribArray) \
+  X(PFNGLVERTEXATTRIBPOINTERPROC, glVertexAttribPointer) \
+  X(PFNGLCREATESHADERPROC, glCreateShader) \
+  X(PFNGLSHADERSOURCEPROC, glShaderSource) \
+  X(PFNGLCOMPILESHADERPROC, glCompileShader) \
+  X(PFNGLGETSHADERIVPROC, glGetShaderiv) \
+  X(PFNGLGETSHADERINFOLOGPROC, glGetShaderInfoLog) \
+  X(PFNGLCREATEPROGRAMPROC, glCreateProgram) \
+  X(PFNGLATTACHSHADERPROC, glAttachShader) \
+  X(PFNGLLINKPROGRAMPROC, glLinkProgram) \
+  X(PFNGLGETPROGRAMIVPROC, glGetProgramiv) \
+  X(PFNGLGETPROGRAMINFOLOGPROC, glGetProgramInfoLog) \
+  X(PFNGLDELETESHADERPROC, glDeleteShader) \
+  X(PFNGLDELETEPROGRAMPROC, glDeleteProgram) \
+  X(PFNGLUSEPROGRAMPROC, glUseProgram) \
+  X(PFNGLGETUNIFORMLOCATIONPROC, glGetUniformLocation) \
+  X(PFNGLUNIFORM1IPROC, glUniform1i) \
+  X(PFNGLUNIFORM1FPROC, glUniform1f) \
+  X(PFNGLUNIFORM2FPROC, glUniform2f) \
+  X(PFNGLUNIFORM3FPROC, glUniform3f) \
+  X(PFNGLUNIFORM3FVPROC, glUniform3fv) \
+  X(PFNGLUNIFORM4FPROC, glUniform4f) \
+  X(PFNGLUNIFORM1FVPROC, glUniform1fv) \
+  X(PFNGLUNIFORM1IVPROC, glUniform1iv) \
+  X(PFNGLUNIFORMMATRIX4FVPROC, glUniformMatrix4fv) \
+  X(PFNGLGENTEXTURESPROC, glGenTextures) \
+  X(PFNGLBINDTEXTUREPROC, glBindTexture) \
+  X(PFNGLTEXIMAGE2DPROC, glTexImage2D) \
+  X(PFNGLTEXPARAMETERIPROC, glTexParameteri) \
+  X(PFNGLTEXPARAMETERFVPROC, glTexParameterfv) \
+  X(PFNGLDELETETEXTURESPROC, glDeleteTextures) \
+  X(PFNGLACTIVETEXTUREPROC, glActiveTexture) \
+  X(PFNGLGENFRAMEBUFFERSPROC, glGenFramebuffers) \
+  X(PFNGLBINDFRAMEBUFFERPROC, glBindFramebuffer) \
+  X(PFNGLFRAMEBUFFERTEXTURE2DPROC, glFramebufferTexture2D) \
+  X(PFNGLCHECKFRAMEBUFFERSTATUSPROC, glCheckFramebufferStatus) \
+  X(PFNGLDELETEFRAMEBUFFERSPROC, glDeleteFramebuffers) \
+  X(PFNGLDRAWBUFFERPROC, glDrawBuffer) \
+  X(PFNGLREADBUFFERPROC, glReadBuffer) \
+  X(PFNGLGENRENDERBUFFERSPROC, glGenRenderbuffers) \
+  X(PFNGLBINDRENDERBUFFERPROC, glBindRenderbuffer) \
+  X(PFNGLRENDERBUFFERSTORAGEPROC, glRenderbufferStorage) \
+  X(PFNGLFRAMEBUFFERRENDERBUFFERPROC, glFramebufferRenderbuffer) \
+  X(PFNGLDELETERENDERBUFFERSPROC, glDeleteRenderbuffers) \
+  X(PFNGLGETSTRINGPROC, glGetString) \
+  X(PFNGLSCISSORPROC, glScissor) \
+  X(PFNGLCOLORMASKPROC, glColorMask) \
+  X(PFNGLGETERRORPROC, glGetError) \
+
+#define PGE_GL_DECL(T, n) extern T pge_##n;
+PGE_GL_FUNCS(PGE_GL_DECL)
+#undef PGE_GL_DECL
+#define glClear pge_glClear
+#define glClearColor pge_glClearColor
+#define glViewport pge_glViewport
+#define glEnable pge_glEnable
+#define glDisable pge_glDisable
+#define glBlendFunc pge_glBlendFunc
+#define glDepthFunc pge_glDepthFunc
+#define glDepthMask pge_glDepthMask
+#define glCullFace pge_glCullFace
+#define glPolygonOffset pge_glPolygonOffset
+#define glLineWidth pge_glLineWidth
+#define glPolygonMode pge_glPolygonMode
+#define glReadPixels pge_glReadPixels
+#define glPixelStorei pge_glPixelStorei
+#define glGetIntegerv pge_glGetIntegerv
+#define glDrawArrays pge_glDrawArrays
+#define glDrawElements pge_glDrawElements
+#define glGenVertexArrays pge_glGenVertexArrays
+#define glBindVertexArray pge_glBindVertexArray
+#define glDeleteVertexArrays pge_glDeleteVertexArrays
+#define glGenBuffers pge_glGenBuffers
+#define glBindBuffer pge_glBindBuffer
+#define glBufferData pge_glBufferData
+#define glBufferSubData pge_glBufferSubData
+#define glDeleteBuffers pge_glDeleteBuffers
+#define glEnableVertexAttribArray pge_glEnableVertexAttribArray
+#define glVertexAttribPointer pge_glVertexAttribPointer
+#define glCreateShader pge_glCreateShader
+#define glShaderSource pge_glShaderSource
+#define glCompileShader pge_glCompileShader
+#define glGetShaderiv pge_glGetShaderiv
+#define glGetShaderInfoLog pge_glGetShaderInfoLog
+#define glCreateProgram pge_glCreateProgram
+#define glAttachShader pge_glAttachShader
+#define glLinkProgram pge_glLinkProgram
+#define glGetProgramiv pge_glGetProgramiv
+#define glGetProgramInfoLog pge_glGetProgramInfoLog
+#define glDeleteShader pge_glDeleteShader
+#define glDeleteProgram pge_glDeleteProgram
+#define glUseProgram pge_glUseProgram
+#define glGetUniformLocation pge_glGetUniformLocation
+#define glUniform1i pge_glUniform1i
+#define glUniform1f pge_glUniform1f
+#define glUniform2f pge_glUniform2f
+#define glUniform3f pge_glUniform3f
+#define glUniform3fv pge_glUniform3fv
+#define glUniform4f pge_glUniform4f
+#define glUniform1fv pge_glUniform1fv
+#define glUniform1iv pge_glUniform1iv
+#define glUniformMatrix4fv pge_glUniformMatrix4fv
+#define glGenTextures pge_glGenTextures
+#define glBindTexture pge_glBindTexture
+#define glTexImage2D pge_glTexImage2D
+#define glTexParameteri pge_glTexParameteri
+#define glTexParameterfv pge_glTexParameterfv
+#define glDeleteTextures pge_glDeleteTextures
+#define glActiveTexture pge_glActiveTexture
+#define glGenFramebuffers pge_glGenFramebuffers
+#define glBindFramebuffer pge_glBindFramebuffer
+#define glFramebufferTexture2D pge_glFramebufferTexture2D
+#define glCheckFramebufferStatus pge_glCheckFramebufferStatus
+#define glDeleteFramebuffers pge_glDeleteFramebuffers
+#define glDrawBuffer pge_glDrawBuffer
+#define glReadBuffer pge_glReadBuffer
+#define glGenRenderbuffers pge_glGenRenderbuffers
+#define glBindRenderbuffer pge_glBindRenderbuffer
+#define glRenderbufferStorage pge_glRenderbufferStorage
+#define glFramebufferRenderbuffer pge_glFramebufferRenderbuffer
+#define glDeleteRenderbuffers pge_glDeleteRenderbuffers
+#define glGetString pge_glGetString
+#define glScissor pge_glScissor
+#define glColorMask pge_glColorMask
+#define glGetError pge_glGetError
+
+bool pgeLoadGL();  // call after the GL context is created; false if a function is missing

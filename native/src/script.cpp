@@ -1,0 +1,243 @@
+#include "script.h"
+#include "log.h"
+#include <quickjs.h>
+#include <chrono>
+#include <cctype>
+#include <map>
+
+namespace pge {
+
+std::string keyAlias(const std::string& k0) {
+  std::string k = k0;
+  if (k.size() == 1 && std::isalpha((unsigned char)k[0])) return std::string("Key") + (char)std::toupper((unsigned char)k[0]);
+  if (k.size() == 1 && std::isdigit((unsigned char)k[0])) return "Digit" + k;
+  std::string l; for (char c : k) l += (char)std::tolower((unsigned char)c);
+  static const std::map<std::string, std::string> M = {{"space", "Space"}, {"shift", "ShiftLeft"}, {"ctrl", "ControlLeft"}, {"control", "ControlLeft"}, {"alt", "AltLeft"},
+    {"up", "ArrowUp"}, {"down", "ArrowDown"}, {"left", "ArrowLeft"}, {"right", "ArrowRight"}, {"enter", "Enter"}, {"escape", "Escape"}, {"esc", "Escape"}, {"tab", "Tab"}};
+  auto it = M.find(l); return it != M.end() ? it->second : k;
+}
+
+static const char* PRELUDE = R"JS(
+"use strict";
+const __n = globalThis.__n;
+class Vec3 {
+  constructor(x = 0, y = 0, z = 0) { this.x = +x; this.y = +y; this.z = +z; }
+  set(x, y, z) { this.x = +x; this.y = +y; this.z = +z; return this; }
+  copy(v) { return this.set(v.x, v.y, v.z); }
+  clone() { return new Vec3(this.x, this.y, this.z); }
+  add(v) { return this.set(this.x + v.x, this.y + v.y, this.z + v.z); }
+  sub(v) { return this.set(this.x - v.x, this.y - v.y, this.z - v.z); }
+  multiplyScalar(s) { return this.set(this.x * s, this.y * s, this.z * s); }
+  addScaledVector(v, s) { return this.set(this.x + v.x * s, this.y + v.y * s, this.z + v.z * s); }
+  lerp(v, t) { return this.set(this.x + (v.x - this.x) * t, this.y + (v.y - this.y) * t, this.z + (v.z - this.z) * t); }
+  dot(v) { return this.x * v.x + this.y * v.y + this.z * v.z; }
+  lengthSq() { return this.x * this.x + this.y * this.y + this.z * this.z; }
+  length() { return Math.sqrt(this.lengthSq()); }
+  normalize() { const l = this.length() || 1; return this.multiplyScalar(1 / l); }
+  distanceTo(v) { return Math.hypot(this.x - v.x, this.y - v.y, this.z - v.z); }
+  toArray() { return [this.x, this.y, this.z]; }
+  toString() { return `(${this.x.toFixed(2)}, ${this.y.toFixed(2)}, ${this.z.toFixed(2)})`; }
+}
+// a live vector: reading/writing x, y, z goes straight to the actor
+class Vec3Ref {
+  constructor(id, f) { this._id = id; this._f = f; }
+  get x() { return __n.getc(this._id, this._f, 0); } set x(v) { __n.setc(this._id, this._f, 0, +v); }
+  get y() { return __n.getc(this._id, this._f, 1); } set y(v) { __n.setc(this._id, this._f, 1, +v); }
+  get z() { return __n.getc(this._id, this._f, 2); } set z(v) { __n.setc(this._id, this._f, 2, +v); }
+  set(x, y, z) { __n.setv(this._id, this._f, +x, +y, +z); return this; }
+  copy(v) { return this.set(v.x, v.y, v.z); }
+  clone() { const a = __n.getv(this._id, this._f); return new Vec3(a[0], a[1], a[2]); }
+  add(v) { return this.copy(this.clone().add(v)); }
+  sub(v) { return this.copy(this.clone().sub(v)); }
+  multiplyScalar(s) { return this.copy(this.clone().multiplyScalar(s)); }
+  addScaledVector(v, s) { return this.copy(this.clone().addScaledVector(v, s)); }
+  lerp(v, t) { return this.copy(this.clone().lerp(v, t)); }
+  length() { return this.clone().length(); }
+  distanceTo(v) { return this.clone().distanceTo(v); }
+  toArray() { return this.clone().toArray(); }
+  toString() { return this.clone().toString(); }
+  toJSON() { return this.toArray(); }
+}
+const __xyz = (x, y, z) => (x !== null && typeof x === 'object') ? [+x.x || 0, +x.y || 0, +x.z || 0] : [+x || 0, +y || 0, +z || 0];
+const __apis = new Map();
+const __player = { name: 'Player', isPlayer: true, tags: [],
+  get position() { const a = __n.playerPos(); return new Vec3(a[0], a[1], a[2]); },
+  teleport(x, y, z) { __n.teleport(...__xyz(x, y, z)); },
+  launch(x, y, z) { __n.launch(...__xyz(x, y, z)); } };
+function __api(id) {
+  if (!id) return null; if (id === '@player') return __player;
+  let a = __apis.get(id); if (a) return a;
+  const info = JSON.parse(__n.info(id));
+  a = { id, name: info.name, type: info.type, tags: info.tags,
+    position: new Vec3Ref(id, 'p'), rotation: new Vec3Ref(id, 'r'), scale: new Vec3Ref(id, 's'),
+    get worldPosition() { const v = __n.worldPos(id); return new Vec3(v[0], v[1], v[2]); },
+    get visible() { return __n.getVisible(id); }, set visible(v) { __n.setVisible(id, !!v); },
+    get alive() { return __n.exists(id); },
+    setColor(c) { __n.setColor(id, String(c)); },
+    setText(t) { __n.setText(id, String(t)); },
+    addForce(x, y, z) { __n.addForce(id, ...__xyz(x, y, z)); },
+    setVelocity(x, y, z) { __n.setv(id, 'v', ...__xyz(x, y, z)); },
+    get velocity() { const v = __n.getv(id, 'v'); return new Vec3(v[0], v[1], v[2]); },
+    distanceTo(o) { const p = o && o.isPlayer ? o.position : (o && o.worldPosition) ? o.worldPosition : o; return this.worldPosition.distanceTo(p); },
+    lookAt(x, y, z) { __n.lookAt(id, ...__xyz(x, y, z)); },
+    destroy() { __n.destroy(id); } };
+  __apis.set(id, a); return a;
+}
+const world = { vars: {},
+  get time() { return __n.time(); }, get player() { return __player; },
+  find(name) { const id = __n.find(String(name)); return id ? __api(id) : null; },
+  findAll(tag) { return __n.findAll(String(tag)).map(__api); },
+  spawn(mesh, o = {}) { return __api(__n.spawn(String(mesh), JSON.stringify(o || {}))); },
+  destroy(x) { __n.destroy(x && x.id ? x.id : String(x)); },
+  message(t, sec = 3) { __n.message(String(t), +sec || 3); },
+  hud(id, t) { __n.hud(String(id), String(t)); },
+  restart() { __n.restart(); },
+  setGravity(y) { __n.setGravity(+y); } };
+const input = { key(k) { return __n.key(String(k)); }, pressed(k) { return __n.pressed(String(k)); },
+  get mouse() { const m = __n.mouse(); return { dx: m[0], dy: m[1], left: !!m[2], right: !!m[3] }; } };
+const math = { clamp: (v, a, b) => Math.max(a, Math.min(b, v)), lerp: (a, b, t) => a + (b - a) * t, random: (a = 0, b = 1) => a + Math.random() * (b - a), vec3: (x, y, z) => new Vec3(x, y, z) };
+const THREE = { Vector3: Vec3, MathUtils: { clamp: math.clamp, lerp: math.lerp, degToRad: d => d * Math.PI / 180, radToDeg: r => r * 180 / Math.PI } };
+globalThis.__make = function (fn, id, name) {
+  const log = (...m) => __n.log('[' + name + '] ' + m.map(x => (x !== null && typeof x === 'object') ? JSON.stringify(x) : String(x)).join(' '));
+  return fn(__api(id), world, input, log, THREE, math);
+};
+globalThis.__api = __api;
+)JS";
+
+static const char* EVENTS[EV_COUNT] = {"onStart", "onUpdate", "onOverlap", "onHit", "onKey"};
+
+struct Behaviour { std::string actor, actorName, script; JSValue obj; bool ev[EV_COUNT]; bool alive = true; };
+struct ScriptHost::Impl {
+  JSRuntime* rt = nullptr; JSContext* ctx = nullptr; ScriptWorld* w = nullptr;
+  std::vector<Behaviour> b; std::chrono::steady_clock::time_point deadline;
+  JSValue make = JS_UNDEFINED, api = JS_UNDEFINED;
+};
+
+static ScriptWorld* W(JSContext* c) { return (ScriptWorld*)JS_GetContextOpaque(c); }
+static std::string S(JSContext* c, JSValueConst v) { size_t n = 0; const char* s = JS_ToCStringLen(c, &n, v); if (!s) return {}; std::string r(s, n); JS_FreeCString(c, s); return r; }
+static double D(JSContext* c, JSValueConst v) { double d = 0; if (JS_ToFloat64(c, &d, v)) return 0; return d; }
+static JSValue A3(JSContext* c, glm::vec3 v) { JSValue a = JS_NewArray(c); for (int i = 0; i < 3; i++) JS_SetPropertyUint32(c, a, i, JS_NewFloat64(c, v[i])); return a; }
+static char F(JSContext* c, JSValueConst v) { std::string s = S(c, v); return s.empty() ? 'p' : s[0]; }
+static std::string errorText(JSContext* c) {
+  JSValue e = JS_GetException(c); std::string msg = S(c, e);
+  JSValue st = JS_GetPropertyStr(c, e, "stack"); std::string stack = JS_IsUndefined(st) ? "" : S(c, st); JS_FreeValue(c, st); JS_FreeValue(c, e);
+  // "at fn (SC_Name:12:5)" → append " (line 12)"
+  auto p = stack.find(':'); if (p != std::string::npos) { size_t q = p + 1; std::string num; while (q < stack.size() && std::isdigit((unsigned char)stack[q])) num += stack[q++]; if (!num.empty()) msg += " (line " + num + ")"; }
+  return msg;
+}
+
+#define FN(name, argc, body) JS_SetPropertyStr(c, n, name, JS_NewCFunction(c, +[](JSContext* c, JSValueConst, int, JSValueConst* a) -> JSValue { (void)a; body }, name, argc))
+static void bindNatives(JSContext* c) {
+  JSValue g = JS_GetGlobalObject(c), n = JS_NewObject(c);
+  FN("exists", 1, return JS_NewBool(c, W(c)->exists(S(c, a[0])));) ;
+  FN("getc", 3, { int i = (int)D(c, a[2]); return JS_NewFloat64(c, W(c)->getVec(S(c, a[0]), F(c, a[1]))[i < 0 || i > 2 ? 0 : i]); });
+  FN("setc", 4, { std::string id = S(c, a[0]); char f = F(c, a[1]); int i = (int)D(c, a[2]); glm::vec3 v = W(c)->getVec(id, f); if (i >= 0 && i < 3) v[i] = (float)D(c, a[3]); W(c)->setVec(id, f, v); return JS_UNDEFINED; });
+  FN("getv", 2, return A3(c, W(c)->getVec(S(c, a[0]), F(c, a[1]))););
+  FN("setv", 5, W(c)->setVec(S(c, a[0]), F(c, a[1]), {(float)D(c, a[2]), (float)D(c, a[3]), (float)D(c, a[4])}); return JS_UNDEFINED;);
+  FN("worldPos", 1, return A3(c, W(c)->worldPos(S(c, a[0]))););
+  FN("getVisible", 1, return JS_NewBool(c, W(c)->getVisible(S(c, a[0]))););
+  FN("setVisible", 2, W(c)->setVisible(S(c, a[0]), JS_ToBool(c, a[1])); return JS_UNDEFINED;);
+  FN("setColor", 2, W(c)->setColor(S(c, a[0]), S(c, a[1])); return JS_UNDEFINED;);
+  FN("setText", 2, W(c)->setText(S(c, a[0]), S(c, a[1])); return JS_UNDEFINED;);
+  FN("addForce", 4, W(c)->addForce(S(c, a[0]), {(float)D(c, a[1]), (float)D(c, a[2]), (float)D(c, a[3])}); return JS_UNDEFINED;);
+  FN("lookAt", 4, W(c)->lookAt(S(c, a[0]), {(float)D(c, a[1]), (float)D(c, a[2]), (float)D(c, a[3])}); return JS_UNDEFINED;);
+  FN("destroy", 1, W(c)->destroyActor(S(c, a[0])); return JS_UNDEFINED;);
+  FN("info", 1, { std::string s = W(c)->actorInfo(S(c, a[0])); return JS_NewStringLen(c, s.data(), s.size()); });
+  FN("find", 1, { std::string s = W(c)->find(S(c, a[0])); return s.empty() ? JS_NULL : JS_NewStringLen(c, s.data(), s.size()); });
+  FN("findAll", 1, { auto v = W(c)->findAll(S(c, a[0])); JSValue r = JS_NewArray(c); for (size_t i = 0; i < v.size(); i++) JS_SetPropertyUint32(c, r, (uint32_t)i, JS_NewStringLen(c, v[i].data(), v[i].size())); return r; });
+  FN("spawn", 2, { std::string s = W(c)->spawn(S(c, a[0]), S(c, a[1])); return JS_NewStringLen(c, s.data(), s.size()); });
+  FN("message", 2, W(c)->message(S(c, a[0]), (float)D(c, a[1])); return JS_UNDEFINED;);
+  FN("hud", 2, W(c)->hud(S(c, a[0]), S(c, a[1])); return JS_UNDEFINED;);
+  FN("restart", 0, W(c)->restart(); return JS_UNDEFINED;);
+  FN("setGravity", 1, W(c)->setGravity((float)D(c, a[0])); return JS_UNDEFINED;);
+  FN("time", 0, return JS_NewFloat64(c, W(c)->time()););
+  FN("playerPos", 0, return A3(c, W(c)->playerPos()););
+  FN("teleport", 3, W(c)->playerTeleport({(float)D(c, a[0]), (float)D(c, a[1]), (float)D(c, a[2])}); return JS_UNDEFINED;);
+  FN("launch", 3, W(c)->playerLaunch({(float)D(c, a[0]), (float)D(c, a[1]), (float)D(c, a[2])}); return JS_UNDEFINED;);
+  FN("key", 1, return JS_NewBool(c, W(c)->key(keyAlias(S(c, a[0]))));) ;
+  FN("pressed", 1, return JS_NewBool(c, W(c)->pressed(keyAlias(S(c, a[0]))));) ;
+  FN("mouse", 0, { glm::vec4 m = W(c)->mouse(); JSValue r = JS_NewArray(c); for (int i = 0; i < 4; i++) JS_SetPropertyUint32(c, r, i, JS_NewFloat64(c, m[i])); return r; });
+  FN("log", 1, W(c)->log(S(c, a[0])); return JS_UNDEFINED;);
+  JS_SetPropertyStr(c, g, "__n", n); JS_FreeValue(c, g);
+}
+#undef FN
+
+static int interrupt(JSRuntime*, void* op) { auto* d = (ScriptHost::Impl*)op; return std::chrono::steady_clock::now() > d->deadline ? 1 : 0; }
+
+ScriptHost::ScriptHost() : d(new Impl) {}
+ScriptHost::~ScriptHost() { shutdown(); }
+
+bool ScriptHost::init(ScriptWorld* w) {
+  shutdown(); d->w = w;
+  d->rt = JS_NewRuntime(); JS_SetMemoryLimit(d->rt, 256u << 20); JS_SetMaxStackSize(d->rt, 1u << 20);
+  d->ctx = JS_NewContext(d->rt); JS_SetContextOpaque(d->ctx, w);
+  JS_SetInterruptHandler(d->rt, interrupt, d.get());
+  bindNatives(d->ctx);
+  d->deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  JSValue r = JS_Eval(d->ctx, PRELUDE, std::char_traits<char>::length(PRELUDE), "<prelude>", JS_EVAL_TYPE_GLOBAL);
+  if (JS_IsException(r)) { logMsg("error: script prelude: " + errorText(d->ctx), LogKind::Error); return false; }
+  JS_FreeValue(d->ctx, r);
+  JSValue g = JS_GetGlobalObject(d->ctx); d->make = JS_GetPropertyStr(d->ctx, g, "__make"); d->api = JS_GetPropertyStr(d->ctx, g, "__api"); JS_FreeValue(d->ctx, g);
+  return true;
+}
+void ScriptHost::shutdown() {
+  if (!d || !d->ctx) return;
+  for (auto& b : d->b) JS_FreeValue(d->ctx, b.obj);
+  d->b.clear(); JS_FreeValue(d->ctx, d->make); JS_FreeValue(d->ctx, d->api); d->make = d->api = JS_UNDEFINED;
+  JS_FreeContext(d->ctx); JS_FreeRuntime(d->rt); d->ctx = nullptr; d->rt = nullptr;
+}
+
+static std::string wrap(const std::string& code) {
+  // first user line stays line 1 so error lines match the editor
+  return "(function (self, world, input, log, THREE, math) { \"use strict\"; " + code +
+         "\n;return { onStart: typeof onStart === 'function' ? onStart : null, onUpdate: typeof onUpdate === 'function' ? onUpdate : null,"
+         " onOverlap: typeof onOverlap === 'function' ? onOverlap : null, onHit: typeof onHit === 'function' ? onHit : null, onKey: typeof onKey === 'function' ? onKey : null }; })";
+}
+
+int ScriptHost::attach(const std::string& actorId, const std::string& actorName, const std::string& scriptName, const std::string& code) {
+  if (!d->ctx) return -1;
+  JSContext* c = d->ctx; d->deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  std::string src = wrap(code);
+  JSValue fn = JS_Eval(c, src.c_str(), src.size(), scriptName.c_str(), JS_EVAL_TYPE_GLOBAL);
+  if (JS_IsException(fn)) { logMsg("error: " + scriptName + ": " + errorText(c), LogKind::Error); return -1; }
+  JSValue args[3] = {fn, JS_NewStringLen(c, actorId.data(), actorId.size()), JS_NewStringLen(c, actorName.data(), actorName.size())};
+  JSValue obj = JS_Call(c, d->make, JS_UNDEFINED, 3, args);
+  for (auto& v : args) JS_FreeValue(c, v);
+  if (JS_IsException(obj)) { logMsg("error: " + scriptName + " on " + actorName + ": " + errorText(c), LogKind::Error); return -1; }
+  Behaviour b; b.actor = actorId; b.actorName = actorName; b.script = scriptName; b.obj = obj;
+  for (int e = 0; e < EV_COUNT; e++) { JSValue f = JS_GetPropertyStr(c, obj, EVENTS[e]); b.ev[e] = JS_IsFunction(c, f); JS_FreeValue(c, f); }
+  d->b.push_back(b); return (int)d->b.size() - 1;
+}
+bool ScriptHost::has(int i, ScriptEvent e) const { return i >= 0 && i < (int)d->b.size() && d->b[i].alive && d->b[i].ev[e]; }
+void ScriptHost::call(int i, ScriptEvent e, double num, const std::string& arg) {
+  if (!has(i, e)) return;
+  JSContext* c = d->ctx; Behaviour& b = d->b[i];
+  JSValue fn = JS_GetPropertyStr(c, b.obj, EVENTS[e]); JSValue av[1]; int n = 0;
+  if (e == EV_Update) { av[0] = JS_NewFloat64(c, num); n = 1; }
+  else if (e == EV_Overlap || e == EV_Hit) {
+    if (arg.empty()) av[0] = JS_NULL; else { JSValue s = JS_NewStringLen(c, arg.data(), arg.size()); av[0] = JS_Call(c, d->api, JS_UNDEFINED, 1, &s); JS_FreeValue(c, s); if (JS_IsException(av[0])) { JS_FreeValue(c, JS_GetException(c)); av[0] = JS_NULL; } }
+    n = 1;
+  } else if (e == EV_Key) { av[0] = JS_NewStringLen(c, arg.data(), arg.size()); n = 1; }
+  d->deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  JSValue r = JS_Call(c, fn, b.obj, n, av);
+  for (int k = 0; k < n; k++) JS_FreeValue(c, av[k]);
+  JS_FreeValue(c, fn);
+  if (JS_IsException(r)) {
+    std::string msg = errorText(c); if (msg.find("interrupted") != std::string::npos) msg += " - the script ran for more than 2 seconds (endless loop?)";
+    logMsg("error: " + d->b[i].script + "." + EVENTS[e] + " on " + d->b[i].actorName + ": " + msg, LogKind::Error);
+    d->b[i].ev[e] = false;   // stop calling the broken event, like 0.1
+  }
+  JS_FreeValue(c, r);
+}
+void ScriptHost::drop(int i) { if (i >= 0 && i < (int)d->b.size()) d->b[i].alive = false; }
+const std::string& ScriptHost::actorOf(int i) const { return d->b[i].actor; }
+int ScriptHost::count() const { return (int)d->b.size(); }
+void ScriptHost::runJobs() { if (!d->ctx) return; JSContext* c2; for (int k = 0; k < 64 && JS_ExecutePendingJob(d->rt, &c2) > 0; k++) {} }
+
+std::string ScriptHost::check(const std::string& code) {
+  JSRuntime* rt = JS_NewRuntime(); JSContext* c = JS_NewContext(rt); std::string src = wrap(code), out;
+  JSValue r = JS_Eval(c, src.c_str(), src.size(), "script", JS_EVAL_TYPE_GLOBAL | JS_EVAL_FLAG_COMPILE_ONLY);
+  if (JS_IsException(r)) out = errorText(c); else JS_FreeValue(c, r);
+  JS_FreeContext(c); JS_FreeRuntime(rt); return out;
+}
+}

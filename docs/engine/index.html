@@ -4,108 +4,91 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Premium Engine</title>
-<link rel="stylesheet" href="editor.css?v=1">
-<script type="importmap">{ "imports": { "three": "./vendor/three.module.js", "three/addons/TransformControls.js": "./vendor/TransformControls.js", "cannon-es": "./vendor/cannon-es.js" } }</script>
+<style>
+  :root { --bg: #0d0f13; --panel: #161a21; --line: #262c36; --text: #e8eaee; --dim: #9aa3b2; --blue: #0a84ff; --blue2: #0060d0; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  a { color: inherit; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 20px; }
+  header { display: flex; align-items: center; gap: 16px; padding: 18px 0; }
+  .logo { width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(#0a84ff, #003c96); display: grid; place-items: center; font-weight: 800; letter-spacing: .5px; }
+  header b { font-size: 18px; } header .sp { flex: 1; } header a.back { color: var(--dim); text-decoration: none; font-size: 14px; }
+  .hero { padding: 48px 0 28px; display: grid; grid-template-columns: 1.05fr 1fr; gap: 40px; align-items: center; }
+  h1 { font-size: clamp(34px, 5vw, 54px); line-height: 1.05; margin: 0 0 14px; letter-spacing: -1px; }
+  h1 span { color: var(--blue); }
+  .lead { color: var(--dim); font-size: 18px; margin: 0 0 26px; }
+  .btns { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  .btn { display: inline-flex; align-items: center; gap: 10px; padding: 14px 22px; border-radius: 10px; font-weight: 700; text-decoration: none; border: 1px solid var(--line); background: var(--panel); }
+  .btn.main { background: var(--blue); border-color: var(--blue); color: #fff; }
+  .btn.main:hover { background: var(--blue2); }
+  .note { color: var(--dim); font-size: 13px; margin-top: 12px; }
+  .shot { width: 100%; border-radius: 12px; border: 1px solid var(--line); box-shadow: 0 20px 60px rgba(0,0,0,.5); display: block; }
+  .tag { display: inline-block; font-size: 12px; font-weight: 700; color: #ffd27a; border: 1px solid #5a4a1e; background: #2a2210; padding: 3px 9px; border-radius: 99px; margin-bottom: 14px; }
+  h2 { font-size: 26px; margin: 56px 0 18px; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  .card h3 { margin: 0 0 6px; font-size: 16px; } .card p { margin: 0; color: var(--dim); font-size: 14px; }
+  .gallery { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+  .gallery figure { margin: 0; } .gallery figcaption { color: var(--dim); font-size: 13px; margin-top: 6px; }
+  ol.steps { padding-inline-start: 20px; color: var(--dim); } ol.steps li { margin: 6px 0; } ol.steps b { color: var(--text); }
+  .menus { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; } .menus span { background: #1d222b; border: 1px solid var(--line); border-radius: 6px; padding: 3px 9px; font-size: 13px; }
+  footer { color: var(--dim); font-size: 13px; padding: 48px 0 40px; }
+  @media (max-width: 860px) { .hero { grid-template-columns: 1fr; } .grid { grid-template-columns: 1fr; } .gallery { grid-template-columns: 1fr; } }
+</style>
 </head>
 <body>
-<div id="app">
-  <header id="menubar">
-    <span class="logo" title="Premium Engine"><i>P</i><i>E</i></span>
-    <nav id="menus"></nav>
-    <span class="grow"></span>
-    <span id="projName" class="projname"></span>
-    <a class="back" href="../#library" title="Back to Premium Games">Premium Games ↗</a>
+<div class="wrap">
+  <header>
+    <div class="logo">PE</div><b>Premium Engine</b><span class="sp"></span>
+    <a class="back" href="../#library">Premium Games ↗</a>
   </header>
 
-  <div id="toolbar">
-    <button class="tb" data-cmd="saveAll" title="Save All (Ctrl+S)"><span class="ic">💾</span></button>
-    <span class="sep"></span>
-    <div class="tbmenu" data-menu="mode"><button class="tb wide" title="Editor mode"><span class="ic">⬚</span> Selection Mode ▾</button></div>
-    <div class="tbmenu" data-menu="quickAdd"><button class="tb accent" title="Quickly add to the project"><span class="ic">＋</span> Add ▾</button></div>
-    <div class="tbmenu" data-menu="scripts"><button class="tb" title="Scripts"><span class="ic">{ }</span> Scripts ▾</button></div>
-    <span class="sep"></span>
-    <button class="tb play" data-cmd="play" title="Play (Alt+P)"><span class="ic">▶</span></button>
-    <button class="tb" data-cmd="simulate" title="Simulate (Alt+S)"><span class="ic">⏵⏵</span></button>
-    <button class="tb stop" data-cmd="stop" title="Stop (Esc)" disabled><span class="ic">■</span></button>
-    <div class="tbmenu" data-menu="playOpts"><button class="tb" title="Play options">⋮</button></div>
-    <span class="sep"></span>
-    <div class="tbmenu" data-menu="platforms"><button class="tb wide" title="Platforms"><span class="ic">▤</span> Platforms ▾</button></div>
-    <span class="grow"></span>
-    <div class="tbmenu" data-menu="settings"><button class="tb wide" title="Settings"><span class="ic">⚙</span> Settings ▾</button></div>
-  </div>
-
-  <main id="workspace">
-    <section id="placeActors" class="panel dock-left hidden">
-      <div class="ph"><b>Place Actors</b><button class="x" data-close="placeActors">✕</button></div>
-      <input class="search" id="paSearch" placeholder="Search Classes">
-      <div class="pa" id="paBody"></div>
-    </section>
-
-    <section id="viewportWrap">
-      <div class="vptop">
-        <div class="vgroup">
-          <div class="tbmenu" data-menu="vpView"><button class="vb">☰</button></div>
-          <div class="tbmenu" data-menu="vpCam"><button class="vb" id="vpCamLabel">Perspective</button></div>
-          <div class="tbmenu" data-menu="vpMode"><button class="vb" id="vpModeLabel">Lit</button></div>
-          <div class="tbmenu" data-menu="vpShow"><button class="vb">Show</button></div>
-        </div>
-        <span class="grow"></span>
-        <div class="vgroup">
-          <button class="vb tool on" data-tool="translate" title="Select and translate (W)">✥</button>
-          <button class="vb tool" data-tool="rotate" title="Select and rotate (E)">⟳</button>
-          <button class="vb tool" data-tool="scale" title="Select and scale (R)">⤢</button>
-          <button class="vb" id="spaceBtn" title="World / Local coordinates">🌐</button>
-          <span class="vsep"></span>
-          <button class="vb snap on" data-snap="t" title="Grid snap">#</button><div class="tbmenu" data-menu="snapT"><button class="vb num" id="snapT">0.5</button></div>
-          <button class="vb snap on" data-snap="r" title="Rotation snap">∠</button><div class="tbmenu" data-menu="snapR"><button class="vb num" id="snapR">15°</button></div>
-          <button class="vb snap" data-snap="s" title="Scale snap">⤡</button><div class="tbmenu" data-menu="snapS"><button class="vb num" id="snapS">0.25</button></div>
-          <span class="vsep"></span>
-          <div class="tbmenu" data-menu="camSpeed"><button class="vb" id="camSpeedBtn" title="Camera speed">🎥 4</button></div>
-        </div>
+  <section class="hero">
+    <div>
+      <span class="tag">EXPERIMENTAL · 00.02.00</span>
+      <h1>Make PC games with <span>Premium Engine</span></h1>
+      <p class="lead">A C++ game engine with an editor laid out like Unreal Engine 5. Build levels, write scripts, press Play, and package your game as a Windows program.</p>
+      <div class="btns">
+        <a class="btn main" id="dl" href="https://github.com/premiumstudiogames/premiumstudiogames.github.io/releases/download/engine-00.02.00/PremiumEngine-00.02.00-Windows.zip">Download for Windows</a>
+        <a class="btn" href="web.html">Open the web version (0.1)</a>
       </div>
-      <canvas id="viewport" tabindex="0"></canvas>
-      <canvas id="playCanvas" class="hidden" tabindex="0"></canvas>
-      <div id="hud" class="hud"></div>
-      <div id="vpInfo" class="vpinfo"></div>
-      <div id="pieBanner" class="pie hidden">Playing in editor · <b>Esc</b> or <b>Shift+F1</b> to release the mouse · <button data-cmd="stop">Stop</button></div>
-    </section>
-
-    <div class="vsplit" data-split="right"></div>
-    <aside id="rightDock">
-      <section id="outliner" class="panel">
-        <div class="ph tabs"><button class="tab on">Outliner</button><span class="grow"></span><button class="x" data-close="outliner">✕</button></div>
-        <div class="row"><input class="search" id="olSearch" placeholder="Search..."><div class="tbmenu" data-menu="olAdd"><button class="mini">＋</button></div></div>
-        <div class="olhead"><span>👁</span><span>Item Label ▲</span><span>Type</span></div>
-        <div class="ol" id="olBody"></div>
-        <div class="olfoot" id="olFoot"></div>
-      </section>
-      <div class="hsplit" data-split="outliner"></div>
-      <section id="details" class="panel">
-        <div class="ph tabs"><button class="tab on" data-dtab="details">Details</button><button class="tab" data-dtab="world">World Settings</button><span class="grow"></span><button class="x" data-close="details">✕</button></div>
-        <div class="dt" id="dtBody"></div>
-      </section>
-    </aside>
-  </main>
-
-  <section id="drawer" class="hidden">
-    <div class="ph tabs"><button class="tab on" data-btab="content">Content Drawer</button><button class="tab" data-btab="log">Output Log</button><span class="grow"></span><button class="x" data-cmd="toggleDrawer">✕</button></div>
-    <div class="dbody" id="cbBody"></div>
-    <div class="dbody hidden" id="logBody"><div class="logtools"><input class="search" id="logFilter" placeholder="Search Log"><button class="mini" data-cmd="clearLog">Clear</button></div><div id="log" class="log"></div></div>
+      <p class="note">Windows 10 / 11 · 64-bit · OpenGL 3.3 graphics. Unzip and run PremiumEngine.exe — no installer.</p>
+    </div>
+    <img class="shot" src="img/editor.jpg" alt="The Premium Engine editor: viewport, Outliner, Details">
   </section>
 
-  <footer id="statusbar">
-    <button class="sb" data-cmd="toggleDrawer" title="Content Drawer (Ctrl+Space)">🗀 Content Drawer</button>
-    <button class="sb" data-cmd="showLog">≣ Output Log</button>
-    <span class="cmd"><select id="cmdKind"><option>Cmd</option></select><input id="cmdInput" placeholder="Enter Console Command"></span>
-    <span class="grow"></span>
-    <span id="saveState" class="sb">All Saved</span>
-    <span class="sb ver" id="engVer"></span>
-  </footer>
-</div>
+  <h2>The editor you already know</h2>
+  <p class="lead" style="font-size:16px">Same menus, same order: <span class="menus"><span>File</span><span>Edit</span><span>Window</span><span>Tools</span><span>Build</span><span>Select</span><span>Actor</span><span>Help</span></span></p>
+  <div class="grid">
+    <div class="card"><h3>Viewport</h3><p>Fly with the right mouse button and W A S D, move / rotate / scale gizmo with snapping, Perspective, Top, Front and Right views, Lit, Unlit, Wireframe.</p></div>
+    <div class="card"><h3>Outliner &amp; Details</h3><p>Every actor in the level. Drag to attach. Edit transform, mesh, material, physics, lights, text and scripts.</p></div>
+    <div class="card"><h3>Content Browser</h3><p>Levels, materials, scripts and shapes. Drag a material onto an actor, or a shape into the level.</p></div>
+    <div class="card"><h3>Real renderer</h3><p>Physically based lighting, sun shadows, point and spot lights, sky light, fog and ACES tone mapping. OpenGL 3.3.</p></div>
+    <div class="card"><h3>Jolt Physics</h3><p>Simulated bodies, collisions and a walking, jumping player. The same physics engine used in big console games.</p></div>
+    <div class="card"><h3>JavaScript scripts</h3><p>onStart, onUpdate, onOverlap, onHit, onKey. A code editor with colours, error lines and a full API reference.</p></div>
+    <div class="card"><h3>Play in the editor</h3><p>First Person, Third Person or Spectator. Press Play, Esc stops. Or run it in its own window.</p></div>
+    <div class="card"><h3>Package for Windows</h3><p>Platforms › Windows makes a folder with your game's .exe. Zip it and share it.</p></div>
+    <div class="card"><h3>Undo everything</h3><p>Undo / redo, copy, paste, duplicate, autosave, map check, statistics and console commands.</p></div>
+  </div>
 
-<div id="menuPop" class="pop hidden"></div>
-<div id="modal" class="modal hidden"></div>
-<div id="toast" class="toast"></div>
-<script type="module" src="editor.js?v=1"></script>
+  <h2>Screenshots</h2>
+  <div class="gallery">
+    <figure><img class="shot" src="img/play.jpg" alt="Playing in the editor"><figcaption>Play in the editor (First Person template)</figcaption></figure>
+    <figure><img class="shot" src="img/game.jpg" alt="A packaged game"><figcaption>A packaged game running as its own Windows program (Third Person template)</figcaption></figure>
+    <figure><img class="shot" src="img/scripts.jpg" alt="Script editor"><figcaption>Script editor: compile with F7, errors show the line</figcaption></figure>
+    <figure><img class="shot" src="img/material.jpg" alt="Material editor"><figcaption>Material editor with a live preview</figcaption></figure>
+  </div>
+
+  <h2>Start in a minute</h2>
+  <ol class="steps">
+    <li><b>Download</b> the zip and unzip it anywhere.</li>
+    <li>Run <b>PremiumEngine.exe</b>, pick <b>First Person</b>, type a name and press <b>Create</b>.</li>
+    <li>Press the green <b>Play</b> button. Collect the coins, try the jump pad.</li>
+    <li>Change things: drag shapes in, edit materials, open a script and press <b>F7</b>.</li>
+    <li><b>Platforms › Windows</b> — your game is in <b>Documents\PremiumEngine\Builds</b>.</li>
+  </ol>
+
+  <footer>Premium Engine is an experimental project of Premium Games. Projects use the .pge.json format and open in both the Windows engine and the web version. Open source libraries: SDL2, Dear ImGui, ImGuizmo, Jolt Physics, QuickJS-ng, GLM, nlohmann/json.</footer>
+</div>
 </body>
 </html>
