@@ -164,3 +164,4 @@ select.inp{padding:0 4px}
 .form{display:grid;grid-template-columns:150px 1fr;gap:8px 12px;align-items:center;min-width:440px}.form label{color:var(--muted)}
 @media (max-width:900px){#rightDock{width:260px}.cmd input{width:140px}}
 #viewportWrap.playing .vptop,#viewportWrap.playing .vpinfo{display:none}
+.gamewin{position:fixed;inset:0;z-index:45;background:#000;display:flex;flex-direction:column}.gwbar{display:flex;align-items:center;gap:8px;height:34px;padding:0 10px;background:#19191b;border-bottom:1px solid var(--line)}.gamewin iframe{flex:1;border:0;width:100%}

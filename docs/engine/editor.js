@@ -873,7 +873,10 @@ async function packageProject(openWindow) {
 <script type="module">import { Game } from 'pge-runtime'; const project = ${JSON.stringify(proj).replace(/</g, '\\u003c')};
 document.getElementById('start').onclick = e => { e.currentTarget.remove(); const g = new Game({ project, canvas: document.getElementById('c'), hud: document.getElementById('hud') }).start(); try { g.canvas.requestPointerLock(); } catch (er) {} window.game = g; };</script></body></html>`;
     const blob = new Blob([html], { type: 'text/html' }), url = URL.createObjectURL(blob);
-    if (openWindow) { window.open(url, '_blank'); log('Opened the packaged game in a new window', 'ok'); return url; }
+    if (openWindow) {   // run the packaged game in its own full-window frame (works in the browser and in the Premium Games app)
+      const f = document.createElement('div'); f.className = 'gamewin'; f.innerHTML = `<div class="gwbar"><b>${esc(proj.name)}</b> · packaged game<span class="grow"></span><button class="btn">✕ Close</button></div><iframe allow="fullscreen; pointer-lock" sandbox="allow-scripts allow-pointer-lock allow-same-origin"></iframe>`;
+      document.body.appendChild(f); f.querySelector('iframe').src = url; f.querySelector('button').onclick = () => { f.remove(); URL.revokeObjectURL(url); };
+      log('Running the packaged game', 'ok'); return url; }
     const a = document.createElement('a'); a.href = url; a.download = proj.name.replace(/[^\w-]+/g, '_') + '.html'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 60000);
     log(`Packaged ${a.download} (${(blob.size / 1048576).toFixed(1)} MB) — open it in any browser`, 'ok'); toast('Package ready'); return url;
   } catch (e) { log('error: Packaging failed: ' + e.message, 'error'); }
