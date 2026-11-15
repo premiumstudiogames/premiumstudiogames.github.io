@@ -34,8 +34,11 @@ jobs:
         shell: bash
         run: |
           gh release download 26.2.6 -R pal1000/mesa-dist-win -p "mesa3d-*-release-msvc.7z" -D mesa
-          7z x mesa/*.7z -omesa/x -y > /dev/null
-          GL=$(find mesa/x -ipath "*x64*" -iname opengl32.dll | head -1)
+          ls -la mesa
+          7z x mesa/*.7z -omesa/x -y | tail -3
+          find mesa/x -iname "*.dll" | head -60
+          GL=$(find mesa/x -iname opengl32.dll | grep -iv "x86\|arm" | head -1)
+          [ -n "$GL" ] || { echo "opengl32.dll not found in the Mesa package"; exit 1; }
           echo "Mesa OpenGL: $GL"; ls "$(dirname "$GL")"
           echo "MESA_DIR=$(cygpath -w "$PWD/$(dirname "$GL")")" >> "$GITHUB_ENV"
           mkdir -p run
