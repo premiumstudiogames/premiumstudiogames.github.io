@@ -17,14 +17,14 @@ int main(int argc, char** argv) {
   for (int i = 1; i < argc; i++) if (std::strcmp(argv[i], "--game") == 0 && i + 1 < argc) file = argv[++i];
   bool windowed = false; for (int i = 1; i < argc; i++) if (std::strcmp(argv[i], "--windowed") == 0) windowed = true;
   std::string selftest; for (int i = 1; i + 1 < argc; i++) if (std::strcmp(argv[i], "--selftest") == 0) { selftest = argv[i + 1]; windowed = true; }   // CI check
-  Project P; std::string err;
+  Project P; std::string err; g_quietErrors = !selftest.empty();
   AppWindow W; if (!openWindow(W, "Premium Engine", 1280, 720, false, false)) return 1;
   if (!loadProjectFile(file, P, &err)) {
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Premium Engine", ("This game's data is missing or damaged.\n\n" + err).c_str(), W.win); closeWindow(W); return 1; }
+    showError("Premium Engine", "This game's data is missing or damaged.\n\n" + err, W.win); closeWindow(W); return 1; }
   SDL_SetWindowTitle(W.win, P.name.c_str());
   if (!windowed) SDL_SetWindowFullscreen(W.win, SDL_WINDOW_FULLSCREEN_DESKTOP);
   Renderer R; R.init();
-  Game G(P, P.startLevel); if (!G.start()) { SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, P.name.c_str(), "The start level could not be loaded.", W.win); closeWindow(W); return 1; }
+  Game G(P, P.startLevel); if (!G.start()) { showError(P.name, "The start level could not be loaded.", W.win); closeWindow(W); return 1; }
   bool running = true, paused = false; Uint64 last = SDL_GetPerformanceCounter(); size_t seenLog = 0; std::string lastError; double errorUntil = 0;
   auto lock = [&](bool on) { SDL_SetRelativeMouseMode(on && G.wantsMouseLock() ? SDL_TRUE : SDL_FALSE); };
   auto toggleFull = [&]() { bool full = SDL_GetWindowFlags(W.win) & SDL_WINDOW_FULLSCREEN_DESKTOP; SDL_SetWindowFullscreen(W.win, full ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP); };

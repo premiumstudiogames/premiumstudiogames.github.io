@@ -35,27 +35,34 @@ jobs:
         run: |
           gh release download 26.2.6 -R pal1000/mesa-dist-win -p "mesa3d-*-release-msvc.7z" -D mesa
           7z x mesa/*.7z -omesa/x -y > /dev/null
+          GL=$(find mesa/x -ipath "*x64*" -iname opengl32.dll | head -1)
+          echo "Mesa OpenGL: $GL"; ls "$(dirname "$GL")"
+          echo "MESA_DIR=$(cygpath -w "$PWD/$(dirname "$GL")")" >> "$GITHUB_ENV"
           mkdir -p run
           cp -r build/Release/* run/
-          cp mesa/x/x64/*.dll run/
+          cp "$(dirname "$GL")"/*.dll run/
 
       - name: Editor self-test (new project, play, package)
+        timeout-minutes: 10
         shell: bash
         env:
           GALLIUM_DRIVER: llvmpipe
         run: |
+          export SDL_OPENGL_LIBRARY="$MESA_DIR\\opengl32.dll"
           mkdir -p selftest
           ./run/PremiumEngine.exe --selftest "$PWD/selftest" || { cat selftest/editor-result.txt; exit 1; }
           cat selftest/editor-result.txt | head -4
 
       - name: Packaged game self-test (walks forward)
+        timeout-minutes: 10
         shell: bash
         env:
           GALLIUM_DRIVER: llvmpipe
         run: |
+          export SDL_OPENGL_LIBRARY="$MESA_DIR\\opengl32.dll"
           GAME=$(ls -d "$USERPROFILE"/Documents/PremiumEngine/Builds/*/Windows | head -1)
           NAME=$(basename "$(dirname "$GAME")")
-          cp mesa/x/x64/*.dll "$GAME/"
+          cp "$(cygpath -u "$MESA_DIR")"/*.dll "$GAME/"
           ls -la "$GAME"
           "$GAME/$NAME.exe" --selftest "$PWD/selftest" || { cat selftest/player-result.txt; exit 1; }
           cat selftest/player-result.txt

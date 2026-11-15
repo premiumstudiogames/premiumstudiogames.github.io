@@ -12,7 +12,7 @@
 int main(int argc, char** argv) {
   std::string selftest;
   for (int i = 1; i + 1 < argc; i++) if (!std::strcmp(argv[i], "--selftest")) selftest = argv[i + 1];
-  pge::AppWindow W;
+  pge::AppWindow W; pge::g_quietErrors = !selftest.empty();
   if (!pge::openWindow(W, "Premium Engine", 1600, 900, selftest.empty(), true)) return 1;
   int code = 0;
   {

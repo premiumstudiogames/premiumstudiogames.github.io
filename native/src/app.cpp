@@ -15,23 +15,29 @@
 #endif
 
 namespace pge {
+bool g_quietErrors = false;
+void showError(const std::string& title, const std::string& msg, SDL_Window* parent) {
+  std::fprintf(stderr, "%s: %s\n", title.c_str(), msg.c_str()); logMsg("error: " + msg, LogKind::Error);
+  if (!g_quietErrors) SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title.c_str(), msg.c_str(), parent);
+}
 std::string assetsDir() { return exeDir() + "/assets"; }
 
 bool openWindow(AppWindow& w, const std::string& title, int width, int height, bool maximized, bool docking) {
   SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
   SDL_SetHint(SDL_HINT_WINDOWS_INTRESOURCE_ICON, "1");        // window + taskbar icon from the .exe (resource 1)
   SDL_SetHint(SDL_HINT_WINDOWS_INTRESOURCE_ICON_SMALL, "1");
-  if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_GAMECONTROLLER) != 0) { SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title.c_str(), SDL_GetError(), nullptr); return false; }
+  if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_GAMECONTROLLER) != 0) { showError(title, SDL_GetError()); return false; }
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, 0);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3); SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
   SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1); SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24); SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
   Uint32 flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | (maximized ? SDL_WINDOW_MAXIMIZED : 0);
   w.win = SDL_CreateWindow(title.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, width, height, flags);
-  if (!w.win) { SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title.c_str(), SDL_GetError(), nullptr); return false; }
+  if (!w.win) { showError(title, SDL_GetError()); return false; }
   w.gl = SDL_GL_CreateContext(w.win);
   if (!w.gl || !pgeLoadGL()) {
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title.c_str(), "OpenGL 3.3 is not available. Please update your graphics driver.", w.win); return false; }
+    std::string have; if (w.gl) { auto gs = (const unsigned char* (*)(unsigned))SDL_GL_GetProcAddress("glGetString"); if (gs && gs(0x1F02)) have = std::string("\n\nThis PC has OpenGL ") + (const char*)gs(0x1F02) + "."; }
+    showError(title, "OpenGL 3.3 is not available. Please update your graphics driver." + have, w.win); return false; }
   SDL_GL_MakeCurrent(w.win, w.gl); SDL_GL_SetSwapInterval(1);
   float ddpi = 96; if (SDL_GetDisplayDPI(SDL_GetWindowDisplayIndex(w.win), &ddpi, nullptr, nullptr) == 0 && ddpi > 0) w.dpi = std::max(1.f, ddpi / 96.f);
   IMGUI_CHECKVERSION(); ImGui::CreateContext();

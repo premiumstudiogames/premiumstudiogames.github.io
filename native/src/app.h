@@ -4,6 +4,8 @@
 #include <string>
 namespace pge {
 struct AppWindow { SDL_Window* win = nullptr; SDL_GLContext gl = nullptr; float dpi = 1; };
+extern bool g_quietErrors;   // self-tests: print errors instead of showing a message box that waits for a click
+void showError(const std::string& title, const std::string& msg, SDL_Window* parent = nullptr);
 bool openWindow(AppWindow& w, const std::string& title, int width, int height, bool maximized, bool docking);
 void beginFrame();
 void endFrame(AppWindow& w);
