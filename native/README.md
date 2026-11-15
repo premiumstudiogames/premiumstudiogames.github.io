@@ -29,7 +29,7 @@ Windows 10 or 11 (64-bit) and a graphics card with OpenGL 3.3 (any PC from the l
 
 ## Build from source
 ```
-cmake -S native -B build -G "Visual Studio 17 2022" -A x64
+cmake -S native -B build -A x64
 cmake --build build --config Release
 build\Release\PremiumEngineTests.exe
 ```
