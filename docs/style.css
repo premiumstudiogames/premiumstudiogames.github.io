@@ -594,3 +594,24 @@ s.was{color:var(--muted);font-size:.78em;margin-inline-end:.4em}
 .tro-more{align-self:center}
 .badge .tro{width:28px;height:28px}
 .bp-achs .tro{width:1.1em;height:1.1em}
+
+/* Premium Engine page (in the app) */
+.eng-hero{display:flex;gap:24px;align-items:center;background:linear-gradient(120deg,#0b2a55,#0a0d14 70%);border:1px solid var(--line);border-radius:16px;padding:26px;margin:8px 0 22px}
+.eng-logo{width:112px;height:112px;border-radius:22px;overflow:hidden;flex:none;display:block}.eng-logo canvas,.eng-vl canvas,.eng-th span canvas{width:100%;height:100%;display:block}
+.eng-h h1{margin:4px 0 6px;font-size:28px}.eng-h p{margin:0 0 14px}
+.eng-main{gap:10px;flex-wrap:wrap;align-items:center}
+.eng-prog{display:flex;align-items:center;gap:12px;min-width:340px}.eng-prog .bar{flex:1;height:8px;background:var(--ink);border-radius:9px;overflow:hidden}
+.eng-sec{margin:0 0 24px}.eng-sh{display:flex;align-items:center;gap:8px;margin-bottom:10px}.eng-sh h3{margin:0}.eng-sh .sp,.eng-ver .sp{flex:1}
+.eng-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px}
+.eng-card{background:var(--deck);border:1px solid var(--line);border-radius:12px;overflow:hidden;color:var(--text);text-align:start;font:inherit;padding:0;cursor:default}
+.eng-card:hover{border-color:#3d4b6e}
+.eng-th{aspect-ratio:16/9;background:var(--ink)}.eng-th img,.eng-th span{width:100%;height:100%;object-fit:cover;display:block}
+.eng-cb{padding:10px 12px 12px;display:grid;gap:6px}.eng-cb b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.eng-new{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-height:180px;cursor:pointer;border-style:dashed}
+.eng-new span{font-size:40px;color:#5aa9ff;line-height:1}.eng-empty{grid-column:1/-1}
+.eng-ver{display:flex;align-items:center;gap:10px;background:var(--deck);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px}
+.eng-vl{width:34px;height:34px;border-radius:8px;overflow:hidden;display:block;flex:none}
+.eng-ver .tag{font-size:11px;background:#123a6d;color:#9cc4ff;border-radius:99px;padding:2px 8px}
+.eng-tpl{display:grid;gap:8px}.eng-tpl label{display:flex;gap:10px;align-items:flex-start;background:var(--deck2);border:1px solid var(--line);border-radius:10px;padding:10px;cursor:pointer}
+.eng-tpl span{display:grid}
+@media (max-width:700px){.eng-hero{flex-direction:column;align-items:flex-start}.eng-prog{min-width:0;width:100%}}

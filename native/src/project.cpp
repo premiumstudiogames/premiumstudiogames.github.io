@@ -46,8 +46,10 @@ glm::vec3 hexColor(const std::string& s, glm::vec3 fb) {
   return {((v >> 16) & 255) / 255.f, ((v >> 8) & 255) / 255.f, (v & 255) / 255.f};
 }
 std::string sanitizeName(const std::string& s) {
-  std::string o; for (char c : s) o += (std::isalnum((unsigned char)c) || c == '_' || c == '-') ? c : '_';
-  if (o.empty()) o = "MyProject"; return o.substr(0, 40);
+  // letters of any language stay (UTF-8 bytes >= 0x80), ASCII symbols and spaces become '_'
+  std::string o; for (char c : s) { unsigned char u = (unsigned char)c; o += (u >= 0x80 || std::isalnum(u) || c == '_' || c == '-') ? c : '_'; }
+  if (o.size() > 40) { size_t n = 40; while (n > 0 && ((unsigned char)o[n] & 0xC0) == 0x80) n--; o = o.substr(0, n); }   // never cut a letter in half
+  if (o.empty()) o = "MyProject"; return o;
 }
 
 Actor newActor(const std::string& type, const std::string& name) {

@@ -101,5 +101,40 @@ jobs:
           if gh release view "$TAG" > /dev/null 2>&1; then
             gh release upload "$TAG" "$ZIP" --clobber
           else
-            gh release create "$TAG" "$ZIP" --title "Premium Engine $VER (experimental)" --notes-file native/RELEASE.md
+            gh release create "$TAG" "$ZIP" --title "Premium Engine $VER (experimental)" --notes-file native/RELEASE.md --prerelease --latest=false
           fi
+          # engine builds must never be the repo's "latest" release: the Premium Games app updates itself from that one
+          for t in $(gh api "repos/${{ github.repository }}/releases?per_page=50" -q '.[]|select(.tag_name|startswith("engine-"))|select(.prerelease==false)|.tag_name'); do
+            gh release edit "$t" --prerelease --latest=false
+          done
+          APP=$(gh api "repos/${{ github.repository }}/releases?per_page=50" -q '[.[]|select(.tag_name|startswith("v"))|select(.draft==false and .prerelease==false)][0].tag_name')
+          [ -n "$APP" ] && gh release edit "$APP" --latest
+          echo "latest release: $(gh api "repos/${{ github.repository }}/releases/latest" -q .tag_name)"
+
+      # Premium Games reads this list to install / update the engine (like Epic Games Launcher does for Unreal)
+      - name: Update engine/versions.json
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          VER=${{ steps.zip.outputs.ver }}
+          ZIP="dist/PremiumEngine-$VER-Windows.zip"
+          SHA=$(sha256sum "$ZIP" | cut -d' ' -f1)
+          SIZE=$(stat -c %s "$ZIP")
+          URL="https://github.com/${{ github.repository }}/releases/download/engine-$VER/PremiumEngine-$VER-Windows.zip"
+          git config user.name "Premium Games bot"; git config user.email "actions@users.noreply.github.com"
+          for i in 1 2 3 4 5; do
+            git fetch -q origin main && git reset -q --hard origin/main
+            node -e '
+              const fs = require("fs"), f = "docs/engine/versions.json";
+              let j = {}; try { j = JSON.parse(fs.readFileSync(f, "utf8")); } catch (e) {}
+              const [ver, url, sha256, size] = process.argv.slice(1);
+              j.versions = (j.versions || []).filter(v => v.version !== ver);
+              j.versions.push({ version: ver, url, sha256, size: +size, at: new Date().toISOString() });
+              j.versions.sort((a, b) => b.version.localeCompare(a.version, "en", { numeric: true }));
+              j.latest = j.versions[0].version;
+              fs.writeFileSync(f, JSON.stringify(j, null, 2) + "\n");' "$VER" "$URL" "$SHA" "$SIZE"
+            git add docs/engine/versions.json
+            git diff --cached --quiet && break
+            git commit -q -m "Premium Engine $VER: versions.json (Windows build)" && git push -q origin HEAD:main && break
+            sleep 5
+          done

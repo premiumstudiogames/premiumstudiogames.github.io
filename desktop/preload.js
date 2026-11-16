@@ -44,6 +44,15 @@ if (ok) {
     stop: id => ipcRenderer.invoke('ps:stop', id),
     setCover: (id, dataUrl) => ipcRenderer.invoke('ps:setCover', id, dataUrl),
     onRunning: cb => { const f = (e, r) => cb(r); ipcRenderer.on('ps:running', f); return () => ipcRenderer.removeListener('ps:running', f); },
+    engine: {
+      status: () => ipcRenderer.invoke('eng:status'),
+      install: ver => ipcRenderer.invoke('eng:install', ver),
+      uninstall: ver => ipcRenderer.invoke('eng:uninstall', ver),
+      launch: (ver, project) => ipcRenderer.invoke('eng:launch', ver, project),
+      newProject: (ver, templ, name) => ipcRenderer.invoke('eng:new', ver, templ, name),
+      showFolder: what => ipcRenderer.invoke('eng:showFolder', what),
+      onChanged: cb => { const f = () => cb(); ipcRenderer.on('eng:changed', f); return () => ipcRenderer.removeListener('eng:changed', f); }
+    },
     onInstalledChanged: cb => { const f = () => cb(); ipcRenderer.on('ps:installed-changed', f); return () => ipcRenderer.removeListener('ps:installed-changed', f); }
   });
 }

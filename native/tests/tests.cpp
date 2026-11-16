@@ -28,6 +28,7 @@ int main(int argc, char** argv) {
   std::printf("script checks\n");
   CHECK(ScriptHost::check("function onUpdate(dt) { self.rotation.y += dt; }").empty(), "valid script compiles");
   { std::string e = ScriptHost::check("function onUpdate(dt) {\n  self.rotation.y += ;\n}"); CHECK(!e.empty() && e.find("line 2") != std::string::npos, ("syntax error has line: " + e).c_str()); }
+  CHECK(sanitizeName("My Game") == "My_Game" && sanitizeName("\xd9\x84\xd8\xb9\xd8\xa8\xd8\xa9 1") == "\xd9\x84\xd8\xb9\xd8\xa8\xd8\xa9_1", "project folder names keep Arabic letters");
   CHECK(keyAlias("w") == "KeyW" && keyAlias("space") == "Space" && keyAlias("5") == "Digit5", "key aliases");
 
   std::printf("first person template\n");

@@ -147,6 +147,39 @@ app.whenReady().then(async () => {
     const bfRun = async () => Object.keys(await call('ps:getRunning')).find(k => k.startsWith('blockfall'));
     ok('BLOCKFALL started directly goes through Premium Studio', await waitFor(bfRun, 90000), await bfRun());
     const k = await bfRun(); if (k) { await call('ps:stop', k); await waitFor(async () => !(await bfRun()), 40000); }
+    // ---- Premium Engine from Premium Games (like Epic Games Launcher with Unreal)
+    const engAlive = () => require('child_process').execSync('tasklist /FI "IMAGENAME eq PremiumEngine.exe" /NH').toString().includes('PremiumEngine.exe');
+    const killEng = () => { try { require('child_process').execSync('taskkill /IM PremiumEngine.exe /F', { stdio: 'ignore' }); } catch (e) {} };
+    const projDir = path.join(app.getPath('documents'), 'PremiumEngine', 'Projects', 'E2E_Game'), engLnk = path.join(desk, 'Premium Engine.lnk');
+    fs.rmSync(projDir, { recursive: true, force: true });
+    let es = await call('eng:status');
+    ok('engine: versions listed', !!es.latest && es.available.length > 0 && es.installed.length === 0, es.latest);
+    const engProg = []; const wc = BrowserWindow.getAllWindows()[0].webContents, origSend = wc.send.bind(wc);
+    wc.send = (ch, p) => { if (ch === 'ps:progress' && p && p.id === 'premium-engine') engProg.push(p.phase); return origSend(ch, p); };
+    await call('eng:install', es.latest);
+    es = await call('eng:status');
+    ok('engine: installs (download, checksum, unzip)', es.installed.length === 1 && es.installed[0].version === es.latest && fs.existsSync(path.join(es.installed[0].dir, 'PremiumEngine.exe')) && fs.existsSync(path.join(es.installed[0].dir, 'PremiumEnginePlayer.exe')), es.installed[0] && es.installed[0].dir);
+    ok('engine: progress shown (download → done)', engProg.includes('download') && engProg[engProg.length - 1] === 'done', engProg.slice(-3).join(','));
+    ok('engine: "Premium Engine" desktop icon', fs.existsSync(engLnk));
+    let badName = false; try { await call('eng:new', es.latest, 'FirstPerson', 'a/b'); } catch (e) { badName = true; }
+    ok('engine: bad project names refused', badName);
+    await call('eng:new', es.latest, 'FirstPerson', 'E2E Game');
+    ok('engine: running while open', (await call('eng:status')).running.length === 1);
+    ok('engine: new project made from the app (file + thumbnail)', await waitFor(() => fs.existsSync(path.join(projDir, 'E2E_Game.pge.json')) && fs.existsSync(path.join(projDir, 'Saved', 'thumbnail.bmp')), 90000));
+    es = await call('eng:status'); const pr = es.projects.find(p => p.name === 'E2E Game');
+    ok('engine: project listed with thumbnail', !!pr && pr.thumb.startsWith('data:image/bmp;base64,') && pr.template === 'FirstPerson', pr && pr.file);
+    killEng(); ok('engine: closed → not running', await waitFor(async () => (await call('eng:status')).running.length === 0, 20000));
+    let outside = false; try { await call('eng:launch', es.latest, 'C:\\Windows\\win.ini'); } catch (e) { outside = true; }
+    ok('engine: only opens projects from the projects folder', outside);
+    await call('eng:launch', es.latest, pr.file);
+    ok('engine: opens a project', await waitFor(() => engAlive(), 30000) && (await call('eng:status')).running[0].project === pr.file);
+    let busyUn = false; try { await call('eng:uninstall', es.latest); } catch (e) { busyUn = true; }
+    ok('engine: can\'t remove while it is open', busyUn);
+    killEng(); await waitFor(async () => (await call('eng:status')).running.length === 0, 20000);
+    await call('eng:uninstall', es.latest);
+    es = await call('eng:status');
+    ok('engine: removed (files + icon), project kept', es.installed.length === 0 && !fs.existsSync(engLnk) && fs.existsSync(path.join(projDir, 'E2E_Game.pge.json')));
+    fs.rmSync(projDir, { recursive: true, force: true });
   } catch (e) { ok('no crash', false, e && e.stack || String(e)); }
   fs.writeFileSync(path.join(__dirname, 'e2e-result.txt'), results.join('\n') + '\n');
   console.log('\n' + results.join('\n') + `\n${failed ? failed + ' FAILED' : 'ALL PASSED'}`);

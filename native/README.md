@@ -1,4 +1,4 @@
-# Premium Engine 00.02.00 (experimental)
+# Premium Engine (experimental)
 
 A game engine and editor for Windows, written in C++. The editor is laid out like Unreal Engine 5:
 menu bar (File, Edit, Window, Tools, Build, Select, Actor, Help), toolbar, Viewport, Outliner,

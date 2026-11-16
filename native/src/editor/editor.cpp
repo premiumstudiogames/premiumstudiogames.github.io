@@ -46,7 +46,7 @@ void Editor::newProject(const std::string& templ, const std::string& name, std::
   std::error_code ec; fs::create_directories(dir, ec);
   Project p = makeTemplate(templ, name); std::string e;
   if (!saveProjectFile(p, file.u8string(), &e)) { if (err) *err = e; return; }
-  p.path = file.u8string(); setProject(std::move(p)); logMsg("Created project " + P.name + " (" + templ + ") at " + P.path, LogKind::Ok);
+  p.path = file.u8string(); setProject(std::move(p)); saveThumbnail(); logMsg("Created project " + P.name + " (" + templ + ") at " + P.path, LogKind::Ok);
 }
 bool Editor::openProjectFile(const std::string& file) {
   Project p; std::string err;
@@ -62,7 +62,16 @@ bool Editor::save() {
   if (P.path.empty()) P.path = (fs::u8path(projectsDir()) / fs::u8path(sanitizeName(P.name)) / fs::u8path(sanitizeName(P.name) + ".pge.json")).u8string();
   std::error_code ec; fs::create_directories(fs::u8path(P.path).parent_path(), ec);
   if (!saveProjectFile(P, P.path, &err)) { logMsg("error: save failed: " + err, LogKind::Error); notify("Save failed: " + err); return false; }
-  dirty = false; logMsg("Saved " + P.path, LogKind::Ok); notify("Saved"); lastAutosave_ = SDL_GetTicks() / 1000.0; return true;
+  dirty = false; saveThumbnail(); logMsg("Saved " + P.path, LogKind::Ok); notify("Saved"); lastAutosave_ = SDL_GetTicks() / 1000.0; return true;
+}
+void Editor::saveThumbnail() {
+  if (!hasProject || P.path.empty()) return;
+  static RenderTarget rt; const int w = 480, h = 270; R.resizeTarget(rt, w, h);
+  bool icons = showIcons, grid = showGrid; std::string s = sel; showIcons = false; showGrid = false; sel.clear();
+  Frame f; Camera c; buildFrame(f, c, (float)w / h); showIcons = icons; showGrid = grid; sel = s;
+  R.render(f, c, w, h, &rt);
+  fs::path dir = fs::u8path(P.path).parent_path() / "Saved"; std::error_code ec; fs::create_directories(dir, ec);
+  readPixelsBMP((dir / "thumbnail.bmp").u8string(), rt.fbo, w, h);
 }
 Level& Editor::L() { Level* l = P.level(level); if (!l) { level = P.levels[0].first; l = &P.levels[0].second; } return *l; }
 Actor* Editor::actor(const std::string& id) { if (id.empty() || !hasProject) return nullptr; for (auto& a : L().actors) if (a.id == id) return &a; return nullptr; }

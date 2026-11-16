@@ -895,6 +895,140 @@ function guard(fn) {
     return fn(...args);
   };
 }
+/* ---------------- Premium Engine: install, update and launch it from Premium Games (like Epic Games Launcher with Unreal) ----------------
+   Versions:  engine/versions.json on the site (written by the engine's Windows build)
+   Installed: %LOCALAPPDATA%\PremiumStudio\engine\<version>\PremiumEngine.exe   (list in engine.json)
+   Projects:  Documents\PremiumEngine\Projects\<Name>\<Name>.pge.json (+ Saved\thumbnail.bmp) — where the editor saves them */
+const ENGINE_DIR = path.join(LOCAL, 'PremiumStudio', 'engine');
+const ENGINE_REG = path.join(ENGINE_DIR, 'engine.json');
+const ENGINE_ID = 'premium-engine';
+const PROJECTS_DIR = () => path.join(app.getPath('documents'), 'PremiumEngine', 'Projects');
+const validVer = v => typeof v === 'string' && /^\d{2}\.\d{2}\.\d{2}$/.test(v);
+const engineReg = () => { try { const j = JSON.parse(fs.readFileSync(ENGINE_REG, 'utf8')); return j && j.versions ? j : { versions: {} }; } catch (e) { return { versions: {} }; } };
+const engineExe = v => path.join(ENGINE_DIR, v, 'PremiumEngine.exe');
+const engineRunning = new Map();   // child pid -> { version, project }
+function engineInstalled() {
+  const r = engineReg(), out = {};
+  for (const [v, info] of Object.entries(r.versions)) if (validVer(v) && fs.existsSync(engineExe(v))) out[v] = info;
+  return out;
+}
+async function saveEngineReg(fn) { const r = engineReg(); fn(r); await fsp.mkdir(ENGINE_DIR, { recursive: true }); const t = ENGINE_REG + '.tmp'; await fsp.writeFile(t, JSON.stringify(r, null, 1)); await fsp.rename(t, ENGINE_REG); }
+async function engineVersions() { const j = await fetchJSON(SITE + 'engine/versions.json'); return { latest: j.latest || '', versions: (j.versions || []).filter(v => validVer(v.version)) }; }
+function engineChanged() { send('eng:changed', null); }
+
+async function engineProjects() {
+  const out = [], root = PROJECTS_DIR();
+  let dirs = []; try { dirs = await fsp.readdir(root, { withFileTypes: true }); } catch (e) { return out; }
+  for (const d of dirs) {
+    if (!d.isDirectory()) continue;
+    const dir = path.join(root, d.name); let files = []; try { files = await fsp.readdir(dir); } catch (e) { continue; }
+    for (const f of files.filter(f => f.toLowerCase().endsWith('.pge.json'))) {
+      const file = path.join(dir, f);
+      try {
+        const st = await fsp.stat(file), j = JSON.parse(await fsp.readFile(file, 'utf8'));
+        let thumb = '', thumbAt = 0; const tf = path.join(dir, 'Saved', 'thumbnail.bmp');
+        try { const ts = await fsp.stat(tf); if (ts.size < 4e6) { thumb = 'data:image/bmp;base64,' + (await fsp.readFile(tf)).toString('base64'); thumbAt = ts.mtimeMs; } } catch (e) {}
+        const levels = Array.isArray(j.levelOrder) ? j.levelOrder.length : Object.keys(j.levels || {}).length;
+        out.push({ file, name: String(j.name || f.replace(/\.pge\.json$/i, '')).slice(0, 80), template: String(j.template || ''), engine: String(j.engine || ''), levels, modified: st.mtimeMs, thumb, thumbAt });
+      } catch (e) {}
+    }
+  }
+  return out.sort((a, b) => b.modified - a.modified);
+}
+const engineProjectOk = f => typeof f === 'string' && f.toLowerCase().endsWith('.pge.json') && path.resolve(f).startsWith(path.resolve(PROJECTS_DIR()) + path.sep) && fs.existsSync(f);
+
+async function engineInstall(ver) {
+  if (busy.has(ENGINE_ID)) return; busy.add(ENGINE_ID);
+  let tmp = null, stage = null;
+  try {
+    const list = await engineVersions(); ver = ver || list.latest;
+    const v = list.versions.find(x => x.version === ver); if (!v) throw new Error('هذي النسخة مو موجودة');
+    if (engineRunningVersion(ver)) throw new Error('اقفل المحرك أول');
+    let received = 0, last = 0; const total = v.size || 0;
+    send('ps:progress', { id: ENGINE_ID, phase: 'download', received: 0, total, name: 'Premium Engine ' + ver });
+    tmp = path.join(app.getPath('temp'), `pe-${ver}-${Date.now()}.zip`);
+    await download(v.url, n => { received += n; const now = Date.now(); if (now - last > 150) { last = now; send('ps:progress', { id: ENGINE_ID, phase: 'download', received, total: total || received }); } }, tmp);
+    send('ps:progress', { id: ENGINE_ID, phase: 'extract', received, total: received });
+    if (v.sha256) { const h = crypto.createHash('sha256'); await new Promise((res, rej) => fs.createReadStream(tmp).on('data', d => h.update(d)).on('end', res).on('error', rej));
+      if (h.digest('hex') !== v.sha256) throw new Error('الملف وصل ناقص، جرّب مرة ثانية'); }
+    const dir = path.join(ENGINE_DIR, ver); stage = dir + '.new';
+    await fsp.rm(stage, { recursive: true, force: true });
+    await require('extract-zip')(tmp, { dir: stage });
+    const inner = fs.existsSync(path.join(stage, 'PremiumEngine', 'PremiumEngine.exe')) ? path.join(stage, 'PremiumEngine') : stage;
+    if (!fs.existsSync(path.join(inner, 'PremiumEngine.exe'))) throw new Error('ملف المحرك ناقص');
+    await fsp.rm(dir, { recursive: true, force: true });
+    await fsp.rename(inner, dir);
+    await saveEngineReg(r => { r.versions[ver] = { installedAt: Date.now(), size: v.size || 0 }; });
+    makeEngineShortcut(ver);
+    send('ps:progress', { id: ENGINE_ID, phase: 'done', received, total: received });
+    engineChanged();
+  } catch (e) { send('ps:progress', { id: ENGINE_ID, phase: 'error', error: String(e && e.message || e) }); throw e; }
+  finally { busy.delete(ENGINE_ID); if (tmp) fsp.rm(tmp, { force: true }).catch(() => {}); if (stage) fsp.rm(stage, { recursive: true, force: true }).catch(() => {}); }
+}
+// one Desktop / Start menu icon for the newest installed engine
+function makeEngineShortcut(ver) {
+  if (process.platform !== 'win32') return;
+  const exe = engineExe(ver), opts = { target: exe, cwd: path.dirname(exe), icon: exe, iconIndex: 0, description: 'Premium Engine ' + ver };
+  for (const dir of [app.getPath('desktop'), path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs')]) {
+    try { shell.writeShortcutLink(path.join(dir, 'Premium Engine.lnk'), fs.existsSync(path.join(dir, 'Premium Engine.lnk')) ? 'replace' : 'create', opts); } catch (e) {}
+  }
+}
+function removeEngineShortcutsIfTarget(ver) {
+  if (process.platform !== 'win32') return;
+  for (const dir of [app.getPath('desktop'), path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs')]) {
+    const l = path.join(dir, 'Premium Engine.lnk');
+    try { if (path.resolve(shell.readShortcutLink(l).target).toLowerCase() === path.resolve(engineExe(ver)).toLowerCase()) fs.rmSync(l, { force: true }); } catch (e) {}
+  }
+}
+function engineRunningVersion(ver) { for (const r of engineRunning.values()) if (r.version === ver) return true; return false; }
+function engineLaunch(ver, args, project) {
+  const exe = engineExe(ver); if (!fs.existsSync(exe)) throw new Error('النسخة مو مثبتة');
+  const { spawn } = require('child_process');
+  const child = spawn(exe, args, { cwd: path.dirname(exe), detached: true, stdio: 'ignore', windowsHide: false });
+  child.on('error', () => {});
+  engineRunning.set(child.pid, { version: ver, project: project || '' }); engineChanged();
+  child.on('exit', () => { engineRunning.delete(child.pid); engineChanged(); });
+  child.unref();
+  return true;
+}
+async function engineStatus() {
+  let list = { latest: '', versions: [] }, online = true; try { list = await engineVersions(); } catch (e) { online = false; }
+  const inst = engineInstalled();
+  return { online, latest: list.latest, available: list.versions.map(v => ({ version: v.version, size: v.size || 0, at: v.at || '' })),
+    installed: Object.keys(inst).sort((a, b) => b.localeCompare(a, 'en', { numeric: true })).map(v => ({ version: v, installedAt: inst[v].installedAt || 0, dir: path.join(ENGINE_DIR, v) })),
+    running: [...engineRunning.values()], projects: await engineProjects(), projectsDir: PROJECTS_DIR() };
+}
+ipcMain.handle('eng:status', guard(async () => engineStatus()));
+ipcMain.handle('eng:install', guard(async ver => { if (ver != null && !validVer(ver)) throw new Error('bad version'); await engineInstall(ver); return true; }));
+ipcMain.handle('eng:uninstall', guard(async ver => {
+  if (!validVer(ver)) throw new Error('bad version'); if (engineRunningVersion(ver)) throw new Error('اقفل المحرك أول');
+  removeEngineShortcutsIfTarget(ver);
+  await fsp.rm(path.join(ENGINE_DIR, ver), { recursive: true, force: true }); await saveEngineReg(r => { delete r.versions[ver]; });
+  const left = Object.keys(engineInstalled()).sort((a, b) => b.localeCompare(a, 'en', { numeric: true })); if (left.length) makeEngineShortcut(left[0]);
+  engineChanged(); return true; }));
+ipcMain.handle('eng:launch', guard(async (ver, project) => {
+  if (!validVer(ver)) throw new Error('bad version');
+  if (project != null && !engineProjectOk(project)) throw new Error('المشروع مو موجود');
+  return engineLaunch(ver, project ? [project] : [], project); }));
+ipcMain.handle('eng:new', guard(async (ver, templ, name) => {
+  if (!validVer(ver)) throw new Error('bad version');
+  if (!['Blank', 'FirstPerson', 'ThirdPerson'].includes(templ)) throw new Error('قالب غير معروف');
+  name = String(name || '').trim(); if (!name || name.length > 40 || /[\\/:*?"<>|]/.test(name)) throw new Error('اسم المشروع ما يصلح');
+  // same folder name the editor makes (sanitizeName): ASCII symbols → '_', other letters stay, max 40 UTF-8 bytes
+  let folder = name.replace(/[\x00-\x7f]/g, c => /[A-Za-z0-9_-]/.test(c) ? c : '_'); while (Buffer.byteLength(folder) > 40) folder = [...folder].slice(0, -1).join('');
+  if (fs.existsSync(path.join(PROJECTS_DIR(), folder))) throw new Error('فيه مشروع بنفس الاسم');
+  return engineLaunch(ver, ['--new', templ, name], ''); }));
+ipcMain.handle('eng:showFolder', guard(async what => {
+  if (what === 'projects') { await fsp.mkdir(PROJECTS_DIR(), { recursive: true }); shell.openPath(PROJECTS_DIR()); }
+  else if (validVer(what)) shell.openPath(path.join(ENGINE_DIR, what));
+  else if (engineProjectOk(what)) shell.showItemInFolder(what);
+  return true; }));
+// projects change while the editor is open (save, new project): tell the page
+let engWatch = null;
+function watchProjects() { if (engWatch) return; try { fs.mkdirSync(PROJECTS_DIR(), { recursive: true }); let t = null;
+  engWatch = fs.watch(PROJECTS_DIR(), { recursive: true }, () => { clearTimeout(t); t = setTimeout(engineChanged, 600); }); } catch (e) {} }
+app.whenReady().then(watchProjects);
+
 ipcMain.handle('ps:getInstalled', guard(async () => installedNow()));
 ipcMain.handle('ps:install', guard(async (id, opts) => { await install(id, opts); return true; }));
 ipcMain.handle('ps:getLatest', guard(async () => getLatest()));

@@ -30,7 +30,7 @@ const PACKS = [             // must match coinPacks() in firestore.rules (coins 
   {id:"u100000",coins:100000, price:1000000}
 ];
 const coins = n => ((n || 0) / COIN_UNIT).toLocaleString("en-US", {minimumFractionDigits:0, maximumFractionDigits:4});
-const SITE_VERSION = "00.00.30";
+const SITE_VERSION = "00.00.31";
 const APP_DL = "downloads/PremiumStudioSetup.exe";
 
 const fb = initializeApp(firebaseConfig);
@@ -177,7 +177,9 @@ const covers = new Set();
 function cover(el, id){ const c = document.createElement("canvas"); el.prepend(c); const o = {c, id}; covers.add(o); paint(o); }
 function paint(o, t){ const box = o.c.parentElement; if (!box || !box.isConnected) return false; const dpr = Math.min(devicePixelRatio || 1, 2);
   const w = Math.max(40, box.clientWidth*dpr|0), h = Math.max(30, box.clientHeight*dpr|0); if (o.c.width !== w || o.c.height !== h){ o.c.width = w; o.c.height = h; }
-  const g = o.c.getContext("2d"); g.setTransform(1,0,0,1,0,0); g.shadowBlur = 0; g.textAlign = "left"; if (o.id === "blockfall" || o.id === "blockfall-dev") drawBlockfall(g,w,h); else drawHorror(g,w,h,t); return true; }
+  const g = o.c.getContext("2d"); g.setTransform(1,0,0,1,0,0); g.shadowBlur = 0; g.textAlign = "left"; if (o.id === "blockfall" || o.id === "blockfall-dev") drawBlockfall(g,w,h); else if (o.id === "premium-engine") drawEngine(g,w,h); else drawHorror(g,w,h,t); return true; }
+function drawEngine(g,w,h){ const gr = g.createLinearGradient(0,0,0,h); gr.addColorStop(0,"#0a84ff"); gr.addColorStop(1,"#00306f"); g.fillStyle = gr; g.fillRect(0,0,w,h);
+  g.fillStyle = "#fff"; g.font = `800 ${Math.round(Math.min(w,h)*0.42)}px system-ui,sans-serif`; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText("PE", w/2, h/2); g.textAlign = "left"; g.textBaseline = "alphabetic"; }
 let rsT = 0; addEventListener("resize", () => { clearTimeout(rsT); rsT = setTimeout(() => { for (const o of [...covers]) if (!paint(o)) covers.delete(o); }, 150); });
 const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
 if (!reduce) setInterval(() => { const t = performance.now(); for (const o of [...covers]) { if (o.id !== "last-recording") continue; if (!o.c.isConnected) { covers.delete(o); continue; } paint(o, t); } }, 600);
@@ -210,6 +212,7 @@ function autoInstall(){
 }
 if (PS) {
   $("#tabDl").hidden = true; $("#tabDls").hidden = false;
+  if (PS.engine) { const a = $(".navengine"); if (a) { a.href = "#engine"; a.dataset.v = "engine"; } PS.engine.onChanged(() => { ENG = null; if (curView === "engine") renderEngine(); }); }
   PS.onProgress(p => { trackSpeed(p); PROGRESS[p.id] = p;
     if (p.phase === "done" || p.phase === "error") { delete PROGRESS[p.id];
       if (p.phase === "error") toast("ما تم التثبيت: " + (p.error || "خطأ")); else { toast("تم التثبيت ✓ أيقونتها على سطح المكتب"); addDone(p.id); }
@@ -241,7 +244,7 @@ const DONE_KEY = "ps-downloads-done";
 const loadDone = () => { try { return JSON.parse(localStorage.getItem(DONE_KEY) || "[]"); } catch(e) { return []; } };
 function addDone(key){ const l = loadDone().filter(d => d.key !== key); l.unshift({key, at:Date.now(), size:(SPEED[key] && SPEED[key].r) || 0}); try { localStorage.setItem(DONE_KEY, JSON.stringify(l.slice(0, 20))); } catch(e) {} delete SPEED[key]; }
 function clearDone(){ try { localStorage.removeItem(DONE_KEY); } catch(e) {} renderDownloads(); updateProgressUI(); }
-const keyTitle = key => { const v = INSTALLED[key], [gid, ed] = String(key).split("--"), g = byId(v ? v.game : gid), e = v ? v.edition : ed; return g ? (g.en || g.title) + (ED_TAG[e] && !oneInstall(g.id) ? " " + ED_TAG[e] : "") : key; };
+const keyTitle = key => { if (key === "premium-engine") return "Premium Engine"; const v = INSTALLED[key], [gid, ed] = String(key).split("--"), g = byId(v ? v.game : gid), e = v ? v.edition : ed; return g ? (g.en || g.title) + (ED_TAG[e] && !oneInstall(g.id) ? " " + ED_TAG[e] : "") : key; };
 // updates waiting for an installed game (newer version on the server)
 const pendingUpdates = () => Object.entries(INSTALLED).filter(([k, v]) => { const L = LATEST[v.game], m = MANIFEST.games[v.game]; return m && m.type !== "bf-launcher" && L && L.version && v.version !== L.version && !PROGRESS[k]; });
 function updateProgressUI(){
@@ -790,6 +793,62 @@ function renderWorkshop(){
   box.querySelectorAll("[data-wsx]").forEach(b => b.onclick = () => deleteDoc(doc(fs, "workshop", WORKSHOP[+b.dataset.wsx].id)).catch(e => toast(e.code)));
 }
 
+/* ---------------- Premium Engine inside the app (like Epic Games Launcher → Unreal Engine) ---------------- */
+let ENG = null, ENG_LOADING = false;
+const ENG_TEMPLATES = [["FirstPerson", "منظور أول", "مشي ونط وعملات وفيزياء — جاهز تلعبه"], ["ThirdPerson", "منظور ثالث", "نفس الساحة بكاميرا خلف الشخصية"], ["Blank", "فاضي", "أرضية وشمس ونقطة بداية"]];
+const engErr = e => String(e && e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, "");
+function engAgo(ms){ const d = (Date.now() - ms) / 1000; return d < 60 ? "الحين" : d < 3600 ? `قبل ${Math.round(d / 60)} د` : d < 86400 ? `قبل ${Math.round(d / 3600)} س` : new Date(ms).toLocaleDateString("ar-SA-u-nu-latn", {day:"numeric", month:"short", year:"numeric"}); }
+function renderEngine(){
+  const box = $("#engineView"); if (!box) return;
+  if (!PS) { box.innerHTML = `<div class="empty"><b style="color:var(--text)">Premium Engine يشتغل من تطبيق Premium Games</b><span class="muted">ثبّت المحرك، حدّثه، وافتح مشاريعك من التطبيق.</span><div class="row" style="gap:8px"><a class="btn buy" href="#download">حمّل التطبيق</a><a class="btn" href="engine/">عن المحرك</a></div></div>`; return; }
+  if (!PS.engine) { box.innerHTML = '<div class="empty"><b style="color:var(--text)">حدّث Premium Games</b><span class="muted">نسختك من التطبيق قديمة وما فيها المحرك. سكّر التطبيق وافتحه ويتحدّث لحاله.</span></div>'; return; }
+  if (!ENG) { if (!ENG_LOADING) { ENG_LOADING = true; PS.engine.status().then(s => { ENG = s; }).catch(e => { ENG = {error:engErr(e), installed:[], available:[], projects:[], running:[]}; }).finally(() => { ENG_LOADING = false; if (curView === "engine") renderEngine(); }); }
+    if (!box.firstChild) box.innerHTML = '<p class="muted">يحمّل…</p>'; return; }
+  const S = ENG, prog = PROGRESS["premium-engine"], newest = S.installed[0] && S.installed[0].version, latest = S.latest;
+  const running = S.running && S.running.length, needUpdate = newest && latest && newest !== latest && !S.installed.some(v => v.version === latest);
+  let main;
+  if (prog) main = `<div class="eng-prog"><b>${prog.phase === "extract" ? "يثبّت…" : "يحمّل…"}</b><div class="bar" data-prog="premium-engine"><i style="width:${pct(prog)}%"></i></div><span class="num muted" data-progt>${progText(prog)}</span></div>`;
+  else if (!newest) main = latest ? `<button class="btn buy big" type="button" data-eng="install" data-v="${latest}">تثبيت Premium Engine ${esc(latest)}</button><span class="muted num">${mb((S.available.find(v => v.version === latest) || {}).size || 0)}</span>` : `<span class="muted">${S.online === false ? "ما فيه اتصال، جرّب بعدين" : "ما فيه نسخة منشورة للحين"}</span>`;
+  else main = `<button class="btn play big" type="button" data-eng="launch" data-v="${newest}">▶ تشغيل ${esc(newest)}</button>${needUpdate ? `<button class="btn inst" type="button" data-eng="install" data-v="${latest}">تحديث إلى ${esc(latest)}</button>` : ""}${running ? '<span class="st run">● المحرك شغّال</span>' : ""}`;
+  const versions = [...S.installed.map(v => ({version:v.version, inst:true})), ...S.available.filter(a => !S.installed.some(i => i.version === a.version)).map(a => ({version:a.version, size:a.size}))]
+    .sort((a, b) => b.version.localeCompare(a.version, "en", {numeric:true}));
+  box.innerHTML = `<div class="eng-hero"><span class="eng-logo" data-cover="premium-engine"></span><div class="eng-h"><div class="eyebrow">PREMIUM ENGINE</div><h1>اصنع ألعاب للكمبيوتر</h1>
+      <p class="muted">محرر بنفس قوائم Unreal Engine. ألعابك تطلع برامج ويندوز ‎.exe‎</p><div class="row eng-main">${main}</div></div></div>
+    ${S.error ? `<div class="err">${esc(S.error)}</div>` : ""}
+    <div class="eng-sec"><div class="eng-sh"><h3>مشاريعي</h3><span class="sp"></span><button class="btn mini ghost" type="button" data-eng="folder" data-v="projects">📁 مجلد المشاريع</button></div>
+      <div class="eng-grid">${newest ? `<button class="eng-card eng-new" type="button" data-eng="new"><span>＋</span><b>مشروع جديد</b></button>` : ""}
+      ${S.projects.map((p, i) => `<div class="eng-card" data-engp="${i}" title="${esc(p.file)}"><div class="eng-th">${p.thumb ? `<img src="${p.thumb}" alt="">` : `<span data-cover="premium-engine"></span>`}</div>
+        <div class="eng-cb"><b>${esc(p.name)}</b><small class="muted num">${esc(p.template || "")} · ${engAgo(p.modified)}${p.engine ? " · " + esc(p.engine) : ""}</small>
+        <div class="row" style="gap:6px">${newest ? `<button class="btn mini play" type="button" data-eng="open" data-i="${i}">فتح</button>` : ""}<button class="btn mini ghost" type="button" data-eng="folder" data-i="${i}">المجلد</button></div></div></div>`).join("")}
+      ${!S.projects.length ? `<p class="muted eng-empty">${newest ? "ما عندك مشاريع للحين. اضغط «مشروع جديد»." : "ثبّت المحرك عشان تسوي أول مشروع."}</p>` : ""}</div></div>
+    <div class="eng-sec"><div class="eng-sh"><h3>نسخ المحرك</h3></div>
+      ${versions.length ? versions.map(v => `<div class="eng-ver"><span class="eng-vl" data-cover="premium-engine"></span><b class="num">${esc(v.version)}</b>${v.version === latest ? '<span class="tag">الأحدث</span>' : ""}<span class="sp"></span>
+        ${v.inst ? `<button class="btn mini play" type="button" data-eng="launch" data-v="${v.version}">تشغيل</button><button class="btn mini ghost" type="button" data-eng="folder" data-v="${v.version}">المجلد</button><button class="btn mini danger" type="button" data-eng="uninstall" data-v="${v.version}">إزالة</button>`
+          : `<span class="muted num">${mb(v.size || 0)}</span><button class="btn mini inst" type="button" data-eng="install" data-v="${v.version}" ${prog ? "disabled" : ""}>تثبيت</button>`}</div>`).join("") : '<p class="muted">ما فيه نسخ.</p>'}</div>`;
+  box.querySelectorAll("[data-cover]").forEach(el => cover(el, el.dataset.cover));
+  box.querySelectorAll("[data-eng]").forEach(b => b.onclick = async ev => { ev.stopPropagation(); const a = b.dataset.eng, v = b.dataset.v, p = b.dataset.i != null ? S.projects[+b.dataset.i] : null;
+    try {
+      if (a === "install") { PROGRESS["premium-engine"] = {id:"premium-engine", phase:"download", received:0, total:(S.available.find(x => x.version === v) || {}).size || 0}; renderEngine(); updateProgressUI(); await PS.engine.install(v); ENG = null; }
+      else if (a === "launch") { await PS.engine.launch(v); toast("يفتح Premium Engine…"); }
+      else if (a === "open") { await PS.engine.launch(newest, p.file); toast("يفتح " + p.name + "…"); }
+      else if (a === "folder") await PS.engine.showFolder(p ? p.file : v);
+      else if (a === "uninstall") { if (!confirm(`تزيل Premium Engine ${v}؟ مشاريعك ما تنحذف.`)) return; await PS.engine.uninstall(v); ENG = null; toast("انحذفت النسخة"); }
+      else if (a === "new") return engNewModal(newest);
+    } catch(e) { delete PROGRESS["premium-engine"]; toast("ما تم: " + engErr(e)); updateProgressUI(); }
+    renderEngine(); });
+  box.querySelectorAll("[data-engp]").forEach(c => c.ondblclick = () => { const p = S.projects[+c.dataset.engp]; if (newest) PS.engine.launch(newest, p.file).then(() => toast("يفتح " + p.name + "…")).catch(e => toast("ما تم: " + engErr(e))); });
+}
+function engNewModal(ver){
+  openModal(`<div class="eyebrow">NEW PROJECT</div><h1 class="mbox-t">مشروع جديد</h1>
+    <div class="eng-tpl">${ENG_TEMPLATES.map(([id, n, d], i) => `<label><input type="radio" name="etpl" value="${id}"${i ? "" : " checked"}><span><b>${n}</b><small class="muted">${d}</small></span></label>`).join("")}</div>
+    <label class="muted" style="display:block;margin-top:12px">اسم المشروع</label><input id="engName" maxlength="40" value="MyGame" style="width:100%">
+    <div class="err" id="engErr"></div><div class="row" style="justify-content:flex-end;gap:8px;margin-top:12px"><button class="btn" type="button" data-close>إلغاء</button><button class="btn buy" type="button" id="engGo">إنشاء وفتح</button></div>`);
+  $("#mbox [data-close]").onclick = closeModal;
+  $("#engGo").onclick = async () => { const t = (document.querySelector('input[name="etpl"]:checked') || {}).value, n = $("#engName").value.trim();
+    if (!n) return $("#engErr").textContent = "اكتب اسم";
+    try { await PS.engine.newProject(ver, t, n); closeModal(); toast("يفتح Premium Engine ويسوي " + n + "…"); } catch(e) { $("#engErr").textContent = engErr(e); } };
+}
+
 /* ---------------- gifts: buy an edition for a friend ---------------- */
 function giftModal(g, e){
   if (!user) return showAuth("login");
@@ -1282,7 +1341,7 @@ function route(){
   const h0 = (location.hash || "#store").slice(1);
   if (h0 === "bigpicture") { bigPicture().open(); return; }
   const h = h0, g = byId(h);
-  let v = g ? "game" : (["store", "library", "downloads", "friends", "market", "workshop", "studio", "download", "account", "coins"].includes(h) ? h : "store");
+  let v = g ? "game" : (["store", "library", "downloads", "friends", "market", "workshop", "engine", "studio", "download", "account", "coins"].includes(h) ? h : "store");
   if (v === "studio" && !isAdmin) v = "store";
   curView = v; $$(".view").forEach(s => s.hidden = s.dataset.view !== v);
   $$("#tabs a").forEach(a => a.setAttribute("aria-current", a.dataset.v === (g ? "store" : v) ? "page" : "false"));
@@ -1321,6 +1380,7 @@ function render(){
   else if (curView === "downloads") renderDownloads();
   else if (curView === "market") renderMarket();
   else if (curView === "workshop") renderWorkshop();
+  else if (curView === "engine") renderEngine();
   else if (curView === "download") { $("#dlInApp").hidden = !PS; $("#dlBtn").hidden = !!PS; }
 }
 addEventListener("hashchange", route);

@@ -45,14 +45,15 @@
 
   <section class="hero">
     <div>
-      <span class="tag">EXPERIMENTAL · 00.02.00</span>
+      <span class="tag" id="ver">EXPERIMENTAL</span>
       <h1>Make PC games with <span>Premium Engine</span></h1>
       <p class="lead">A C++ game engine with an editor laid out like Unreal Engine 5. Build levels, write scripts, press Play, and package your game as a Windows program.</p>
       <div class="btns">
         <a class="btn main" id="dl" href="https://github.com/premiumstudiogames/premiumstudiogames.github.io/releases/download/engine-00.02.00/PremiumEngine-00.02.00-Windows.zip">Download for Windows</a>
-        <a class="btn" href="web.html">Open the web version (0.1)</a>
+        <a class="btn" href="../#engine">Open in Premium Games</a>
+        <a class="btn" href="web.html">Web version (0.1)</a>
       </div>
-      <p class="note">Windows 10 / 11 · 64-bit · OpenGL 3.3 graphics. Unzip and run PremiumEngine.exe — no installer.</p>
+      <p class="note">Windows 10 / 11 · 64-bit · OpenGL 3.3 graphics. Easiest: install and update it from the <b>Engine</b> tab of the Premium Games app, which also lists your projects. Or unzip the download and run PremiumEngine.exe.</p>
     </div>
     <img class="shot" src="img/editor.jpg" alt="The Premium Engine editor: viewport, Outliner, Details">
   </section>
@@ -90,5 +91,13 @@
 
   <footer>Premium Engine is an experimental project of Premium Games. Projects use the .pge.json format and open in both the Windows engine and the web version. Open source libraries: SDL2, Dear ImGui, ImGuizmo, Jolt Physics, QuickJS-ng, GLM, nlohmann/json.</footer>
 </div>
+<script>
+  // newest Windows build (written by the engine's build)
+  fetch('versions.json', { cache: 'no-store' }).then(r => r.json()).then(j => {
+    const v = (j.versions || []).find(x => x.version === j.latest); if (!v) return;
+    document.getElementById('dl').href = v.url; document.getElementById('ver').textContent = 'EXPERIMENTAL · ' + v.version;
+    document.getElementById('dl').textContent = 'Download for Windows · ' + (v.size / 1048576).toFixed(1) + ' MB';
+  }).catch(() => {});
+</script>
 </body>
 </html>

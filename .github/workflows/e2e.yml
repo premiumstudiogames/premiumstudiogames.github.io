@@ -15,6 +15,16 @@ jobs:
       - name: Install
         working-directory: desktop
         run: npm install --no-audit --no-fund
+      - name: Software OpenGL for Premium Engine (the CI runner has no GPU)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download 24.3.4 -R pal1000/mesa-dist-win -p "mesa3d-*-release-msvc.7z" -D mesa
+          7z x mesa/*.7z -omesa/x -y | tail -2
+          echo "SDL_OPENGL_LIBRARY=$(cygpath -w "$PWD/mesa/x/x64/opengl32.dll")" >> "$GITHUB_ENV"
+          echo "GALLIUM_DRIVER=llvmpipe" >> "$GITHUB_ENV"
+          cygpath -w "$PWD/mesa/x/x64" >> "$GITHUB_PATH"   # Mesa's other DLLs
       - name: Play the games for real
         working-directory: desktop
         run: npx electron test/e2e.js

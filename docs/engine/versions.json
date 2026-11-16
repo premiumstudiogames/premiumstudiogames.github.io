@@ -1,0 +1,12 @@
+{
+  "versions": [
+    {
+      "version": "00.02.00",
+      "url": "https://github.com/premiumstudiogames/premiumstudiogames.github.io/releases/download/engine-00.02.00/PremiumEngine-00.02.00-Windows.zip",
+      "sha256": "",
+      "size": 4792661,
+      "at": "2026-11-15T22:56:00Z"
+    }
+  ],
+  "latest": "00.02.00"
+}

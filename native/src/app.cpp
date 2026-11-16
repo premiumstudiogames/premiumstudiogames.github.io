@@ -61,20 +61,25 @@ void closeWindow(AppWindow& w) {
 }
 
 namespace pge {
-bool saveScreenshotBMP(const std::string& file, int w, int h) {
-  std::vector<unsigned char> px((size_t)w * h * 3); glBindFramebuffer(GL_FRAMEBUFFER, 0); glPixelStorei(GL_PACK_ALIGNMENT, 1);
-  glReadPixels(0, 0, w, h, GL_BGR, GL_UNSIGNED_BYTE, px.data());
+bool writeBMP(const std::string& file, int w, int h, const unsigned char* bgrBottomUp) {
   int row = (w * 3 + 3) & ~3; unsigned size = 54 + row * h;
   unsigned char hd[54] = {'B', 'M'}; auto u32 = [&](int o, unsigned v) { for (int i = 0; i < 4; i++) hd[o + i] = (v >> (8 * i)) & 255; };
   u32(2, size); u32(10, 54); u32(14, 40); u32(18, w); u32(22, h); hd[26] = 1; hd[28] = 24; u32(34, row * h);
-  FILE* f = nullptr;
+  std::string tmp = file + ".tmp"; FILE* f = nullptr;
 #ifdef _WIN32
-  int n = MultiByteToWideChar(CP_UTF8, 0, file.c_str(), -1, nullptr, 0); std::wstring wf(n, L'\0'); MultiByteToWideChar(CP_UTF8, 0, file.c_str(), -1, wf.data(), n); f = _wfopen(wf.c_str(), L"wb");
+  int n = MultiByteToWideChar(CP_UTF8, 0, tmp.c_str(), -1, nullptr, 0); std::wstring wf(n, L'\0'); MultiByteToWideChar(CP_UTF8, 0, tmp.c_str(), -1, wf.data(), n); f = _wfopen(wf.c_str(), L"wb");
 #else
-  f = std::fopen(file.c_str(), "wb");
+  f = std::fopen(tmp.c_str(), "wb");
 #endif
   if (!f) return false; std::fwrite(hd, 1, 54, f); std::vector<unsigned char> pad(row - w * 3, 0);
-  for (int y = 0; y < h; y++) { std::fwrite(px.data() + (size_t)y * w * 3, 1, w * 3, f); if (!pad.empty()) std::fwrite(pad.data(), 1, pad.size(), f); }
-  std::fclose(f); return true;
+  for (int y = 0; y < h; y++) { std::fwrite(bgrBottomUp + (size_t)y * w * 3, 1, w * 3, f); if (!pad.empty()) std::fwrite(pad.data(), 1, pad.size(), f); }
+  std::fclose(f);
+  std::error_code ec; std::filesystem::rename(std::filesystem::u8path(tmp), std::filesystem::u8path(file), ec); return !ec;   // whole file or nothing
 }
+bool readPixelsBMP(const std::string& file, unsigned fbo, int w, int h) {
+  std::vector<unsigned char> px((size_t)w * h * 3); glBindFramebuffer(GL_FRAMEBUFFER, fbo); glPixelStorei(GL_PACK_ALIGNMENT, 1);
+  glReadPixels(0, 0, w, h, GL_BGR, GL_UNSIGNED_BYTE, px.data()); glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  return writeBMP(file, w, h, px.data());
+}
+bool saveScreenshotBMP(const std::string& file, int w, int h) { return readPixelsBMP(file, 0, w, h); }
 }

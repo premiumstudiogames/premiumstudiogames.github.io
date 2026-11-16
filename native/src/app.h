@@ -11,5 +11,6 @@ void beginFrame();
 void endFrame(AppWindow& w);
 void closeWindow(AppWindow& w);
 std::string assetsDir();
+bool readPixelsBMP(const std::string& file, unsigned fbo, int w, int h);   // a framebuffer → .bmp
 bool saveScreenshotBMP(const std::string& file, int w, int h);   // the window's back buffer (call before endFrame swaps)
 }

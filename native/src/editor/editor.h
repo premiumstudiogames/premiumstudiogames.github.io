@@ -54,6 +54,7 @@ public:
   // ---- actions
   void newProject(const std::string& templ, const std::string& name, std::string* err = nullptr);
   bool save();
+  void saveThumbnail();                           // Saved/thumbnail.bmp next to the project (shown in Premium Games)
   void closeProject();
   Level& L();
   Actor* actor(const std::string& id);
