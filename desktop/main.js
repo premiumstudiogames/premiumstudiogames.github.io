@@ -396,28 +396,31 @@ ipcMain.handle('ps:screenshots', guard(async gid => {
 ipcMain.handle('ps:openShots', guard(async file => { if (typeof file === 'string' && path.resolve(file).startsWith(SHOTS())) shell.showItemInFolder(file); else { await fsp.mkdir(SHOTS(), { recursive: true }); shell.openPath(SHOTS()); } return true; }));
 
 // game recording (F9 starts, F9 again saves), like Steam's — saved to Videos\Premium Games\<game>
-let recWin = null, recKey = '', recT = null;
+let recWin = null, recKey = '', recT = null, recLive = false, recStopAsked = false;
 const CLIPS = () => path.join(app.getPath('videos'), 'Premium Games');
 async function toggleRecord(key) {
-  if (recKey) { if (recWin && !recWin.isDestroyed()) recWin.webContents.send('rec:stop'); return; }
+  // F9 while the recorder is still starting must stop it right after it starts (not start a second one)
+  if (recKey) { if (recLive) { if (recWin && !recWin.isDestroyed()) recWin.webContents.send('rec:stop'); } else recStopAsked = true; return; }
+  recKey = key; recLive = false; recStopAsked = false;
   try {
     let sourceId = '';
     const w = gameWins.get(key);
     if (w && !w.isDestroyed()) sourceId = w.getMediaSourceId();
     else { const { desktopCapturer } = require('electron'); const src = (await desktopCapturer.getSources({ types: ['screen'] }))[0]; sourceId = src && src.id; }
-    if (!sourceId) return;
+    if (!sourceId) { recKey = ''; return; }
     if (!recWin || recWin.isDestroyed()) {
       recWin = new BrowserWindow({ show: false, width: 200, height: 100, webPreferences: { preload: path.join(__dirname, 'recorder-preload.js'), contextIsolation: false, sandbox: false, backgroundThrottling: false } });
       await recWin.loadFile(path.join(__dirname, 'recorder.html'));   // a file page is a secure context, so it can record (a data: page can't)
     }
-    recKey = key; recWin.webContents.send('rec:start', sourceId);
+    recWin.webContents.send('rec:start', sourceId);
     clearTimeout(recT); recT = setTimeout(() => { if (recKey && recWin && !recWin.isDestroyed()) recWin.webContents.send('rec:stop'); }, 10 * 60000);   // 10 minutes at most
   } catch (e) { console.log('recording failed:', e && e.message); recKey = ''; }
 }
-ipcMain.on('rec:started', () => flash('⏺ يسجّل… اضغط F9 عشان توقف'));
-ipcMain.on('rec:error', (e, m) => { console.log('recording failed:', m); recKey = ''; flash('ما قدرت أسجّل'); });
+ipcMain.on('rec:started', () => { recLive = true; flash('⏺ يسجّل… اضغط F9 عشان توقف');
+  if (recStopAsked) { recStopAsked = false; setTimeout(() => { if (recWin && !recWin.isDestroyed()) recWin.webContents.send('rec:stop'); }, 1500); } });
+ipcMain.on('rec:error', (e, m) => { console.log('recording failed:', m); recKey = ''; recLive = false; flash('ما قدرت أسجّل'); });
 ipcMain.on('rec:done', async (e, bytes) => {
-  const key = recKey; recKey = ''; clearTimeout(recT);
+  const key = recKey; recKey = ''; recLive = false; clearTimeout(recT);
   try { const dir = path.join(CLIPS(), gameFolder(key)); await fsp.mkdir(dir, { recursive: true });
     const t = new Date(), pad = n => String(n).padStart(2, '0');
     await fsp.writeFile(path.join(dir, `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())} ${pad(t.getHours())}.${pad(t.getMinutes())}.${pad(t.getSeconds())}.webm`), Buffer.from(bytes));
@@ -977,7 +980,8 @@ function removeEngineShortcutsIfTarget(ver) {
   if (process.platform !== 'win32') return;
   for (const dir of [app.getPath('desktop'), path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs')]) {
     const l = path.join(dir, 'Premium Engine.lnk');
-    try { if (path.resolve(shell.readShortcutLink(l).target).toLowerCase() === path.resolve(engineExe(ver)).toLowerCase()) fs.rmSync(l, { force: true }); } catch (e) {}
+    try { const real = f => { try { return fs.realpathSync.native(f).toLowerCase(); } catch (e) { return path.resolve(f).toLowerCase(); } };   // long names (no RUNNER~1)
+      if (real(shell.readShortcutLink(l).target) === real(engineExe(ver))) fs.rmSync(l, { force: true }); } catch (e) {}
   }
 }
 function engineRunningVersion(ver) { for (const r of engineRunning.values()) if (r.version === ver) return true; return false; }

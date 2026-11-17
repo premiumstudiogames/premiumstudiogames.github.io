@@ -154,8 +154,8 @@ app.whenReady().then(async () => {
     fs.rmSync(projDir, { recursive: true, force: true });
     let es = await call('eng:status');
     ok('engine: versions listed', !!es.latest && es.available.length > 0 && es.installed.length === 0, es.latest);
-    const engProg = []; const wc = BrowserWindow.getAllWindows()[0].webContents, origSend = wc.send.bind(wc);
-    wc.send = (ch, p) => { if (ch === 'ps:progress' && p && p.id === 'premium-engine') engProg.push(p.phase); return origSend(ch, p); };
+    const engProg = [];   // what the store page gets (every window, the store is one of them)
+    for (const w of BrowserWindow.getAllWindows()) { const wc = w.webContents, orig = wc.send.bind(wc); wc.send = (ch, p) => { if (ch === 'ps:progress' && p && p.id === 'premium-engine') engProg.push(p.phase); return orig(ch, p); }; }
     await call('eng:install', es.latest);
     es = await call('eng:status');
     ok('engine: installs (download, checksum, unzip)', es.installed.length === 1 && es.installed[0].version === es.latest && fs.existsSync(path.join(es.installed[0].dir, 'PremiumEngine.exe')) && fs.existsSync(path.join(es.installed[0].dir, 'PremiumEnginePlayer.exe')), es.installed[0] && es.installed[0].dir);
@@ -178,7 +178,7 @@ app.whenReady().then(async () => {
     killEng(); await waitFor(async () => (await call('eng:status')).running.length === 0, 20000);
     await call('eng:uninstall', es.latest);
     es = await call('eng:status');
-    ok('engine: removed (files + icon), project kept', es.installed.length === 0 && !fs.existsSync(engLnk) && fs.existsSync(path.join(projDir, 'E2E_Game.pge.json')));
+    ok('engine: removed (files + icon), project kept', es.installed.length === 0 && !fs.existsSync(engLnk) && fs.existsSync(path.join(projDir, 'E2E_Game.pge.json')), `installed=${es.installed.length} icon=${fs.existsSync(engLnk)} project=${fs.existsSync(path.join(projDir, 'E2E_Game.pge.json'))}`);
     fs.rmSync(projDir, { recursive: true, force: true });
   } catch (e) { ok('no crash', false, e && e.stack || String(e)); }
   fs.writeFileSync(path.join(__dirname, 'e2e-result.txt'), results.join('\n') + '\n');
