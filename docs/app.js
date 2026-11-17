@@ -1,4 +1,4 @@
-import { makeBP } from "./bp.js?v=8";
+import { makeBP } from "./bp.js?v=9";
 import { makeRTC } from "./rtc.js?v=1";
 import { SOON, SOON_GENRES } from "./soon.js?v=1";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
