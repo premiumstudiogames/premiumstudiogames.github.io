@@ -1,4 +1,4 @@
-import { makeBP } from "./bp.js?v=9";
+import { makeBP } from "./bp.js?v=10";
 import { makeRTC } from "./rtc.js?v=1";
 import { SOON, SOON_GENRES } from "./soon.js?v=1";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
@@ -30,7 +30,7 @@ const PACKS = [             // must match coinPacks() in firestore.rules (coins 
   {id:"u100000",coins:100000, price:1000000}
 ];
 const coins = n => ((n || 0) / COIN_UNIT).toLocaleString("en-US", {minimumFractionDigits:0, maximumFractionDigits:4});
-const SITE_VERSION = "00.00.32";
+const SITE_VERSION = "00.00.33";
 const APP_DL = "downloads/PremiumStudioSetup.exe";
 
 const fb = initializeApp(firebaseConfig);
@@ -1382,7 +1382,8 @@ function bigPicture(){ if (!BP) BP = makeBP({$, esc, GAMES, ownedEds, instOf, ED
   switchUser:accSwitch, forgetUser:accForget, logout:() => signOut(auth), signUp:() => showAuth("signup"), authErr,
   signIn:(m, p) => signInWithEmailAndPassword(auth, String(m).trim().toLowerCase(), p),
   padConnected:async () => { try { if (PS && PS.getSettings && (await PS.getSettings()).consolePad && document.hasFocus()) { location.hash = "#bigpicture"; } } catch(e) {} },
-  state:() => ({user, PROFILE, FRIENDS, PLAY, RUNNING, PROGRESS, online:isOnline, playing:playingNow})}); return BP; }
+  state:() => ({user, PROFILE, FRIENDS, PLAY, RUNNING, PROGRESS, WISH, PARENTAL, online:isOnline, playing:playingNow}),
+  wish:async (gid, on) => { if (!user) throw new Error("سجّل دخولك أول"); const r = doc(fs, "users", user.uid, "wishlist", gid); if (on) await setDoc(r, {at:serverTimestamp()}); else await deleteDoc(r); }}); return BP; }
 if (PS) setTimeout(() => bigPicture(), 0);
 onSnapshot(collection(fs, "sales"), s => { SALES = {}; s.forEach(d => SALES[d.id] = d.data()); render(); }, () => {});
 function render(){

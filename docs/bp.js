@@ -7,7 +7,7 @@ export function makeBP(H){
   let space = "games", sel = {games:-1, media:0}, pages = [], stack = [], toasts = [], unProg = null;
   const pad = {last:{}, held:{}}, ST = {glyphs:"auto", sounds:true, wall:"autumn"};
   try { Object.assign(ST, JSON.parse(localStorage.getItem("bp-ui") || "{}")); } catch(e) {}
-  const saveUI = () => { try { localStorage.setItem("bp-ui", JSON.stringify({wall:ST.wall, sort:ST.sort})); } catch(e) {} };
+  const saveUI = () => { try { localStorage.setItem("bp-ui", JSON.stringify({wall:ST.wall, sort:ST.sort, toasts:ST.toasts})); } catch(e) {} };
   const S = () => state();
   const onUsers = () => (pages[pages.length - 1] || {}).t === "users";
   let busy = "";
@@ -72,13 +72,20 @@ export function makeBP(H){
     user:'<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4.5 4.2-7 8-7s7 2.5 8 7"/></svg>',
     switchu:'<svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.4"/><path d="M3 20c.8-3.6 3.2-5.6 6-5.6 1.4 0 2.6.4 3.6 1.2"/><path d="M15 13h6l-2-2M21 17h-6l2 2"/></svg>',
     logout:'<svg viewBox="0 0 24 24"><path d="M10 4H5v16h5"/><path d="M14 8l4 4-4 4M18 12H9"/></svg>',
+    heart:'<svg viewBox="0 0 24 24"><path d="M12 20s-7.5-4.6-7.5-10A4.3 4.3 0 0 1 12 7.6 4.3 4.3 0 0 1 19.5 10C19.5 15.4 12 20 12 20z"/></svg>',
+    disk:'<svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 14h.01M11 14h6"/></svg>',
+    screen:'<svg viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="12" rx="1.5"/><path d="M9 20h6M12 16.5V20"/></svg>',
+    family:'<svg viewBox="0 0 24 24"><circle cx="8" cy="7" r="2.6"/><circle cx="16.5" cy="9" r="2"/><path d="M3.5 19c.6-3.6 2.4-5.6 4.5-5.6s3.9 2 4.5 5.6M13 15.2c.9-.8 2.1-1.2 3.5-1.2 2 0 3.5 1.6 4 5"/></svg>',
+    system:'<svg viewBox="0 0 24 24"><path d="M7 3.5h10l1.5 17h-13z"/><path d="M9.5 7h5"/></svg>',
+    capture:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></svg>',
+    info:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5M12 7.6v.2"/></svg>',
     friends:'<svg viewBox="0 0 24 24"><circle cx="9" cy="8.5" r="3"/><circle cx="16.5" cy="9.5" r="2.4"/><path d="M3.5 19c.8-3.2 3-5 5.5-5s4.7 1.8 5.5 5M14.5 14.3c2.6-.7 5 .9 6 4.7"/></svg>'
   };
 
   /* ---------- open / close ---------- */
   // the console lives in its own shadow root, so the store's CSS can't change it (and its CSS can't leak out)
   async function loadSheet(){ if (sheet) return sheet; sheet = new CSSStyleSheet();
-    try { const u = new URL("bp.css?v=5", import.meta.url); sheet.replaceSync(await (await fetch(u)).text()); } catch(e) {} return sheet; }
+    try { const u = new URL("bp.css?v=7", import.meta.url); sheet.replaceSync(await (await fetch(u)).text()); } catch(e) {} return sheet; }
   async function open(){ if (on) return; on = true; document.body.classList.add("bp-on"); pages = H.accounts ? [{t:"users"}] : []; stack = []; space = "games"; sel.games = -1; busy = "";
     host = document.createElement("div"); host.id = "bpHost"; host.className = "nomouse"; document.body.appendChild(host);
     root = host.attachShadow({mode:"open"}); root.adoptedStyleSheets = [await loadSheet()];
@@ -101,7 +108,7 @@ export function makeBP(H){
   function wheel(e){ const r = e.target.closest(".ps-row"); if (r && !stack.length && !pages.length) { e.preventDefault(); const it = rowItems(), i = cur(); const n = Math.max(0, Math.min(it.length - 1, i + (e.deltaY > 0 || e.deltaX > 0 ? 1 : -1))); focusTile(n); } }
 
   /* ---------- notifications (top corner, like the PS5) ---------- */
-  function notify(icon, text){ if (!on || !root) return; beep("note"); const id = Math.random().toString(36).slice(2);
+  function notify(icon, text){ if (!on || !root || ST.toasts === false) return; beep("note"); const id = Math.random().toString(36).slice(2);
     toasts.push({id, icon, text}); drawToasts(); setTimeout(() => { toasts = toasts.filter(t => t.id !== id); drawToasts(); }, 4500); }
   function drawToasts(){ const b = root && root.querySelector("#psToasts"); if (!b) return;
     b.innerHTML = toasts.slice(-3).map(t => `<div class="ps-toast"><span class="ic">${t.icon}</span><span class="tx">${esc(t.text)}</span></div>`).join(""); }
@@ -116,7 +123,7 @@ export function makeBP(H){
   function actBtn(g, prefer){ const st = gameState(g, prefer);
     if (st.run) return `<button class="ps-btn stop" data-bp="act" data-a="stop" data-g="${g.id}" data-e="${st.ed}">إغلاق اللعبة</button>`;
     if (st.prog) return `<button class="ps-btn" data-bp="act" data-a="none" data-g="${g.id}">يحمّل <span class="num">${H.pct(st.prog)}%</span></button>`;
-    if (st.inst) return `<button class="ps-btn play" data-bp="act" data-a="play" data-g="${g.id}" data-e="${st.ed}">العب</button>`;
+    if (st.inst) return `<button class="ps-btn play" data-bp="act" data-a="play" data-g="${g.id}" data-e="${st.ed}">العب اللعبة</button>`;
     if (st.ed) return `<button class="ps-btn" data-bp="act" data-a="install" data-g="${g.id}" data-e="${st.ed}">تنزيل</button>`;
     return `<button class="ps-btn" data-bp="buy" data-g="${g.id}">عرض في المتجر</button>`; }
 
@@ -140,11 +147,14 @@ export function makeBP(H){
     if (!x) return "";
     if (x.k === "welcome") return widgetsHTML();
     if (x.k === "game") return gameHubHTML(H.byId(x.g));
-    if (x.k === "store") { const deals = GAMES.filter(g => !g.hidden && H.saleOf(g.id)), news = GAMES.filter(g => !g.hidden && !ownedEds(g.id).length);
-      return `<div class="ps-hub"><div class="ps-hubtitle">المتجر</div><div class="ps-acts"><button class="ps-btn play" data-bp="page" data-p="store">افتح المتجر</button></div>
-        <div class="ps-cards">${[...deals, ...news].filter((g, i, a) => a.indexOf(g) === i).slice(0, 6).map(g => { const s = H.saleOf(g.id);
-          return `<button class="ps-card art" data-bp="gpage" data-g="${g.id}"><span class="cv" data-cover="${g.id}"></span><span class="cap"><b>${title(g)}</b><small>${s ? "خصم " + s.pct + "% · " + H.saleLeft(g.id) : esc(g.tagline || "")}</small></span></button>`; }).join("")}
-        ${H.SOON.slice(0, 3).map(s => `<button class="ps-card art" data-bp="soon" data-s="${s.id}"><span class="cv">${H.soonArt(s)}</span><span class="cap"><b>${esc(s.title)}</b><small>قريبًا · ${esc(s.when)}</small></span></button>`).join("")}</div></div>`; }
+    if (x.k === "store") { const vis = GAMES.filter(g => !g.hidden), sale = vis.filter(g => H.saleOf(g.id)), feat = sale[0] || vis.find(g => !ownedEds(g.id).length) || vis[0];
+      const best = sale.reduce((m, g) => Math.max(m, H.saleOf(g.id).pct), 0), pick = [...sale, ...vis.filter(g => !sale.includes(g))].filter(g => g !== feat).slice(0, 4);
+      return `<div class="ps-hub store">${feat ? `<button class="ps-promo" data-bp="page" data-p="store"><span class="cv" data-cover="${feat.id}"></span>
+          <span class="cap"><small>${sale.length ? "تخفيضات Premium Store" : "جديد في المتجر"}</small><b>${sale.length ? `خصم حتى <span class="num">${best}%</span>` : title(feat)}</b><em>${sale.length ? `<bdi dir="ltr">${title(feat)}</bdi> · ${esc(H.saleLeft(feat.id))}` : esc(feat.tagline || "")}</em></span></button>` : ""}
+        <p class="ps-note">${H.SOON.length ? "انضافت ألعاب جديدة إلى قائمة «قريبًا»" : "ألعاب جديدة كل فترة"}</p>
+        <div class="ps-sec">لا يفوتك</div>
+        <div class="ps-cards mini">${pick.map(g => { const sl = H.saleOf(g.id); return `<button class="ps-card art mini" data-bp="gpage" data-g="${g.id}"><span class="cv" data-cover="${g.id}"></span>${sl ? `<i class="off num">-${sl.pct}%</i>` : ""}</button>`; }).join("")}
+          ${H.SOON.slice(0, 4).map(x => `<button class="ps-card art mini" data-bp="soon" data-s="${x.id}"><span class="cv">${H.soonArt(x)}</span></button>`).join("")}</div></div>`; }
     if (x.k === "library") { const own = mine(), inst = own.filter(g => { const st = gameState(g); return st.inst || st.run; }), show = inst.length ? inst : own;
       return `<div class="ps-hub lib"><div class="ps-count"><span>${inst.length ? "تخزين الجهاز" : "مكتبتك"}: <b class="num">${show.length}</b></span><span>${G("a")} افتح المكتبة</span></div>
         <div class="ps-grid mini">${show.slice(0, 10).map(g => coverTile(g)).join("") || '<p class="ps-empty">مكتبتك فاضية. روح للمتجر.</p>'}</div></div>`; }
@@ -154,19 +164,33 @@ export function makeBP(H){
     if (x.k === "engine") return `<div class="ps-hub"><div class="ps-hubtitle">Premium Engine</div><p class="ps-sub">اصنع ألعابك للكمبيوتر. يفتح المحرر على سطح المكتب.</p><div class="ps-acts"><button class="ps-btn play" data-bp="engine">افتح المحرك</button></div></div>`;
     return ""; }
 
+  function troCounts(ach){ const t = {platinum:0, gold:0, silver:0, bronze:0}; ach.list.forEach(a => { if (a.got) t[a.tier] = (t[a.tier] || 0) + 1; });
+    return `<span class="tcs">${["platinum","gold","silver","bronze"].map(k => `<span class="tc">${ach.icon(k, true)}<b class="num">${t[k]}</b></span>`).join("")}</span>`; }
   function gameHubHTML(g){ const st = gameState(g), m = mins(g.id), lp = last(g.id), ach = H.achOf(g.id), s = S();
     const fr = Object.entries(s.FRIENDS).filter(([id, f]) => f.status === "ok" && s.playing(id) && (s.playing(id) === (g.en || g.title) || s.playing(id) === g.title));
+    const allFr = Object.values(s.FRIENDS).filter(f => f.status === "ok");
     return `<div class="ps-hub game"><div class="ps-logo">${title(g)}</div>
-      <div class="ps-acts">${actBtn(g)}<button class="ps-btn icon" data-bp="menu" data-g="${g.id}" aria-label="خيارات">${I.more}</button></div>
+      <div class="ps-acts">${actBtn(g)}<button class="ps-btn icon" data-bp="menu" data-g="${g.id}" aria-label="خيارات">${I.more}</button>${m ? `<span class="ps-time">${I.pad}<b class="num">${hrs(m)}</b></span>` : ""}</div>
       <div class="ps-cards">
-        <div class="ps-card fr"><div class="avs">${fr.slice(0, 5).map(([, f]) => `<i>${esc((f.username || "?")[0].toUpperCase())}</i>`).join("") || '<i class="none">·</i>'}${fr.length > 5 ? `<i class="more">${fr.length}</i>` : ""}</div><b>${fr.length ? "أصدقاء يلعبون هذه اللعبة" : "ما فيه أصدقاء يلعبونها الحين"}</b></div>
-        ${ach.all ? `<button class="ps-card tro" data-bp="gpage" data-g="${g.id}"><span class="ic">${I.trophy}</span><b class="num">${ach.got}/${ach.all}</b><small>التروفيات</small><span class="bar"><i style="width:${Math.round(ach.got / ach.all * 100)}%"></i></span></button>` : ""}
-        <div class="ps-card info"><b class="num">${m ? hrs(m) : "—"}</b><small>وقت اللعب${lp ? " · آخر مرة " + ago(lp) : ""}</small></div>
-        <button class="ps-card info" data-bp="gpage" data-g="${g.id}"><b>تفاصيل اللعبة</b><small>${esc(g.tagline || "")}</small></button>
-        ${st.prog ? `<div class="ps-card info"><b>يحمّل</b><span class="bar"><i data-progk="${st.k}" style="width:${H.pct(st.prog)}%"></i></span></div>` : ""}
+        ${ach.all ? `<button class="ps-card tro" data-bp="tpage" data-g="${g.id}">${troCounts(ach)}<span class="row"><b>الجوائز</b><b class="num">${Math.round(ach.got / ach.all * 100)}%</b></span><span class="bar"><i style="width:${Math.round(ach.got / ach.all * 100)}%"></i></span></button>` : ""}
+        <button class="ps-card fr" data-bp="page" data-p="friends"><div class="avs">${(fr.length ? fr.map(([, f]) => f) : allFr).slice(0, 5).map(f => `<i style="--h:${hue(f.username || "")}">${esc((f.username || "?")[0].toUpperCase())}</i>`).join("") || '<i class="none">·</i>'}</div><b>${fr.length ? "أصدقاء يلعبون هذه اللعبة" : "الأصدقاء"}</b><small>${fr.length ? `<span class="num">${fr.length}</span> من أصدقائك يلعبونها الحين` : allFr.length ? "ما أحد منهم يلعبها الحين" : "أضف أصدقاء من المتجر"}</small></button>
+        <button class="ps-card info" data-bp="gpage" data-g="${g.id}"><b>تفاصيل اللعبة</b><small>${lp ? "آخر مرة لعبت " + ago(lp) : esc(g.tagline || "")}</small></button>
+        ${st.prog ? `<div class="ps-card info"><b>يحمّل <span class="num">${H.pct(st.prog)}%</span></b><span class="bar"><i data-progk="${st.k}" style="width:${H.pct(st.prog)}%"></i></span></div>` : ""}
       </div></div>`; }
 
-  let SHOTS = null, DISK = null, rowSig = "";
+  let SHOTS = null, DISK = null, rowSig = "", WAVES = "";
+  // flowing white lines (the PS5 library / media backdrop), drawn once
+  function wavesSVG(){ if (WAVES) return WAVES; let p = "";
+    for (let i = 0; i < 54; i++) { const a = i / 54; let d = "";
+      for (let x = 0; x <= 100; x += 2) { const y = 62 + Math.sin(x / 13 + a * 4.2) * (16 - a * 7) + Math.sin(x / 5.5 + a * 8) * 2.5 - a * 30 + (x / 100) * (-24 + a * 34); d += (x ? " L" : "M") + x + " " + y.toFixed(2); }
+      p += `<path d="${d}" style="stroke:rgba(255,255,255,${(.05 + .3 * Math.sin(a * 3.1416)).toFixed(3)})"/>`; }
+    return WAVES = `<svg class="waves" viewBox="0 0 100 100" preserveAspectRatio="none">${p}</svg>`; }
+  const STOREBG = '<span class="sbg store"><i></i><i></i><i></i><b></b></span>';
+  function bgHTML(x){ if (x && x.k === "game") return `<span class="gbg" data-cover="${x.g}"></span><i class="shade game"></i>`;
+    if (!x || x.k === "welcome") return '<canvas id="psWall"></canvas><i class="shade"></i>';
+    if (x.k === "store") return STOREBG + '<i class="shade soft"></i>';
+    return `<span class="sbg waves">${wavesSVG()}</span><i class="shade soft"></i>`; }
+  const bgKey = x => !x || x.k === "welcome" ? "w" : x.k === "game" ? "g" + x.g : x.k === "store" ? "s" : "v";
   function loadShots(){ if (SHOTS || !PS || !PS.screenshots) return; SHOTS = [];
     Promise.all(mine().map(g => PS.screenshots(g.id).then(l => l.map(x => Object.assign(x, {g:g.id}))).catch(() => []))).then(r => { SHOTS = r.flat().sort((a, b) => b.name.localeCompare(a.name)); if (on) softRefresh(); }); }
   function bannerHTML(){ loadShots(); const x = SHOTS && SHOTS[0];
@@ -211,19 +235,9 @@ export function makeBP(H){
       const gs = L.games.map(H.byId).filter(Boolean);
       return `<div class="ps-page"><header class="ps-ph"><span class="pic">${I.lib}</span><h1>${esc(L.name)}</h1></header><div class="ps-count"><span>الألعاب: <b class="num">${gs.length}</b></span><span>${G("start")} خيارات القائمة</span></div>
         <div class="ps-grid">${gs.map(g => coverTile(g, `data-list="${L.id}"`)).join("") || '<p class="ps-empty">القائمة فاضية. أضف ألعاب من زر الخيارات ⋯ على أي لعبة.</p>'}</div></div>`; }
-    if (P.t === "store") { const ql = q.trim().toLowerCase(), m = x => !ql || (x.title + " " + (x.en || "") + " " + (x.genreAr || "")).toLowerCase().includes(ql);
-      const gs = GAMES.filter(x => (!x.hidden || ownedEds(x.id).length) && m(x)), ss = H.SOON.filter(m);
-      return `<div class="ps-page"><header class="ps-ph"><span class="pic">${I.store}</span><h1>المتجر</h1><button class="ps-search" data-bp="search">${I.search}<span>${q ? esc(q) : "ابحث عن لعبة"}</span></button></header>
-        ${gs.length ? `<div class="ps-grid">${gs.map(g => { const e = ent(g.id), s = H.saleOf(g.id); return coverTile(g, "", e.best ? "في مكتبتك" : s ? "خصم " + s.pct + "%" : "من " + money(Math.round(H.lowPrice(g) * 100) / 100)); }).join("")}</div>` : ""}
-        ${ss.length ? `<div class="ps-sec">قريبًا</div><div class="ps-grid">${ss.slice(0, 40).map(x => `<button class="ps-cover" data-bp="soon" data-s="${x.id}"><span class="art">${H.soonArt(x)}</span><span class="nm">${esc(x.title)}</span></button>`).join("")}</div>` : ""}
-        ${!gs.length && !ss.length ? `<p class="ps-empty">ما لقينا شي باسم «${esc(q)}»</p>` : ""}</div>`; }
-    if (P.t === "search") { const ql = q.trim().toLowerCase(), s = S();
-      const gs = ql ? GAMES.filter(x => (!x.hidden || ownedEds(x.id).length) && (x.title + " " + (x.en || "")).toLowerCase().includes(ql)) : [];
-      const fr = ql ? Object.entries(s.FRIENDS).filter(([, f]) => f.status === "ok" && (f.username || "").toLowerCase().includes(ql)) : [];
-      return `<div class="ps-page"><header class="ps-ph"><span class="pic">${I.search}</span><button class="ps-search wide" data-bp="search"><span>${q ? esc(q) : "ابحث في الألعاب والأصدقاء"}</span></button></header>
-        ${gs.length ? `<div class="ps-sec">الألعاب</div><div class="ps-grid">${gs.map(g => coverTile(g)).join("")}</div>` : ""}
-        ${fr.length ? `<div class="ps-sec">الأصدقاء</div><div class="ps-list">${fr.map(([id, f]) => friendRow(id, f)).join("")}</div>` : ""}
-        ${ql && !gs.length && !fr.length ? `<p class="ps-empty">ما فيه نتائج لـ «${esc(q)}»</p>` : ""}${!ql ? `<p class="ps-empty">اكتب اسم لعبة أو صديق.</p>` : ""}</div>`; }
+    if (P.t === "store") return storeHTML(P);
+    if (P.t === "search") return searchHTML(P);
+    if (P.t === "trophies") return trophiesHTML();
     if (P.t === "friends") { const s = S(), fr = Object.entries(s.FRIENDS).filter(([, f]) => f.status === "ok").sort((a, b) => s.online(b[0]) - s.online(a[0]));
       return `<div class="ps-page"><header class="ps-ph"><span class="pic">${I.base}</span><h1>قاعدة الألعاب</h1></header><div class="ps-count"><span>الأصدقاء: <b class="num">${fr.length}</b></span><span>متصل: <b class="num">${fr.filter(([id]) => s.online(id)).length}</b></span></div>
         <div class="ps-list">${fr.map(([id, f]) => friendRow(id, f)).join("") || '<p class="ps-empty">ما عندك أصدقاء للحين. أضفهم من المتجر.</p>'}</div></div>`; }
@@ -236,13 +250,53 @@ export function makeBP(H){
         ${act.length ? `<div class="ps-list">${act.map(([k, p]) => `<div class="ps-row-i" data-bp="item"><span class="cvs" data-cover="${(k.split("--")[0])}"></span><span class="t"><b>${esc(H.keyTitle(k))}</b><span class="bar"><i data-progk="${k}" style="width:${H.pct(p)}%"></i></span><small class="num">${H.progText(p)}</small></span></div>`).join("")}</div>` : ""}
         ${ups.length ? `<div class="ps-sec">تحديثات</div><div class="ps-list">${ups.map(([k]) => `<button class="ps-row-i" data-bp="update" data-k="${k}"><span class="t"><b>${esc(H.keyTitle(k))}</b><small>تحديث جاهز · ${G("a")} حدّث</small></span></button>`).join("")}</div>` : ""}
         ${PS && !act.length && !ups.length ? '<p class="ps-empty">ما فيه تنزيلات. كل ألعابك محدّثة ✓</p>' : ""}</div>`; }
-    if (P.t === "settings") return settingsHTML();
+    if (P.t === "settings") return settingsHTML(P);
     if (P.t === "profile") return profileHTML();
     if (P.t === "game") return gamePageHTML(P);
     if (P.t === "soon") { const x = H.SOON.find(s => s.id === P.s) || {};
       return `<div class="ps-page gp"><span class="gbg">${H.soonArt(x)}</span><div class="ginfo"><div class="eyebrow">قريبًا · ${esc(x.genreAr || "")}</div><h1>${esc(x.title || "")}</h1><p>${esc(x.tagline || "")}</p>
         <div class="ps-cards"><div class="ps-card info"><b>${esc(x.when || "")}</b><small>موعد الإصدار</small></div></div></div></div>`; }
     return ""; }
+  /* store cards: cover with the name and price under it */
+  function storeCard(g){ const e = ent(g.id), sl = H.saleOf(g.id), w = (S().WISH || {})[g.id];
+    return `<button class="ps-sc" data-bp="gpage" data-g="${g.id}"><span class="art" data-cover="${g.id}"></span>${sl ? `<i class="off num">-${sl.pct}%</i>` : ""}${w && !e.best ? `<i class="wl">${I.heart}</i>` : ""}<span class="nm">${title(g)}</span><small>${e.best ? "في مكتبتك" : "من " + money(Math.round(H.lowPrice(g) * 100) / 100)}</small></button>`; }
+  const soonCard = x => `<button class="ps-sc" data-bp="soon" data-s="${x.id}"><span class="art">${H.soonArt(x)}</span><span class="nm">${esc(x.title)}</span><small>قريبًا · ${esc(x.when)}</small></button>`;
+  const STABS = [["new","الأحدث"],["deals","العروض"],["soon","قريبًا"],["browse","استعرض"]];
+  function storeHTML(P){ const tab = P.tab || "new", W = S().WISH || {}, ql = q.trim().toLowerCase();
+    const vis = GAMES.filter(x => !x.hidden || ownedEds(x.id).length), m = x => !ql || (x.title + " " + (x.en || "") + " " + (x.genreAr || "")).toLowerCase().includes(ql);
+    const sale = vis.filter(g => H.saleOf(g.id)), top = vis.slice().sort((a, b) => !!H.saleOf(b.id) - !!H.saleOf(a.id));
+    const row = (t, cards) => cards ? `<div class="ps-sec">${t}</div><div class="ps-hrow">${cards}</div>` : "";
+    let body = "";
+    if (tab === "new") body = row("الأكثر رواجًا", top.map(storeCard).join("")) + row("العروض", sale.map(storeCard).join("")) + row("قريبًا", H.SOON.slice(0, 14).map(soonCard).join(""));
+    else if (tab === "deals") body = sale.length ? `<div class="ps-grid st">${sale.map(storeCard).join("")}</div>` : '<p class="ps-empty">ما فيه عروض الحين. ارجع لاحقًا.</p>';
+    else if (tab === "soon") body = `<div class="ps-grid st">${H.SOON.map(soonCard).join("")}</div>`;
+    else if (tab === "wish") { const wl = vis.filter(g => W[g.id]); body = `<div class="ps-count"><span>قائمة الأمنيات: <b class="num">${wl.length}</b></span></div>` + (wl.length ? `<div class="ps-grid st">${wl.map(storeCard).join("")}</div>` : '<p class="ps-empty">قائمة أمنياتك فاضية. افتح أي لعبة واضغط ♡.</p>'); }
+    else { const gs = vis.filter(m), ss = H.SOON.filter(m);
+      body = `<div class="ps-count"><span>${ql ? `نتائج «${esc(q)}»` : "كل الألعاب"}: <b class="num">${gs.length + ss.length}</b></span>${ql ? `<span>${G("y")} بحث جديد</span>` : ""}</div>` + (gs.length + ss.length ? `<div class="ps-grid st">${gs.map(storeCard).join("")}${ss.map(soonCard).join("")}</div>` : `<p class="ps-empty">ما لقينا شي باسم «${esc(q)}»</p>`); }
+    return `<div class="ps-page store"><header class="ps-sh"><span class="pic">${I.store}</span><h1 class="ltr">Premium Store</h1>
+        <nav class="ps-tabs st">${STABS.map(([k, n]) => `<button class="ps-tab${tab === k ? " on" : ""}" data-bp="stab" data-t="${k}">${n}</button>`).join("")}</nav>
+        <span class="tools"><button class="ps-ib" data-bp="search" aria-label="بحث">${I.search}</button><button class="ps-ib${tab === "wish" ? " on" : ""}" data-bp="stab" data-t="wish" aria-label="قائمة الأمنيات">${I.heart}</button></span></header>
+      ${body}</div>`; }
+  const QTABS = [["games","الألعاب"],["media","وسائط"],["players","اللاعبون"]];
+  function searchHTML(P){ const tab = P.tab || "games", ql = q.trim().toLowerCase(), s = S();
+    const vis = GAMES.filter(x => !x.hidden || ownedEds(x.id).length), hit = x => (x.title + " " + (x.en || "") + " " + (x.genreAr || "")).toLowerCase().includes(ql);
+    let body = "";
+    if (tab === "games") { const gs = ql ? vis.filter(hit) : vis, ss = ql ? H.SOON.filter(hit) : [];
+      body = `<div class="ps-sec">${ql ? "النتائج" : "الألعاب الرائجة"}</div>` + (gs.length + ss.length ? `<div class="ps-hrow">${gs.map(storeCard).join("")}${ss.slice(0, 20).map(soonCard).join("")}</div>` : `<p class="ps-empty">ما فيه ألعاب باسم «${esc(q)}»</p>`); }
+    else if (tab === "media") { loadShots(); const l = (SHOTS || []).map((x, i) => [x, i]).filter(([x]) => !ql || (((H.byId(x.g) || {}).en || "") + " " + ((H.byId(x.g) || {}).title || "")).toLowerCase().includes(ql) || x.name.toLowerCase().includes(ql));
+      body = `<div class="ps-sec">${ql ? "النتائج" : "آخر اللقطات"}</div>` + (!PS || !PS.screenshots ? '<p class="ps-empty">الوسائط في تطبيق Premium Games.</p>' : l.length ? `<div class="ps-hrow">${l.slice(0, 30).map(([x, i]) => `<button class="ps-sc shot" data-bp="shot" data-i="${i}"><span class="art"><img src="${x.thumb}" alt=""></span><span class="nm">${esc((H.byId(x.g) || {}).en || "")}</span><small class="ltr">${esc(x.name)}</small></button>`).join("")}</div>` : '<p class="ps-empty">ما فيه لقطات. اضغط F12 وأنت تلعب.</p>'); }
+    else { const fr = Object.entries(s.FRIENDS).filter(([, f]) => f.status === "ok" && (!ql || (f.username || "").toLowerCase().includes(ql)));
+      body = `<div class="ps-sec">${ql ? "النتائج" : "أصدقاؤك"}</div>` + (fr.length ? `<div class="ps-list">${fr.map(([id, f]) => friendRow(id, f)).join("")}</div>` : `<p class="ps-empty">${ql ? `ما فيه لاعب باسم «${esc(q)}» في أصدقائك` : "ما عندك أصدقاء للحين."}</p>`); }
+    const ph = {games:"البحث عن ألعاب", media:"البحث في لقطاتك", players:"البحث عن لاعبين"}[tab];
+    return `<div class="ps-page light search"><nav class="ps-qtabs">${QTABS.map(([k, n]) => `<button class="ps-qt${tab === k ? " on" : ""}" data-bp="qtab" data-t="${k}">${n}</button>`).join("")}</nav>
+      <button class="ps-qbox" data-bp="search">${I.search}<span>${q ? esc(q) : ph}</span></button>${body}</div>`; }
+  function trophiesHTML(){ const s = S(), own = mine().filter(g => H.achOf(g.id).all), tot = {platinum:0, gold:0, silver:0, bronze:0};
+    let all = 0, got = 0; own.forEach(g => { const a = H.achOf(g.id); all += a.all; got += a.got; a.list.forEach(x => { if (x.got) tot[x.tier]++; }); });
+    const icon = own.length ? H.achOf(own[0].id).icon : null;
+    return `<div class="ps-page trop"><header class="ps-ph"><span class="pic">${I.trophy}</span><h1>الجوائز</h1></header>
+      <div class="ps-trosum">${icon ? ["platinum","gold","silver","bronze"].map(k => `<span class="tc big">${icon(k, true)}<b class="num">${tot[k]}</b></span>`).join("") : ""}<span class="pc"><b class="num">${all ? Math.round(got / all * 100) : 0}%</b><small><span class="num">${got}/${all}</span> جائزة</small></span></div>
+      <div class="ps-list wide">${own.map(g => { const a = H.achOf(g.id), p = Math.round(a.got / a.all * 100);
+        return `<button class="ps-row-i trow" data-bp="tpage" data-g="${g.id}"><span class="cvs" data-cover="${g.id}"></span><span class="t"><b class="ltr">${title(g)}</b><span class="bar"><i style="width:${p}%"></i></span><small>${troCounts(a)}</small></span><span class="pc num">${p}%</span></button>`; }).join("") || '<p class="ps-empty">ما عندك ألعاب فيها جوائز.</p>'}</div></div>`; }
   const coverTile = (g, extra = "", sub = "") => `<button class="ps-cover" data-bp="gpage" data-g="${g.id}" ${extra}><span class="art" data-cover="${g.id}"></span>${running(g.id) ? '<i class="live"></i>' : ""}<span class="nm">${title(g)}${sub ? `<small>${esc(sub)}</small>` : ""}</span></button>`;
   function friendRow(id, f){ const s = S(), pl = s.playing(id), onl = s.online(id);
     return `<button class="ps-row-i fr${onl ? " on" : ""}" data-bp="friend" data-f="${id}"><span class="av">${esc((f.username || "?")[0].toUpperCase())}</span><span class="t"><b>@${esc(f.username)}</b><small>${pl ? "يلعب " + esc(pl) : onl ? "متصل" : "غير متصل"}</small></span></button>`; }
@@ -261,22 +315,43 @@ export function makeBP(H){
       <div class="eyebrow">${eds.length ? "في مكتبتك" : "من المتجر"}${g.tags ? " · " + g.tags.map(esc).join(" · ") : ""}</div><h1>${title(g)}</h1>
       ${eds.length > 1 ? `<div class="eds">${eds.map(x => `<span class="${x === ed ? "on" : ""}">${esc(ED_TAG[x] || x)}</span>`).join("")}<small>${G("x")} غيّر النسخة</small></div>` : ""}
       <p>${esc(g.tagline || "")}</p>
-      <div class="ps-acts">${actBtn(g, ed)}<button class="ps-btn icon" data-bp="menu" data-g="${g.id}" aria-label="خيارات">${I.more}</button>${eds.length ? "" : `<button class="ps-btn ghost" data-bp="buy" data-g="${g.id}">الإصدارات والأسعار</button>`}</div>
+      <div class="ps-acts">${actBtn(g, ed)}<button class="ps-btn icon" data-bp="menu" data-g="${g.id}" aria-label="خيارات">${I.more}</button>${eds.length ? "" : `<button class="ps-btn icon${(S().WISH || {})[g.id] ? " on" : ""}" data-bp="wishT" data-g="${g.id}" aria-label="قائمة الأمنيات">${I.heart}</button><button class="ps-btn ghost" data-bp="buy" data-g="${g.id}">الإصدارات والأسعار</button>`}</div>
       <div class="ps-cards">${eds.length ? `<div class="ps-card info"><b class="num">${mins(g.id) ? hrs(mins(g.id)) : "—"}</b><small>وقت اللعب</small></div><div class="ps-card info"><b>${last(g.id) ? ago(last(g.id)) : "—"}</b><small>آخر مرة</small></div>` : `<div class="ps-card info"><b class="num">${money(Math.round(H.lowPrice(g) * 100) / 100)}</b><small>يبدأ من${H.saleOf(g.id) ? " · خصم " + H.saleOf(g.id).pct + "%" : ""}</small></div>`}
         ${ach.all ? `<div class="ps-card info"><b class="num">${ach.got}/${ach.all}</b><small>التروفيات</small></div>` : ""}${e && e.d ? `<div class="ps-card info"><b>${esc(e.d)}</b><small>${esc(e.name)}</small></div>` : ""}</div>
-      ${ach.all ? `<div class="achs">${ach.list.slice(0, 30).map(a => `<span class="${a.got ? "got" : ""}" title="${esc(a.desc)}">${ach.icon(a.tier, a.got)} ${esc(a.name)}</span>`).join("")}${ach.all > 30 ? `<span>+${ach.all - 30}</span>` : ""}</div>` : ""}
+      ${ach.all ? `<div class="ps-sec" id="psTro">الجوائز <small class="num">${ach.got}/${ach.all}</small></div><div class="achs">${ach.list.slice(0, 30).map(a => `<span class="${a.got ? "got" : ""}" title="${esc(a.desc)}">${ach.icon(a.tier, a.got)} ${esc(a.name)}</span>`).join("")}${ach.all > 30 ? `<span>+${ach.all - 30}</span>` : ""}</div>` : ""}
       </div></div>`; }
-  function settingsHTML(){ const t = (k, n, d) => `<button class="ps-set" data-bp="set" data-k="${k}"><span><b>${n}</b><small>${d}</small></span><i class="sw${ST[k] ? " on" : ""}"></i></button>`;
-    const gl = {auto:"تلقائي حسب اليد", xbox:"إكس بوكس (A B X Y)", ps:"بلايستيشن (✕ ○ □ △)"}, wl = {autumn:"خريف", night:"ليل", aurora:"شفق"};
-    return `<div class="ps-page"><header class="ps-ph"><span class="pic">${I.gear}</span><h1>الإعدادات</h1></header><div class="ps-list set">
-      ${PS ? t("consoleBoot", "شغّل الكمبيوتر على وضع الكونسل", "أول ما يشتغل الويندوز يفتح هالشاشة، مثل جهاز ألعاب") : ""}
-      ${PS ? t("startup", "يشتغل مع الويندوز", "التطبيق يجهز بالخلفية عشان ألعابك تفتح بسرعة") : ""}
-      ${PS ? t("consolePad", "افتح وضع الكونسل لما توصل يد تحكم", "توصّل اليد وتطلع لك هالشاشة على طول") : ""}
-      ${t("sounds", "أصوات الواجهة", "صوت خفيف لما تتنقل وتختار")}
-      <button class="ps-set" data-bp="wall"><span><b>الخلفية</b><small>${wl[ST.wall] || wl.autumn}</small></span><i class="val">تغيير</i></button>
-      <button class="ps-set" data-bp="glyph"><span><b>شكل أزرار اليد</b><small>${gl[ST.glyphs] || gl.auto}</small></span><i class="val">تغيير</i></button>
-      <button class="ps-set" data-bp="test"><span><b>اختبر يد التحكم</b><small>شوف كل زر وعصا تشتغل</small></span><i class="val">${G("a")}</i></button>
-      <button class="ps-set" data-bp="exit"><span><b>اطلع من وضع الكونسل</b><small>ترجع لشاشة المتجر العادية</small></span><i class="val">⏏</i></button></div></div>`; }
+  const SETS = [["accounts","المستخدمون والحسابات","user"],["family","العائلة والرقابة الأبوية","family"],["system","النظام","system"],["storage","تخزين","disk"],["sound","الصوت","sound"],["screen","الشاشة والخلفية","screen"],["acc","الملحقات","pad"],["notes","الإشعارات","bell"],["capture","عمليات الالتقاط","capture"]];
+  function settingsHTML(P){ const sw = (k, n, d, bp = "set") => `<button class="ps-set" data-bp="${bp}" data-k="${k}"><span><b>${n}</b><small>${d}</small></span><i class="sw${ST[k] !== false && ST[k] ? " on" : ""}"></i></button>`;
+    const row = (n, d, val, attrs) => attrs ? `<button class="ps-set" ${attrs}><span><b>${n}</b><small>${d}</small></span><i class="val">${val}</i></button>` : `<div class="ps-set ro"><span><b>${n}</b><small>${d}</small></span><i class="val">${val}</i></div>`;
+    const pick = (cur, list, bp) => list.map(([k, n]) => `<button class="ps-set" data-bp="${bp}" data-v="${k}"><span><b>${n}</b></span><i class="radio${cur === k ? " on" : ""}"></i></button>`).join("");
+    if (!P.cat) return `<div class="ps-page light set"><h1 class="ps-stitle">الإعدادات</h1><div class="ps-slist">${SETS.map(([k, n, ic]) => `<button class="ps-si" data-bp="scat" data-c="${k}"><span class="ic">${I[ic]}</span><b>${n}</b></button>`).join("")}</div></div>`;
+    const c = SETS.find(x => x[0] === P.cat) || SETS[0], s = S();
+    let body = "";
+    if (c[0] === "accounts") { const acc = H.accounts ? H.accounts() : [];
+      body = acc.map(a => `<button class="ps-set" data-bp="user" data-uid="${esc(a.uid)}"><span class="who"><span class="uav" style="--h:${hue(a.uid)}">${initial(a)}</span><span><b>${esc(a.name || "")}</b><small class="ltr">${a.username ? "@" + esc(a.username) : ""}</small></span></span><i class="val">${a.cur ? "الحالي" : "بدّل"}</i></button>`).join("")
+        + `<button class="ps-set" data-bp="uadd"><span><b>إضافة مستخدم</b><small>سجّل دخول بحساب ثاني على هذا الجهاز</small></span><i class="val">＋</i></button>`
+        + `<button class="ps-set" data-bp="switchu"><span><b>شاشة اختيار المستخدم</b><small>نفس الشاشة اللي تطلع أول ما يفتح وضع الكونسل</small></span><i class="val">${G("a")}</i></button>`
+        + (s.user ? `<button class="ps-set" data-bp="uforget" data-uid="${esc(s.user.uid)}"><span><b>إزالة حسابك من هذا الجهاز</b><small>يحتاج كلمة السر عشان ترجّعه</small></span><i class="val">✕</i></button>` : ""); }
+    else if (c[0] === "family") { const pr = s.PARENTAL || ST.parental || {};
+      body = row("الرقابة الأبوية", pr.on ? "شغّالة: الألعاب المسموحة فقط، ووقت لعب محدد" : "موقفة", pr.on ? "شغّالة" : "موقفة")
+        + `<button class="ps-set" data-bp="acctpage"><span><b>تعديل الرقابة الأبوية</b><small>تنفتح صفحة الحساب في التطبيق. تحتاج الرمز السري لو كانت شغّالة</small></span><i class="val">${G("a")}</i></button>`; }
+    else if (c[0] === "system") body = (PS ? sw("consoleBoot", "شغّل الكمبيوتر على وضع الكونسل", "أول ما يشتغل الويندوز يفتح هالشاشة، مثل جهاز ألعاب") + sw("startup", "يشتغل مع الويندوز", "التطبيق يجهز بالخلفية عشان ألعابك تفتح بسرعة") + sw("consolePad", "افتح وضع الكونسل لما توصل يد تحكم", "توصّل اليد وتطلع لك هالشاشة على طول") : "")
+        + row("إصدار النظام", "Premium Games", `<span class="num ltr">${esc((PS && PS.version) || "—")}</span>`)
+        + `<button class="ps-set" data-bp="exit"><span><b>اطلع من وضع الكونسل</b><small>ترجع لشاشة المتجر العادية</small></span><i class="val">⏏</i></button>`;
+    else if (c[0] === "storage") { const inst = H.installed ? Object.entries(H.installed()) : [], used = inst.reduce((a, [, v]) => a + (v.size || 0), 0), tot = DISK && DISK.total, free = DISK && DISK.free;
+      if (!DISK && PS && PS.disk) PS.disk().then(d => { DISK = d; if (on) draw(); }).catch(() => { DISK = {}; });
+      body = `<div class="ps-set ro disk"><span><b>تخزين الجهاز</b><small>${tot ? `المساحة الخالية ${GB(free)} من ${GB(tot)}` : "…"}</small></span>${tot ? `<span class="sbar"><i class="a" style="width:${used / tot * 100}%"></i><i class="c" style="width:${Math.max(0, tot - free - used) / tot * 100}%"></i></span>` : ""}</div>`
+        + `<div class="ps-sec">الألعاب <small>${GB(used)}</small></div>` + (inst.length ? inst.sort((a, b) => (b[1].size || 0) - (a[1].size || 0)).map(([k, v]) => `<button class="ps-set" data-bp="menu" data-g="${esc(v.game || k.split("--")[0])}"><span class="who"><span class="cvs" data-cover="${esc(v.game || k.split("--")[0])}"></span><span><b class="ltr">${esc(v.name || H.keyTitle(k))}</b><small class="num ltr">${esc(v.version || "")}</small></span></span><i class="val">${GB(v.size || 0)}</i></button>`).join("") : row("ما فيه ألعاب مثبّتة", "", "")); }
+    else if (c[0] === "sound") body = sw("sounds", "أصوات الواجهة", "صوت خفيف لما تتنقل وتختار");
+    else if (c[0] === "screen") body = `<div class="ps-sec">الخلفية</div>` + pick(ST.wall || "autumn", [["autumn","خريف"],["night","ليل"],["aurora","شفق"]], "wallset");
+    else if (c[0] === "acc") { const pads = navigator.getGamepads ? [...navigator.getGamepads()].filter(Boolean) : [];
+      body = `<div class="ps-sec">وحدات التحكم</div>` + (pads.map((p, i) => row(isPSid(p.id) ? "يد بلايستيشن" : "يد إكس بوكس / عامة", `<span class="ltr">${esc(p.id.slice(0, 50))}</span>`, `<span class="num">${i + 1}</span>`)).join("") || row("ما فيه يد متصلة", "وصّلها واضغط أي زر", ""))
+        + `<button class="ps-set" data-bp="test"><span><b>اختبر يد التحكم</b><small>شوف كل زر وعصا تشتغل</small></span><i class="val">${G("a")}</i></button>`
+        + `<div class="ps-sec">شكل أزرار اليد</div>` + pick(ST.glyphs || "auto", [["auto","تلقائي حسب اليد"],["xbox","إكس بوكس (A B X Y)"],["ps","بلايستيشن (✕ ○ □ △)"]], "glyphset"); }
+    else if (c[0] === "notes") body = sw("toasts", "الإشعارات المنبثقة", "تطلع فوق يمين الشاشة: تنزيلات، أصدقاء، يد التحكم", "lset");
+    else if (c[0] === "capture") body = row("لقطة شاشة", "وأنت تلعب", "<kbd class=\"g\">F12</kbd>") + row("سجّل مقطع", "اضغط مرة تبدأ ومرة توقف", "<kbd class=\"g\">F9</kbd>")
+        + `<button class="ps-set" data-bp="page" data-p="gallery"><span><b>معرض الوسائط</b><small>كل لقطاتك</small></span><i class="val">${G("a")}</i></button><button class="ps-set" data-bp="clips"><span><b>مجلد المقاطع</b><small>ينفتح على سطح المكتب</small></span><i class="val">${G("a")}</i></button>`;
+    return `<div class="ps-page light set sub"><header class="ps-shd"><span class="ic">${I[c[2]]}</span><h1>${c[1]}</h1></header><div class="ps-list set">${body}</div></div>`; }
   function profileHTML(){ const s = S(), p = s.PROFILE || {}, own = mine(), tot = own.reduce((a, g) => a + mins(g.id), 0), tro = own.reduce((a, g) => a + H.achOf(g.id).got, 0);
     const n = p.name || (s.user && s.user.displayName) || "ضيف";
     return `<div class="ps-page"><div class="ps-prof"><span class="bigav">${esc((p.username || n || "?")[0].toUpperCase())}</span><div><h1>${esc(n)}</h1><b class="ltr">${p.username ? "@" + esc(p.username) : ""}</b><small>${p.pid ? "PG ID " + esc(p.pid) : ""}</small></div></div>
@@ -325,7 +400,9 @@ export function makeBP(H){
     if (L.t === "power") return `<div class="ps-dlg"><h2>الطاقة</h2>${powerBtns()}</div>`;
     if (L.t === "me") { const s = S(), p = s.PROFILE || {}, n = p.name || (s.user && s.user.displayName) || "";
       return `<div class="ps-menu me"><div class="who"><span class="uav" style="--h:${hue(s.user ? s.user.uid : "")}">${initial({name:n, username:p.username})}</span><span><b>${esc(n)}</b><small class="ltr">${p.username ? "@" + esc(p.username) : ""}</small></span></div>
+        <div class="ps-mi stat"><i class="dot"></i>متصل</div>
         <button class="ps-mi" data-bp="page" data-p="profile"><span class="mic">${I.user}</span>الملف الشخصي</button>
+        <button class="ps-mi" data-bp="page" data-p="trophies"><span class="mic">${I.trophy}</span>الجوائز</button>
         <button class="ps-mi" data-bp="switchu"><span class="mic">${I.switchu}</span>تبديل المستخدم</button>
         <button class="ps-mi" data-bp="logout"><span class="mic">${I.logout}</span>تسجيل الخروج</button></div>`; }
     if (L.t === "umenu") { const a = (H.accounts() || []).find(x => x.uid === L.uid) || {};
@@ -418,7 +495,7 @@ export function makeBP(H){
       <button class="ps-ib av" data-bp="me" aria-label="${esc(prof.name || prof.username || "الملف الشخصي")}" style="--h:${hue(s.user ? s.user.uid : "")}">${initial(prof)}${Object.keys(s.PROGRESS).length ? '<i class="spin"></i>' : ""}</button><span class="clock num">${clock()}</span></div></header>`; }
   function homeHTML(){ const it = rowItems(), i = cur(), x = it[i], bgGame = x && x.k === "game";
     rowSig = it.map(r => r.k + (r.g || "")).join();
-    return `<div class="ps-bg">${bgGame ? `<span class="gbg" data-cover="${x.g}"></span>` : '<canvas id="psWall"></canvas>'}<i class="shade${bgGame ? " game" : ""}"></i></div>
+    return `<div class="ps-bg" data-k="${bgKey(x)}">${bgHTML(x)}</div>
       ${topHTML()}<div class="ps-row"><div class="ps-strip" id="psStrip">${it.map(tileHTML).join("")}</div><div id="psLbl">${labelHTML(x)}</div></div>
       <main class="ps-main" id="psHub">${hubHTML(x)}</main>`; }
   function draw(){
@@ -426,22 +503,30 @@ export function makeBP(H){
     const ae = root.activeElement;
     const keep = !fresh && ae && ae.dataset.bp ? `[data-bp="${ae.dataset.bp}"]` + ["g","t","a","i","k","f","s","c","w","v","e","p","id","uid"].filter(k => ae.dataset[k] != null).map(k => `[data-${k}="${CSS.escape(ae.dataset[k])}"]`).join("") : "";
     const P = pages[pages.length - 1], sc0 = (root.querySelector(".ps-page") || {}).scrollTop || 0, hs0 = (root.querySelector(".ps-main") || {}).scrollLeft || 0;
-    root.innerHTML = `<div id="bp">` + (P ? `<div class="ps-bg${P.t === "users" ? " users" : ""}">${P.t === "game" ? "" : `<canvas id="psWall"${P.t === "users" ? ' data-theme="bokeh"' : ""}></canvas>`}<i class="shade page"></i></div>${pageHTML(P)}` : homeHTML())
+    root.innerHTML = `<div id="bp">` + (P ? `<div class="ps-bg${P.t === "users" ? " users" : ""}">${pageBg(P)}</div>${pageHTML(P)}` : homeHTML())
       + stack.map((L, i) => `<div class="ps-layer t-${L.t}" data-li="${i}">${layerHTML(L)}</div>`).join("")
-      + `<div id="psToasts" class="ps-toasts"></div><footer class="ps-help"><span>${G("a")} ${P && P.t === "users" ? "تحديد" : "اختيار"}</span>${P && P.t === "users" ? "" : `<span>${G("b")} رجوع</span><span>${G("guide")} مركز التحكم</span>`}${!P ? `<span>${G("lb")}${G("rb")} الألعاب / الوسائط</span>` : ""}${P && P.t === "users" ? "" : `<span>${G("start")} خيارات</span>`}</footer>${busy ? `<div class="ps-busy"><i class="spin"></i><b>${esc(busy)}</b></div>` : ""}</div>`;
+      + `<div id="psToasts" class="ps-toasts"></div><footer class="ps-help${P && (P.t === "search" || P.t === "settings") ? " light" : ""}"><span>${G("a")} ${P && P.t === "users" ? "تحديد" : "اختيار"}</span>${P && P.t === "users" ? "" : `<span>${G("b")} رجوع</span><span>${G("guide")} مركز التحكم</span>`}${!P ? `<span>${G("lb")}${G("rb")} الألعاب / الوسائط</span>` : ""}${P && P.t === "users" ? "" : `<span>${G("start")} خيارات</span>`}</footer>${busy ? `<div class="ps-busy"><i class="spin"></i><b>${esc(busy)}</b></div>` : ""}</div>`;
     paint(root); drawToasts();
     const pg = root.querySelector(".ps-page"); if (pg) pg.scrollTop = sc0; const mn = root.querySelector(".ps-main"); if (mn) mn.scrollLeft = hs0;
     if (root.querySelector("#psWall")) startWall(); else stopWall();
     const sc = scope();
     let f = keep && sc.querySelector(keep);
     const first = list => { for (const q of list) { const e = sc.querySelector(q); if (e) return e; } return null; };   // in this order of preference
-    if (!f) f = stack.length ? first([".ps-field", ".k", ".ps-ccpanel [data-bp]", ".ps-mi", "[data-bp]"]) : P && P.t === "users" ? first([".ps-u.cur", ".ps-u[data-bp=user]", ".ps-u"]) : P ? first([".ps-page .ps-btn.play", ".ps-page .ps-btn", ".ps-page .ps-cover", ".ps-page .ps-listc", ".ps-page .ps-row-i", ".ps-page .ps-set", ".ps-page .ps-search", ".ps-page [data-bp]"]) : sc.querySelector(`.ps-t[data-i="${cur()}"]`);
+    if (!f) f = stack.length ? first([".ps-field", ".k", ".ps-ccpanel [data-bp]", "button.ps-mi", "[data-bp]"]) : P && P.t === "users" ? first([".ps-u.cur", ".ps-u[data-bp=user]", ".ps-u"]) : P ? first([".ps-page .ps-qbox", ".ps-page .ps-si", ".ps-page .ps-btn.play", ".ps-page .ps-btn", ".ps-page .ps-sc", ".ps-page button.ps-set", ".ps-page .ps-cover", ".ps-page .ps-listc", ".ps-page .ps-row-i", ".ps-page .ps-set", ".ps-page .ps-search", ".ps-page [data-bp]"]) : sc.querySelector(`.ps-t[data-i="${cur()}"]`);
     if (stack.length && stack[stack.length - 1].t === "cc" && !keep) f = sc.querySelector(`.ps-cci[data-k="${stack[stack.length - 1].panel || "home"}"]`) || f;
     fresh = false;
     if (f) focusEl(f, true);
     if (!P) placeStrip();
+    if (P && P.tro) { P.tro = false; const t = root.querySelector("#psTro"); if (t) t.scrollIntoView({block:"center"}); }
     if (stack.length && stack[stack.length - 1].t === "test") testLoop();
   }
+  function pageBg(P){ const t = P.t;
+    if (t === "game" || t === "soon") return "";
+    if (t === "users") return '<canvas id="psWall" data-theme="bokeh"></canvas><i class="shade page"></i>';
+    if (t === "search" || t === "settings") return '<span class="sbg light"></span>';
+    if (t === "store") return STOREBG + '<i class="shade store"></i>';
+    if (t === "library" || t === "list" || t === "trophies" || t === "gallery" || t === "downloads" || t === "friends" || t === "profile") return `<span class="sbg waves">${wavesSVG()}</span><i class="shade soft"></i>`;
+    return '<canvas id="psWall"></canvas><i class="shade page"></i>'; }
   function paint(el){ el.querySelectorAll("[data-cover]").forEach(x => cover(x, x.dataset.cover)); el.querySelectorAll("[data-bp]").forEach(x => x.onclick = () => activate(x)); }
   const scope = () => { const l = root ? root.querySelectorAll(".ps-layer") : []; return l.length ? l[l.length - 1] : root; };
   const inScope = el => scope().contains(el);
@@ -469,8 +554,7 @@ export function makeBP(H){
     if (changed) { const x = it[i], lb = root.querySelector("#psLbl"), hub = root.querySelector("#psHub"), bg = root.querySelector(".ps-bg");
       if (lb) { lb.innerHTML = labelHTML(x); lb.classList.remove("in"); void lb.offsetWidth; lb.classList.add("in"); placeStrip(); }
       if (hub) { hub.innerHTML = hubHTML(x); hub.scrollLeft = 0; paint(hub); }
-      if (bg) { const game = x.k === "game"; if (game) { stopWall(); bg.innerHTML = `<span class="gbg" data-cover="${x.g}"></span><i class="shade game"></i>`; paint(bg); }
-        else if (!bg.querySelector("#psWall")) { bg.innerHTML = '<canvas id="psWall"></canvas><i class="shade"></i>'; startWall(); } }
+      if (bg && bg.dataset.k !== bgKey(x)) { bg.dataset.k = bgKey(x); stopWall(); bg.innerHTML = bgHTML(x); paint(bg); if (bg.querySelector("#psWall")) startWall(); }
       if (!fromFocus) beep("move"); } }
   function softRefresh(){ if (!on || !root || stack.some(L => L.t === "kbd")) return; const P = pages[pages.length - 1];
     if (!P && !stack.length && rowItems().map(r => r.k + (r.g || "")).join() === rowSig) { const hub = root.querySelector("#psHub"), ae = root.activeElement, tp = root.querySelector(".ps-top"); if (tp && !tp.contains(ae)) { tp.outerHTML = topHTML(); paint(root.querySelector(".ps-top")); } if (hub && !hub.contains(ae)) { hub.innerHTML = hubHTML(rowItems()[cur()]); paint(hub); return; } }
@@ -487,7 +571,7 @@ export function makeBP(H){
     const k = el.dataset.bp, top = stack[stack.length - 1]; if (!k) return; beep("ok");
     if (k === "tile") { const x = rowItems()[+el.dataset.i]; if (!x) return; if (+el.dataset.i !== cur()) return focusTile(+el.dataset.i);
       if (x.k === "game") { const g = H.byId(x.g), st = gameState(g); if (st.inst && !st.run) return activate(fake({bp:"act", a:"play", g:g.id, e:st.ed})); return openPage({t:"game", g:x.g}); }
-      if (x.k === "store") return openPage({t:"store"}); if (x.k === "library") return openPage({t:"library"}); if (x.k === "gallery" || x.k === "mhub") return openPage({t:"gallery"});
+      if (x.k === "store") { q = ""; return openPage({t:"store"}); } if (x.k === "library") return openPage({t:"library"}); if (x.k === "gallery" || x.k === "mhub") return openPage({t:"gallery"});
       if (x.k === "clips") return activate(fake({bp:"clips"})); if (x.k === "engine") return activate(fake({bp:"engine"}));
       if (x.k === "welcome") { const f = root.querySelector("#psHub [data-bp]"); if (f) focusEl(f); } return; }
     if (busy) return;
@@ -495,7 +579,7 @@ export function makeBP(H){
     if (k === "uadd") return push({t:"login", email:"", pass:""});
     if (k === "upower") return push({t:"power"});
     if (k === "uforget") { const uid = el.dataset.uid, a = (H.accounts() || []).find(x => x.uid === uid) || {}; stack = [];
-      return push({t:"confirm", title:"تزيل " + (a.name || "") + " من هذا الجهاز؟", text:"الحساب نفسه ما ينحذف. تحتاج كلمة السر عشان ترجّعه.", ok:"إزالة", yes:async () => { await H.forgetUser(uid); }}); }
+      return push({t:"confirm", title:"تزيل " + (a.name || "") + " من هذا الجهاز؟", text:"الحساب نفسه ما ينحذف. تحتاج كلمة السر عشان ترجّعه.", ok:"إزالة", yes:async () => { const me = S().user && S().user.uid === uid; await H.forgetUser(uid); if (me || onUsers()) { pages = [{t:"users"}]; stack = []; fresh = true; } }}); }
     if (k === "lfield") { const L = top, f = el.dataset.f;
       return push({t:"kbd", v:L[f] || "", lang:"en", mail:f === "email", secret:f === "pass", ph:f === "email" ? "الإيميل" : "كلمة السر", done:v => { L[f] = f === "email" ? v.trim() : v; L.err = ""; }}); }
     if (k === "lgo") return loginGo(top);
@@ -504,7 +588,7 @@ export function makeBP(H){
     if (k === "switchu") { pages = [{t:"users"}]; stack = []; fresh = true; beep("open"); return draw(); }
     if (k === "logout") { pages = [{t:"users"}]; stack = []; fresh = true; try { await H.logout(); } catch(e) {} beep("back"); return draw(); }
     if (k === "space") return setSpace(el.dataset.v);
-    if (k === "page") { if (el.dataset.p === "downloads" || el.dataset.p === "friends") stack = []; return openPage({t:el.dataset.p}); }
+    if (k === "page") { if (el.dataset.p === "downloads" || el.dataset.p === "friends" || el.dataset.p === "trophies" || el.dataset.p === "profile") stack = []; if (el.dataset.p === "search" || el.dataset.p === "store") q = ""; return openPage({t:el.dataset.p}); }
     if (k === "gpage") { stack = []; return openPage({t:"game", g:el.dataset.g}); }
     if (k === "soon") { if (!el.dataset.s) return; stack = []; return openPage({t:"soon", s:el.dataset.s}); }
     if (k === "back") return pop();
@@ -530,7 +614,14 @@ export function makeBP(H){
     if (k === "dellist") { const id = el.dataset.id; stack = []; return push({t:"confirm", title:"تحذف القائمة؟", text:"الألعاب نفسها ما تنحذف.", ok:"احذف", yes:() => { LISTS.save(LISTS.all().filter(x => x.id !== id)); if ((pages[pages.length - 1] || {}).id === id) pages.pop(); }}); }
     if (k === "libtab") { libTab = el.dataset.t; fresh = true; return draw(); }
     if (k === "sort") { ST.sort = ST.sort === "az" ? "recent" : "az"; saveUI(); return draw(); }
-    if (k === "search") return push({t:"kbd", v:q, lang:/[a-z]/i.test(q) ? "en" : "ar", ph:"ابحث…", done:v => { q = v; }});
+    if (k === "search") return push({t:"kbd", v:q, lang:/[a-z]/i.test(q) ? "en" : "ar", ph:"ابحث…", done:v => { q = v; const P = pages[pages.length - 1]; if (P && P.t === "store" && v.trim()) { P.tab = "browse"; fresh = true; } }});
+    if (k === "stab") { const P = pages[pages.length - 1]; P.tab = el.dataset.t; fresh = true; beep("move"); return draw(); }
+    if (k === "qtab") { const P = pages[pages.length - 1]; P.tab = el.dataset.t; beep("move"); return draw(); }
+    if (k === "scat") return openPage({t:"settings", cat:el.dataset.c});
+    if (k === "tpage") { stack = []; return openPage({t:"game", g:el.dataset.g, tro:true}); }
+    if (k === "lset") { ST[el.dataset.k] = ST[el.dataset.k] === false; saveUI(); return draw(); }
+    if (k === "acctpage") { close(); location.hash = "#account"; return; }
+    if (k === "wishT") { const g = el.dataset.g, w = !!(S().WISH || {})[g]; try { await H.wish(g, !w); notify(I.heart, w ? "انشالت من قائمة الأمنيات" : "انضافت لقائمة الأمنيات"); } catch(e) { notify(I.heart, String(e.message || e)); } return setTimeout(draw, 300); }
     if (k === "k") { top.v = (top.v + el.dataset.c).slice(0, 80); return draw(); }
     if (k === "kcaps") { top.caps = !top.caps; return draw(); }
     if (k === "kdel") { top.v = top.v.slice(0, -1); return draw(); }
@@ -547,9 +638,9 @@ export function makeBP(H){
       try { const s = await PS.engine.status(); const v = s.installed[0]; if (!v) { notify(I.eng, "ثبّت Premium Engine من تبويب Engine في التطبيق"); return; } await PS.engine.launch(v.version); notify(I.eng, "يفتح Premium Engine على سطح المكتب…"); } catch(e) { notify(I.eng, String(e && e.message || e)); } return; }
     if (k === "set") { ST[el.dataset.k] = !ST[el.dataset.k]; if (PS && PS.setSettings) { try { Object.assign(ST, await PS.setSettings({[el.dataset.k]:ST[el.dataset.k]})); } catch(e) {} } return draw(); }
     if (k === "glyph") return push({t:"glyph"});
-    if (k === "glyphset") { ST.glyphs = el.dataset.v; if (PS && PS.setSettings) PS.setSettings({glyphs:ST.glyphs}).catch(() => {}); return pop(); }
+    if (k === "glyphset") { ST.glyphs = el.dataset.v; if (PS && PS.setSettings) PS.setSettings({glyphs:ST.glyphs}).catch(() => {}); return top && top.t === "glyph" ? pop() : draw(); }
     if (k === "wall") return push({t:"wall"});
-    if (k === "wallset") { ST.wall = el.dataset.v; saveUI(); stopWall(); return pop(); }
+    if (k === "wallset") { ST.wall = el.dataset.v; saveUI(); stopWall(); return top && top.t === "wall" ? pop() : draw(); }
     if (k === "test") return push({t:"test"});
     if (k === "exit") return close();
     if (k === "cc") { const c = el.dataset.k;
@@ -594,7 +685,9 @@ export function makeBP(H){
     for (const e of items) { if (e === c) continue; const r = e.getBoundingClientRect(); if (e.dataset.bp === "tile" && (r.right < 0 || r.left > innerWidth)) continue; if (dy && e.closest(".ps-side") && !c.closest(".ps-side")) continue;   // the side icons are reached with left / right only
       const p = {x:r.left + r.width / 2, y:r.top + r.height / 2}, vx = p.x - c0.x, vy = p.y - c0.y;
       if (dx && (Math.sign(vx) !== dx || Math.abs(vx) < 4)) continue; if (dy && (Math.sign(vy) !== dy || Math.abs(vy) < 4)) continue;
-      const d = dx ? Math.abs(vx) + Math.abs(vy) * 3 : Math.abs(vy) + Math.abs(vx) * 2.2; if (d < bd) { bd = d; best = e; } }
+      // measured edge to edge, so a wide button right under you wins over a small one whose centre happens to be closer
+      const gx = Math.max(0, r.left - r0.right, r0.left - r.right), gy = Math.max(0, r.top - r0.bottom, r0.top - r.bottom);
+      const d = dx ? gx + Math.abs(vx) * .25 + gy * 3 : gy + Math.abs(vy) * .25 + gx * 2.2; if (d < bd) { bd = d; best = e; } }
     if (best && best.dataset.bp === "tile" && c.dataset.bp !== "tile") best = root.querySelector(`.ps-t[data-i="${cur()}"]`) || best;   // back into the row: the selected tile
     if (best) focusEl(best);
   }
@@ -607,6 +700,8 @@ export function makeBP(H){
     beep("back"); }
   function viewStep(d){ const top = stack[stack.length - 1]; if (top && top.t === "view") { top.i = (top.i + d + SHOTS.length) % SHOTS.length; draw(); return true; } return false; }
   function shoulder(d){ const P = pages[pages.length - 1]; if (onUsers()) return;
+    if (P && P.t === "store") { const t = [...STABS.map(x => x[0]), "wish"]; P.tab = t[(t.indexOf(P.tab || "new") + d + t.length) % t.length]; fresh = true; beep("move"); return draw(); }
+    if (P && P.t === "search") { const t = QTABS.map(x => x[0]); P.tab = t[(t.indexOf(P.tab || "games") + d + t.length) % t.length]; beep("move"); return draw(); }
     if (P && P.t === "library") { const t = ["installed","owned","all"]; libTab = t[(t.indexOf(libTab) + d + 3) % 3]; fresh = true; beep("move"); return draw(); }
     if (!P && !stack.length) setSpace(space === "games" ? "media" : "games"); }
   function key(e){ if (!on) return; const k = e.key, top = stack[stack.length - 1];
@@ -626,6 +721,7 @@ export function makeBP(H){
   /* ---------- game controllers (Xbox / PlayStation, standard mapping) ---------- */
   let testBack = 0;
   const isPS = id => /054c|playstation|dualsense|dualshock|wireless controller/i.test(id);
+  const isPSid = id => /054c|playstation|dualsense|dualshock|wireless controller/i.test(id);
   addEventListener("gamepadconnected", e => { padOn = true; padKind = isPS(e.gamepad.id) ? "ps" : "xbox";
     if (on) { notify(I.pad, "انوصلت يد التحكم " + (e.gamepad.index + 1)); draw(); } else if (H.padConnected) H.padConnected(); });
   addEventListener("gamepaddisconnected", e => { padOn = [...(navigator.getGamepads ? navigator.getGamepads() : [])].some(Boolean); if (on) { notify(I.pad, "انفصلت يد التحكم " + (e.gamepad.index + 1)); draw(); } });
