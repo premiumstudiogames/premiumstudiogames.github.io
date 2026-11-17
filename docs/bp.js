@@ -78,7 +78,7 @@ export function makeBP(H){
   /* ---------- open / close ---------- */
   // the console lives in its own shadow root, so the store's CSS can't change it (and its CSS can't leak out)
   async function loadSheet(){ if (sheet) return sheet; sheet = new CSSStyleSheet();
-    try { const u = new URL("bp.css?v=4", import.meta.url); sheet.replaceSync(await (await fetch(u)).text()); } catch(e) {} return sheet; }
+    try { const u = new URL("bp.css?v=5", import.meta.url); sheet.replaceSync(await (await fetch(u)).text()); } catch(e) {} return sheet; }
   async function open(){ if (on) return; on = true; document.body.classList.add("bp-on"); pages = H.accounts ? [{t:"users"}] : []; stack = []; space = "games"; sel.games = -1; busy = "";
     host = document.createElement("div"); host.id = "bpHost"; host.className = "nomouse"; document.body.appendChild(host);
     root = host.attachShadow({mode:"open"}); root.adoptedStyleSheets = [await loadSheet()];
@@ -458,10 +458,8 @@ export function makeBP(H){
     const vw = innerWidth / 100, small = 5.6 * vw, gap = .6 * vw, big = 9.2 * vw, idx = [...st.children].indexOf(t);
     const anchor = Math.max(24, innerWidth * .09); st.style.transform = `translateX(${anchor - idx * (small + gap)}px)`;
     const lb = root.querySelector("#psLbl");
-    st.querySelectorAll(".ps-t").forEach(x => { x.style.marginLeft = ""; });
-    if (lb) { lb.style.left = (anchor + big + 18) + "px"; lb.style.top = (t.offsetTop + big - lb.offsetHeight - 6) + "px";
-      // the tiles after the focused one move past its label, so the label never covers them
-      const nx = t.nextElementSibling; if (nx) nx.style.marginLeft = (lb.offsetWidth + 36) + "px"; } }
+    // like the PS5: the other tiles stay right next to the focused one; its name sits under the small tiles, beside the big one
+    if (lb) { lb.style.left = (anchor + big + gap * 2) + "px"; lb.style.top = (t.offsetTop + big - lb.offsetHeight) + "px"; } }
   function focusTile(i, fromFocus){ const it = rowItems(); if (it.map(r => r.k + (r.g || "")).join() !== rowSig) { sel[space] = i; fresh = true; return draw(); } i = Math.max(0, Math.min(it.length - 1, i));
     const changed = i !== cur(); sel[space] = i;
     const st = root.querySelector("#psStrip"); if (!st) return;
@@ -469,7 +467,7 @@ export function makeBP(H){
     const t = st.querySelector(`.ps-t[data-i="${i}"]`); if (!fromFocus && t) t.focus({preventScroll:true});
     placeStrip();
     if (changed) { const x = it[i], lb = root.querySelector("#psLbl"), hub = root.querySelector("#psHub"), bg = root.querySelector(".ps-bg");
-      if (lb) { lb.innerHTML = labelHTML(x); placeStrip(); }
+      if (lb) { lb.innerHTML = labelHTML(x); lb.classList.remove("in"); void lb.offsetWidth; lb.classList.add("in"); placeStrip(); }
       if (hub) { hub.innerHTML = hubHTML(x); hub.scrollLeft = 0; paint(hub); }
       if (bg) { const game = x.k === "game"; if (game) { stopWall(); bg.innerHTML = `<span class="gbg" data-cover="${x.g}"></span><i class="shade game"></i>`; paint(bg); }
         else if (!bg.querySelector("#psWall")) { bg.innerHTML = '<canvas id="psWall"></canvas><i class="shade"></i>'; startWall(); } }
