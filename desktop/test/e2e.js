@@ -82,11 +82,12 @@ app.whenReady().then(async () => {
     if (gw) ipcMain.emit('game:guide', { sender: gw.webContents });
     await waitFor(() => !ovVisible(), 8000); await sleep(1500);   // overlay fully closed before recording
     // F9 records a clip, F9 again saves it
+    const recLog = []; for (const ch of ['rec:started', 'rec:error', 'rec:done']) ipcMain.on(ch, (e, a) => recLog.push(ch + (ch === 'rec:done' ? ' ' + (a && a.length) : a ? ' ' + a : '') + ' @' + Date.now() % 100000));
     if (gw) { gw.focus(); gw.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F9' }); }
     await sleep(4000);
     if (gw) gw.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F9' });
     const clipDir = path.join(app.getPath('videos'), 'Premium Games');
-    ok('F9 records a clip', await waitFor(() => { try { return fs.readdirSync(clipDir).some(d => fs.readdirSync(path.join(clipDir, d)).some(f => f.endsWith('.webm') && fs.statSync(path.join(clipDir, d, f)).size > 1000)); } catch (e) { return false; } }, 15000));
+    ok('F9 records a clip', await waitFor(() => { try { return fs.readdirSync(clipDir).some(d => fs.readdirSync(path.join(clipDir, d)).some(f => f.endsWith('.webm') && fs.statSync(path.join(clipDir, d, f)).size > 1000)); } catch (e) { return false; } }, 15000), recLog.join(' | ') + ' · gw=' + !!gw);
     await call('ps:stop', 'last-recording--std');
     ok('horror game closes', await waitFor(async () => !(await call('ps:getRunning'))['last-recording--std'], 20000));
     // ---- parental controls: a game that isn't allowed doesn't start
