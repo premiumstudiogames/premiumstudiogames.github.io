@@ -9,6 +9,11 @@ export function makeBP(H){
   try { Object.assign(ST, JSON.parse(localStorage.getItem("bp-ui") || "{}")); } catch(e) {}
   const saveUI = () => { try { localStorage.setItem("bp-ui", JSON.stringify({wall:ST.wall, sort:ST.sort})); } catch(e) {} };
   const S = () => state();
+  const onUsers = () => (pages[pages.length - 1] || {}).t === "users";
+  let busy = "";
+  const hue = id => Math.round([...String(id)].reduce((a, c) => (a * 33 + c.charCodeAt(0)) >>> 0, 5381) * 137.508) % 360;   // a steady colour per account
+  const initial = a => esc(((a && (a.name || a.username)) || "?").trim().charAt(0).toUpperCase());
+  async function waitUser(uid, ms = 12000){ const t0 = Date.now(); while (Date.now() - t0 < ms) { const u = S().user; if (u && u.uid === uid) return true; await new Promise(r => setTimeout(r, 120)); } return false; }
   const clock = () => new Date().toLocaleTimeString("ar-SA-u-nu-latn", {hour:"numeric", minute:"2-digit"});
   const mins = gid => ((S().PLAY[gid] || {}).minutes) || 0;
   const hrs = m => m >= 60 ? (m / 60).toFixed(1).replace(/\.0$/, "") + " ساعة" : m + " دقيقة";
@@ -64,14 +69,17 @@ export function makeBP(H){
     trophy:'<svg viewBox="0 0 24 24"><path d="M7 4h10v5a5 5 0 0 1-10 0z"/><path d="M7 6H4a3 3 0 0 0 3 4M17 6h3a3 3 0 0 1-3 4M12 14v4M8 21h8M9 18h6"/></svg>',
     news:'<svg viewBox="0 0 24 24"><path d="M3 10v4h3l7 4V6l-7 4z"/><path d="M17 9.5a3 3 0 0 1 0 5M19 7l2-1M19 17l2 1"/></svg>',
     tip:'<svg viewBox="0 0 24 24"><path d="M5 19l9-9"/><path d="M14 4l1 2.5L17.5 7.5 15 8.5 14 11l-1-2.5L10.5 7.5 13 6.5z"/><circle cx="19" cy="14" r="1"/><circle cx="8" cy="5" r=".9"/></svg>',
+    user:'<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4.5 4.2-7 8-7s7 2.5 8 7"/></svg>',
+    switchu:'<svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.4"/><path d="M3 20c.8-3.6 3.2-5.6 6-5.6 1.4 0 2.6.4 3.6 1.2"/><path d="M15 13h6l-2-2M21 17h-6l2 2"/></svg>',
+    logout:'<svg viewBox="0 0 24 24"><path d="M10 4H5v16h5"/><path d="M14 8l4 4-4 4M18 12H9"/></svg>',
     friends:'<svg viewBox="0 0 24 24"><circle cx="9" cy="8.5" r="3"/><circle cx="16.5" cy="9.5" r="2.4"/><path d="M3.5 19c.8-3.2 3-5 5.5-5s4.7 1.8 5.5 5M14.5 14.3c2.6-.7 5 .9 6 4.7"/></svg>'
   };
 
   /* ---------- open / close ---------- */
   // the console lives in its own shadow root, so the store's CSS can't change it (and its CSS can't leak out)
   async function loadSheet(){ if (sheet) return sheet; sheet = new CSSStyleSheet();
-    try { const u = new URL("bp.css?v=3", import.meta.url); sheet.replaceSync(await (await fetch(u)).text()); } catch(e) {} return sheet; }
-  async function open(){ if (on) return; on = true; document.body.classList.add("bp-on"); pages = []; stack = []; space = "games"; sel.games = -1;
+    try { const u = new URL("bp.css?v=4", import.meta.url); sheet.replaceSync(await (await fetch(u)).text()); } catch(e) {} return sheet; }
+  async function open(){ if (on) return; on = true; document.body.classList.add("bp-on"); pages = H.accounts ? [{t:"users"}] : []; stack = []; space = "games"; sel.games = -1; busy = "";
     host = document.createElement("div"); host.id = "bpHost"; host.className = "nomouse"; document.body.appendChild(host);
     root = host.attachShadow({mode:"open"}); root.adoptedStyleSheets = [await loadSheet()];
     if (PS && PS.fullscreen) PS.fullscreen(true).catch(() => {}); else { try { document.documentElement.requestFullscreen(); } catch(e) {} }
@@ -115,7 +123,7 @@ export function makeBP(H){
   /* ---------- the home row ---------- */
   function rowItems(){
     if (space === "media") return [{k:"mhub", n:"اكتشف"}, {k:"gallery", n:"معرض الوسائط"}, {k:"clips", n:"المقاطع"}, ...(PS && PS.engine ? [{k:"engine", n:"Premium Engine"}] : [])];
-    return [{k:"store", n:"المتجر"}, {k:"welcome", n:"الترحيب"}, ...mine().slice(0, 14).map(g => ({k:"game", g:g.id, n:g.en || g.title})), {k:"library", n:"مكتبة الألعاب"}];
+    return [{k:"store", n:"المتجر"}, {k:"welcome", n:"الترحيب"}, ...mine().slice(0, 14).map(g => ({k:"game", g:g.id, n:g.en || g.title})), ...(PS && PS.screenshots ? [{k:"gallery", n:"معرض الوسائط"}] : []), {k:"library", n:"مكتبة الألعاب"}];
   }
   const cur = () => { const it = rowItems(); let i = sel[space]; if (i < 0) i = space === "games" ? (it.findIndex(x => x.k === "game") >= 0 && mine().some(g => last(g.id)) ? it.findIndex(x => x.k === "game") : 1) : 0; return Math.max(0, Math.min(it.length - 1, i)); };
   function tileHTML(x, i){ const c = i === cur() ? " sel" : "";
@@ -137,9 +145,9 @@ export function makeBP(H){
         <div class="ps-cards">${[...deals, ...news].filter((g, i, a) => a.indexOf(g) === i).slice(0, 6).map(g => { const s = H.saleOf(g.id);
           return `<button class="ps-card art" data-bp="gpage" data-g="${g.id}"><span class="cv" data-cover="${g.id}"></span><span class="cap"><b>${title(g)}</b><small>${s ? "خصم " + s.pct + "% · " + H.saleLeft(g.id) : esc(g.tagline || "")}</small></span></button>`; }).join("")}
         ${H.SOON.slice(0, 3).map(s => `<button class="ps-card art" data-bp="soon" data-s="${s.id}"><span class="cv">${H.soonArt(s)}</span><span class="cap"><b>${esc(s.title)}</b><small>قريبًا · ${esc(s.when)}</small></span></button>`).join("")}</div></div>`; }
-    if (x.k === "library") { const own = mine(), inst = own.filter(g => gameState(g).inst || gameState(g).run);
-      return `<div class="ps-hub"><div class="ps-hubtitle">مكتبة الألعاب</div><div class="ps-acts"><button class="ps-btn play" data-bp="page" data-p="library">افتح المكتبة</button></div>
-        <div class="ps-cards"><div class="ps-card info"><b class="num">${inst.length}</b><small>مثبّتة</small></div><div class="ps-card info"><b class="num">${own.length}</b><small>في مكتبتك</small></div><div class="ps-card info"><b class="num">${LISTS.all().length}</b><small>قوائم الألعاب</small></div></div></div>`; }
+    if (x.k === "library") { const own = mine(), inst = own.filter(g => { const st = gameState(g); return st.inst || st.run; }), show = inst.length ? inst : own;
+      return `<div class="ps-hub lib"><div class="ps-count"><span>${inst.length ? "تخزين الجهاز" : "مكتبتك"}: <b class="num">${show.length}</b></span><span>${G("a")} افتح المكتبة</span></div>
+        <div class="ps-grid mini">${show.slice(0, 10).map(g => coverTile(g)).join("") || '<p class="ps-empty">مكتبتك فاضية. روح للمتجر.</p>'}</div></div>`; }
     if (x.k === "mhub") return `<div class="ps-hub media"><div class="ps-banner" id="psBanner">${bannerHTML()}</div><div class="ps-sec">من أجلك</div><div class="ps-cards" id="psForYou">${forYouHTML()}</div></div>`;
     if (x.k === "gallery") return `<div class="ps-hub"><div class="ps-hubtitle">معرض الوسائط</div><p class="ps-sub">كل لقطات الشاشة من ألعابك. اضغط F12 وأنت تلعب.</p><div class="ps-acts"><button class="ps-btn play" data-bp="page" data-p="gallery">افتح</button></div></div>`;
     if (x.k === "clips") return `<div class="ps-hub"><div class="ps-hubtitle">المقاطع</div><p class="ps-sub">سجّل وأنت تلعب بـ F9، والمقاطع تنحفظ في مجلد الفيديوهات.</p><div class="ps-acts"><button class="ps-btn play" data-bp="clips">افتح المجلد</button></div></div>`;
@@ -175,7 +183,8 @@ export function makeBP(H){
     const tot = DISK && DISK.total, free = DISK && DISK.free, other = tot ? Math.max(0, tot - free - gamesBytes) : 0;
     const sale = GAMES.find(g => !g.hidden && H.saleOf(g.id)), feat = sale || GAMES.find(g => !g.hidden && !ownedEds(g.id).length) || GAMES[0];
     const soon = H.SOON[0];
-    return `<div class="ps-widgets">
+    const prog = Object.entries(S().PROGRESS), pg = prog[0];
+    return `${pg ? `<button class="ps-dlpill" data-bp="page" data-p="downloads"><span class="ic">${I.dl}</span><b class="num">${H.pct(pg[1])}%</b><span class="bar"><i data-progk="${pg[0]}" style="width:${H.pct(pg[1])}%"></i></span><small>${esc(H.keyTitle(pg[0]))}${prog.length > 1 ? ` +<span class="num">${prog.length - 1}</span>` : ""}</small></button>` : ""}<div class="ps-widgets">
       <div class="ps-col">
         <div class="ps-w pads">${[0, 1, 2].map(i => { const p = pads[i]; return `<span class="ring${p ? " on" : ""}">${p ? `<b class="num">${i + 1}</b>` : ""}${I.pad}</span>`; }).join("")}</div>
         <div class="ps-w store-w"><h4><span class="ic">${I.dl}</span> تخزين الجهاز</h4>
@@ -196,6 +205,7 @@ export function makeBP(H){
   /* ---------- full pages ---------- */
   let libTab = "installed", q = "";
   function pageHTML(P){
+    if (P.t === "users") return usersHTML();
     if (P.t === "library") return libraryHTML();
     if (P.t === "list") { const L = LISTS.all().find(l => l.id === P.id); if (!L) return `<div class="ps-page"><p>القائمة انحذفت.</p></div>`;
       const gs = L.games.map(H.byId).filter(Boolean);
@@ -273,6 +283,26 @@ export function makeBP(H){
       <div class="ps-cards"><div class="ps-card info"><b class="num">${own.length}</b><small>ألعاب</small></div><div class="ps-card info"><b class="num">${hrs(tot)}</b><small>وقت اللعب</small></div><div class="ps-card info"><b class="num">${tro}</b><small>تروفي</small></div><div class="ps-card info"><b class="num">${Object.values(s.FRIENDS).filter(f => f.status === "ok").length}</b><small>أصدقاء</small></div></div>
       <div class="ps-acts"><button class="ps-btn" data-bp="page" data-p="friends">الأصدقاء</button><button class="ps-btn ghost" data-bp="exit">اطلع من وضع الكونسل</button></div></div>`; }
 
+  /* ---------- who's using this controller? (first screen, like the PS5) ---------- */
+  function usersHTML(){ const acc = H.accounts ? H.accounts() : [];
+    return `<div class="ps-users"><span class="clock num">${clock()}</span>
+      <h1>مرحبًا بك في <span class="ltr">Premium Games</span></h1><p>من يستخدم وحدة التحكم هذه؟</p>
+      <div class="ps-urow" id="psUrow"><button class="ps-u add" data-bp="uadd"><span class="ring">+</span><b>إضافة مستخدم</b></button>
+        ${acc.map(a => `<button class="ps-u${a.cur ? " cur" : ""}" data-bp="user" data-uid="${esc(a.uid)}"><i class="padn">${I.pad}<b class="num">1</b></i><span class="ring" style="--h:${hue(a.uid)}">${initial(a)}</span><b>${esc(a.name || a.username || "")}</b><small>${G("start")} خيارات</small></button>`).join("")}</div>
+      <button class="ps-upow" data-bp="upower" aria-label="الطاقة">${I.power}</button></div>`; }
+  function enterHome(){ busy = ""; pages = []; stack = []; space = "games"; sel.games = -1; fresh = true; beep("open"); draw(); }
+  async function signInAs(uid){ const a = (H.accounts() || []).find(x => x.uid === uid) || {};
+    busy = "جاري الدخول…"; draw();
+    let ok = false; try { ok = await H.switchUser(uid); } catch(e) {}
+    if (ok && await waitUser(uid)) return enterHome();
+    busy = ""; fresh = true; push({t:"login", email:a.email || "", pass:"", locked:true, uid}); }
+  async function loginGo(L){ if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(L.email.trim())) { L.err = "اكتب إيميل صحيح"; beep("err"); return draw(); }
+    if (L.pass.length < 6) { L.err = "كلمة السر 6 أحرف أو أكثر"; beep("err"); return draw(); }
+    busy = "جاري تسجيل الدخول…"; L.err = ""; draw();
+    try { const c = await H.signIn(L.email, L.pass); if (await waitUser(c.user.uid)) return enterHome(); L.err = "ما قدرنا نفتح الحساب. جرّب مرة ثانية"; }
+    catch(e) { L.err = H.authErr(e); beep("err"); }
+    busy = ""; draw(); }
+
   /* ---------- overlays ---------- */
   const CC = [["switcher","المبدل",I.switcher],["base","قاعدة الألعاب",I.base],["profile","الملف الشخصي",null],["notes","الإشعارات",I.bell],["downloads","التنزيلات",I.dl],["home","الرئيسية",I.home],["sound","الأصوات",null],["pads","وحدات التحكم",I.pad],["power","الطاقة",I.power]];
   function layerHTML(L){
@@ -292,6 +322,19 @@ export function makeBP(H){
       return `<div class="ps-dlg"><h2>أضف إلى قائمة</h2>${lists.map(l => `<button class="ps-mi${l.games.includes(L.g) ? " sel" : ""}" data-bp="toggleList" data-id="${l.id}" data-g="${L.g}">${esc(l.name)} <small class="num">(${l.games.length})</small></button>`).join("")}<button class="ps-mi" data-bp="newlist" data-g="${L.g}">＋ قائمة جديدة</button></div>`; }
     if (L.t === "listmenu") return `<div class="ps-menu"><h3>القائمة</h3><button class="ps-mi" data-bp="renlist" data-id="${L.id}">غيّر الاسم</button><button class="ps-mi danger" data-bp="dellist" data-id="${L.id}">احذف القائمة</button></div>`;
     if (L.t === "kbd") return kbdHTML(L);
+    if (L.t === "power") return `<div class="ps-dlg"><h2>الطاقة</h2>${powerBtns()}</div>`;
+    if (L.t === "me") { const s = S(), p = s.PROFILE || {}, n = p.name || (s.user && s.user.displayName) || "";
+      return `<div class="ps-menu me"><div class="who"><span class="uav" style="--h:${hue(s.user ? s.user.uid : "")}">${initial({name:n, username:p.username})}</span><span><b>${esc(n)}</b><small class="ltr">${p.username ? "@" + esc(p.username) : ""}</small></span></div>
+        <button class="ps-mi" data-bp="page" data-p="profile"><span class="mic">${I.user}</span>الملف الشخصي</button>
+        <button class="ps-mi" data-bp="switchu"><span class="mic">${I.switchu}</span>تبديل المستخدم</button>
+        <button class="ps-mi" data-bp="logout"><span class="mic">${I.logout}</span>تسجيل الخروج</button></div>`; }
+    if (L.t === "umenu") { const a = (H.accounts() || []).find(x => x.uid === L.uid) || {};
+      return `<div class="ps-menu"><h3>${esc(a.name || "")}</h3><button class="ps-mi danger" data-bp="uforget" data-uid="${esc(L.uid)}">إزالة المستخدم من هذا الجهاز</button></div>`; }
+    if (L.t === "login") return `<div class="ps-dlg login"><h2>${L.email && L.locked ? "سجّل دخولك من جديد" : "إضافة مستخدم"}</h2><p>${L.locked ? "انتهت جلسة هذا الحساب على الجهاز. اكتب كلمة السر." : "سجّل دخولك بحساب Premium Games."}</p>
+        <button class="ps-field" data-bp="lfield" data-f="email"><small>الإيميل</small><span class="ltr">${L.email ? esc(L.email) : '<i>name@example.com</i>'}</span></button>
+        <button class="ps-field" data-bp="lfield" data-f="pass"><small>كلمة السر</small><span class="ltr">${L.pass ? "•".repeat(L.pass.length) : "<i>••••••</i>"}</span></button>
+        ${L.err ? `<p class="err">${esc(L.err)}</p>` : ""}
+        <button class="ps-mi ok" data-bp="lgo">تسجيل الدخول</button><button class="ps-mi" data-bp="lnew">ما عندك حساب؟ أنشئ حساب جديد</button></div>`;
     if (L.t === "confirm") return `<div class="ps-dlg"><h2>${esc(L.title)}</h2><p>${esc(L.text || "")}</p><button class="ps-mi danger" data-bp="yes">${esc(L.ok)}</button><button class="ps-mi" data-bp="back">إلغاء</button></div>`;
     if (L.t === "view") { const x = SHOTS[L.i]; return `<div class="ps-view"><img src="${x.thumb}" alt=""><div class="cap">${esc(x.name)} · <span class="num">${L.i + 1}/${SHOTS.length}</span><button class="ps-btn ghost" data-bp="showshot">افتح في المجلد</button></div></div>`; }
     if (L.t === "friend") { const f = S().FRIENDS[L.f] || {}, quick = ["يلا نلعب؟", "دقيقة وجاي", "أحسنت 👏", "باي، أشوفك بعدين"];
@@ -319,22 +362,24 @@ export function makeBP(H){
     if (L.panel === "pads") { const pads = navigator.getGamepads ? [...navigator.getGamepads()].filter(Boolean) : [];
       return `<div class="ps-ccpanel"><h3>وحدات التحكم</h3><div class="ps-list">${pads.map((p, i) => `<div class="ps-row-i" data-bp="item"><span class="em num">${i + 1}</span><span class="t"><b>${/054c|playstation|dualsense|dualshock|wireless controller/i.test(p.id) ? "يد بلايستيشن" : "يد إكس بوكس / عامة"}</b><small class="ltr">${esc(p.id.slice(0, 60))}</small></span></div>`).join("") || '<p class="ps-empty">ما فيه يد متصلة. وصّلها وأضغط أي زر.</p>'}</div>
         <button class="ps-mi" data-bp="test">اختبر يد التحكم</button><button class="ps-mi" data-bp="glyph">شكل أزرار اليد</button></div>`; }
-    if (L.panel === "power") return `<div class="ps-ccpanel"><h3>الطاقة</h3>
-        ${PS && PS.power ? `<button class="ps-mi" data-bp="pw" data-w="sleep">🌙 وضع السكون</button><button class="ps-mi" data-bp="pw" data-w="restart">↻ إعادة تشغيل الكمبيوتر</button><button class="ps-mi" data-bp="pw" data-w="shutdown">⏻ إطفاء الكمبيوتر</button><button class="ps-mi" data-bp="pw" data-w="desktop">🖥 ارجع لسطح المكتب</button><button class="ps-mi" data-bp="pw" data-w="quit">✕ اقفل Premium Games</button>` : ""}
-        <button class="ps-mi" data-bp="exit">⏏ اطلع من وضع الكونسل</button></div>`;
+    if (L.panel === "power") return `<div class="ps-ccpanel"><h3>الطاقة</h3>${powerBtns()}</div>`;
     return ""; }
+  function powerBtns(){ return `${PS && PS.power ? `<button class="ps-mi" data-bp="pw" data-w="sleep">🌙 وضع السكون</button><button class="ps-mi" data-bp="pw" data-w="restart">↻ إعادة تشغيل الكمبيوتر</button><button class="ps-mi" data-bp="pw" data-w="shutdown">⏻ إطفاء الكمبيوتر</button><button class="ps-mi" data-bp="pw" data-w="desktop">🖥 ارجع لسطح المكتب</button><button class="ps-mi" data-bp="pw" data-w="quit">✕ اقفل Premium Games</button>` : ""}
+        <button class="ps-mi" data-bp="exit">⏏ اطلع من وضع الكونسل</button>`; }
 
   /* on-screen keyboard (Arabic / English) */
-  const KB = {ar:["ض ص ث ق ف غ ع ه خ ح ج", "ش س ي ب ل ا ت ن م ك ط", "ئ ء ؤ ر ى ة و ز ظ د ذ", "1 2 3 4 5 6 7 8 9 0 ؟"], en:["q w e r t y u i o p", "a s d f g h j k l", "z x c v b n m", "1 2 3 4 5 6 7 8 9 0 ?"]};
-  function kbdHTML(L){ return `<div class="ps-kbd"><div class="in" dir="auto">${esc(L.v) || `<span>${esc(L.ph || "")}</span>`}<i class="caret"></i></div>
-    ${KB[L.lang].map(r => `<div class="kr" dir="${L.lang === "ar" ? "rtl" : "ltr"}">${r.split(" ").map(c => `<button class="k" data-bp="k" data-c="${esc(c)}">${esc(c)}</button>`).join("")}</div>`).join("")}
-    <div class="kr"><button class="k w2" data-bp="klang">${L.lang === "ar" ? "EN" : "عربي"}</button><button class="k w5" data-bp="k" data-c=" ">مسافة</button><button class="k w2" data-bp="kdel">⌫ ${G("x")}</button><button class="k w2 ok" data-bp="kok">تم ${G("start")}</button></div></div>`; }
+  const KB = {ar:["ض ص ث ق ف غ ع ه خ ح ج", "ش س ي ب ل ا ت ن م ك ط", "ئ ء ؤ ر ى ة و ز ظ د ذ", "1 2 3 4 5 6 7 8 9 0 ؟"], en:["q w e r t y u i o p", "a s d f g h j k l", "z x c v b n m", "1 2 3 4 5 6 7 8 9 0 ?"], mail:["@ . _ - + ! # $ % &"]};
+  function kbdHTML(L){ const rows = L.lang === "en" && L.mail ? [...KB.en, ...KB.mail] : KB[L.lang], up = c => L.caps && L.lang === "en" ? c.toUpperCase() : c;
+    return `<div class="ps-kbd"><div class="in" dir="${L.mail ? "ltr" : "auto"}">${L.v ? esc(L.secret ? "•".repeat(L.v.length) : L.v) : `<span>${esc(L.ph || "")}</span>`}<i class="caret"></i></div>
+    ${rows.map(r => `<div class="kr" dir="${L.lang === "ar" ? "rtl" : "ltr"}">${r.split(" ").map(c => `<button class="k" data-bp="k" data-c="${esc(up(c))}">${esc(up(c))}</button>`).join("")}</div>`).join("")}
+    <div class="kr">${L.lang === "en" ? `<button class="k w2${L.caps ? " on" : ""}" data-bp="kcaps">⇧</button>` : ""}${L.mail ? "" : `<button class="k w2" data-bp="klang">${L.lang === "ar" ? "EN" : "عربي"}</button>`}<button class="k w5" data-bp="k" data-c=" ">مسافة</button><button class="k w2" data-bp="kdel">⌫ ${G("x")}</button><button class="k w2 ok" data-bp="kok">تم ${G("start")}</button></div></div>`; }
 
   /* ---------- animated wallpaper (no image files) ---------- */
   let wall = null;
   function startWall(){ const c = root && root.querySelector("#psWall"); if (!c) return;
     if (wall && wall.c === c) return; stopWall();
-    const g = c.getContext("2d"), W = c.width = Math.round(innerWidth / 2), Hh = c.height = Math.round(innerHeight / 2), theme = ST.wall || "autumn";
+    const g = c.getContext("2d"), W = c.width = Math.round(innerWidth / 2), Hh = c.height = Math.round(innerHeight / 2), theme = c.dataset.theme || ST.wall || "autumn";
+    if (theme === "bokeh") return bokeh(c, g, W, Hh);
     const parts = Array.from({length:theme === "night" ? 140 : 70}, () => ({x:Math.random() * W, y:Math.random() * Hh, s:Math.random(), r:Math.random() * 6.28, v:.2 + Math.random() * .6}));
     const pal = {autumn:{top:"#3a1e0e", mid:"#a2541c", glow:"rgba(255,190,110,.55)", hill:["#4a2410", "#2a140a", "#160b06"], p:["#f08a24", "#c4401a", "#f6b73c", "#8a2c12"]},
       night:{top:"#04060f", mid:"#0d1d3d", glow:"rgba(120,160,255,.25)", hill:["#0c1426", "#080e1c", "#050811"], p:["#ffffff", "#bcd2ff"]},
@@ -354,13 +399,23 @@ export function makeBP(H){
         g.restore(); }
       wallRaf = requestAnimationFrame(draw); };
     draw(); }
+  // soft light and drifting golden dots (the PS5 user screen)
+  function bokeh(c, g, W, Hh){ const dots = Array.from({length:150}, () => { const band = Math.random(); return {x:Math.random() * W, y:Hh * (.42 + band * .5) + (Math.random() - .5) * Hh * .25, r:.6 + Math.random() ** 3 * 9, a:Math.random() * 6.28, v:.05 + Math.random() * .25}; });
+    wall = {c, t:0}; const draw = () => { if (!wall || wall.c !== c) return; const t = ++wall.t / 60;
+      const bg = g.createLinearGradient(0, 0, W, Hh); bg.addColorStop(0, "#c9c3bb"); bg.addColorStop(.45, "#9aa4b8"); bg.addColorStop(1, "#6e7d99"); g.fillStyle = bg; g.fillRect(0, 0, W, Hh);
+      const lg = g.createRadialGradient(W * .12, -Hh * .1, 10, W * .12, -Hh * .1, W * .7); lg.addColorStop(0, "rgba(255,236,214,.95)"); lg.addColorStop(.5, "rgba(255,226,200,.25)"); lg.addColorStop(1, "rgba(255,255,255,0)"); g.fillStyle = lg; g.fillRect(0, 0, W, Hh);
+      for (const d of dots) { d.x += d.v; d.a += .01; if (d.x > W + 12) d.x = -12;
+        const al = .35 + .4 * Math.abs(Math.sin(t * .7 + d.a)), rr = d.r * 2.2, gr = g.createRadialGradient(d.x, d.y + Math.sin(t * .4 + d.a) * 3, 0, d.x, d.y + Math.sin(t * .4 + d.a) * 3, rr);
+        gr.addColorStop(0, `rgba(255,214,140,${al})`); gr.addColorStop(.45, `rgba(255,200,120,${al * .55})`); gr.addColorStop(1, "rgba(255,200,120,0)"); g.fillStyle = gr; g.fillRect(d.x - rr, d.y - rr + Math.sin(t * .4 + d.a) * 3, rr * 2, rr * 2); }
+      wallRaf = requestAnimationFrame(draw); };
+    draw(); }
   function stopWall(){ cancelAnimationFrame(wallRaf); wall = null; }
 
   /* ---------- drawing ---------- */
   function topHTML(){ const s = S(), prof = s.PROFILE || {};
     return `<header class="ps-top"><nav class="spaces"><button class="sp${space === "games" ? " on" : ""}" data-bp="space" data-v="games">الألعاب</button><button class="sp${space === "media" ? " on" : ""}" data-bp="space" data-v="media">وسائط</button></nav>
       <div class="right"><button class="ps-ib" data-bp="page" data-p="search" aria-label="بحث">${I.search}</button><button class="ps-ib" data-bp="page" data-p="settings" aria-label="الإعدادات">${I.gear}</button>
-      <button class="ps-ib av" data-bp="page" data-p="profile" aria-label="الملف الشخصي">${esc((prof.username || "?")[0].toUpperCase())}${Object.keys(s.PROGRESS).length ? '<i class="spin"></i>' : ""}</button><span class="clock num">${clock()}</span></div></header>`; }
+      <button class="ps-ib av" data-bp="me" aria-label="${esc(prof.name || prof.username || "الملف الشخصي")}" style="--h:${hue(s.user ? s.user.uid : "")}">${initial(prof)}${Object.keys(s.PROGRESS).length ? '<i class="spin"></i>' : ""}</button><span class="clock num">${clock()}</span></div></header>`; }
   function homeHTML(){ const it = rowItems(), i = cur(), x = it[i], bgGame = x && x.k === "game";
     rowSig = it.map(r => r.k + (r.g || "")).join();
     return `<div class="ps-bg">${bgGame ? `<span class="gbg" data-cover="${x.g}"></span>` : '<canvas id="psWall"></canvas>'}<i class="shade${bgGame ? " game" : ""}"></i></div>
@@ -369,18 +424,18 @@ export function makeBP(H){
   function draw(){
     if (!on || !root) return;
     const ae = root.activeElement;
-    const keep = !fresh && ae && ae.dataset.bp ? `[data-bp="${ae.dataset.bp}"]` + ["g","t","a","i","k","f","s","c","w","v","e","p","id"].filter(k => ae.dataset[k] != null).map(k => `[data-${k}="${CSS.escape(ae.dataset[k])}"]`).join("") : "";
+    const keep = !fresh && ae && ae.dataset.bp ? `[data-bp="${ae.dataset.bp}"]` + ["g","t","a","i","k","f","s","c","w","v","e","p","id","uid"].filter(k => ae.dataset[k] != null).map(k => `[data-${k}="${CSS.escape(ae.dataset[k])}"]`).join("") : "";
     const P = pages[pages.length - 1], sc0 = (root.querySelector(".ps-page") || {}).scrollTop || 0, hs0 = (root.querySelector(".ps-main") || {}).scrollLeft || 0;
-    root.innerHTML = `<div id="bp">` + (P ? `<div class="ps-bg">${P.t === "game" ? "" : '<canvas id="psWall"></canvas>'}<i class="shade page"></i></div>${pageHTML(P)}` : homeHTML())
+    root.innerHTML = `<div id="bp">` + (P ? `<div class="ps-bg${P.t === "users" ? " users" : ""}">${P.t === "game" ? "" : `<canvas id="psWall"${P.t === "users" ? ' data-theme="bokeh"' : ""}></canvas>`}<i class="shade page"></i></div>${pageHTML(P)}` : homeHTML())
       + stack.map((L, i) => `<div class="ps-layer t-${L.t}" data-li="${i}">${layerHTML(L)}</div>`).join("")
-      + `<div id="psToasts" class="ps-toasts"></div><footer class="ps-help"><span>${G("a")} اختيار</span><span>${G("b")} رجوع</span><span>${G("guide")} مركز التحكم</span>${!P ? `<span>${G("lb")}${G("rb")} الألعاب / الوسائط</span>` : ""}<span>${G("start")} خيارات</span></footer></div>`;
+      + `<div id="psToasts" class="ps-toasts"></div><footer class="ps-help"><span>${G("a")} ${P && P.t === "users" ? "تحديد" : "اختيار"}</span>${P && P.t === "users" ? "" : `<span>${G("b")} رجوع</span><span>${G("guide")} مركز التحكم</span>`}${!P ? `<span>${G("lb")}${G("rb")} الألعاب / الوسائط</span>` : ""}${P && P.t === "users" ? "" : `<span>${G("start")} خيارات</span>`}</footer>${busy ? `<div class="ps-busy"><i class="spin"></i><b>${esc(busy)}</b></div>` : ""}</div>`;
     paint(root); drawToasts();
     const pg = root.querySelector(".ps-page"); if (pg) pg.scrollTop = sc0; const mn = root.querySelector(".ps-main"); if (mn) mn.scrollLeft = hs0;
     if (root.querySelector("#psWall")) startWall(); else stopWall();
     const sc = scope();
     let f = keep && sc.querySelector(keep);
     const first = list => { for (const q of list) { const e = sc.querySelector(q); if (e) return e; } return null; };   // in this order of preference
-    if (!f) f = stack.length ? first([".k", ".ps-ccpanel [data-bp]", ".ps-mi", "[data-bp]"]) : P ? first([".ps-page .ps-btn.play", ".ps-page .ps-btn", ".ps-page .ps-cover", ".ps-page .ps-listc", ".ps-page .ps-row-i", ".ps-page .ps-set", ".ps-page .ps-search", ".ps-page [data-bp]"]) : sc.querySelector(`.ps-t[data-i="${cur()}"]`);
+    if (!f) f = stack.length ? first([".ps-field", ".k", ".ps-ccpanel [data-bp]", ".ps-mi", "[data-bp]"]) : P && P.t === "users" ? first([".ps-u.cur", ".ps-u[data-bp=user]", ".ps-u"]) : P ? first([".ps-page .ps-btn.play", ".ps-page .ps-btn", ".ps-page .ps-cover", ".ps-page .ps-listc", ".ps-page .ps-row-i", ".ps-page .ps-set", ".ps-page .ps-search", ".ps-page [data-bp]"]) : sc.querySelector(`.ps-t[data-i="${cur()}"]`);
     if (stack.length && stack[stack.length - 1].t === "cc" && !keep) f = sc.querySelector(`.ps-cci[data-k="${stack[stack.length - 1].panel || "home"}"]`) || f;
     fresh = false;
     if (f) focusEl(f, true);
@@ -394,7 +449,9 @@ export function makeBP(H){
     if (!el.closest(".ps-strip")) el.scrollIntoView({block:"nearest", inline:"nearest", behavior:quiet ? "auto" : "smooth"});
     if (!quiet) beep("move");
     if (el.classList.contains("ps-cci")) { const t = root.querySelector("#psTip"); if (t) { t.textContent = el.dataset.tip; const r = el.getBoundingClientRect(); t.style.left = (r.left + r.width / 2) + "px"; } }
-    if (el.dataset.bp === "tile" && !pages.length) focusTile(+el.dataset.i, true); }
+    if (el.dataset.bp === "tile" && !pages.length) focusTile(+el.dataset.i, true);
+    if (el.classList.contains("ps-u")) centerUser(el); }
+  function centerUser(el){ const r = root.querySelector("#psUrow"); if (!r) return; r.style.transform = `translateX(${innerWidth / 2 - (el.offsetLeft + el.offsetWidth / 2)}px)`; }
   /* the focused tile stays at the same place on screen; the strip slides under it (like the PS5) */
   function placeStrip(){ const st = root && root.querySelector("#psStrip"), t = st && st.querySelector(".ps-t.sel"); if (!t) return;
     // measured from the final sizes, not offsetLeft/offsetWidth (those are mid-transition while tiles grow/shrink)
@@ -418,12 +475,12 @@ export function makeBP(H){
         else if (!bg.querySelector("#psWall")) { bg.innerHTML = '<canvas id="psWall"></canvas><i class="shade"></i>'; startWall(); } }
       if (!fromFocus) beep("move"); } }
   function softRefresh(){ if (!on || !root || stack.some(L => L.t === "kbd")) return; const P = pages[pages.length - 1];
-    if (!P && !stack.length && rowItems().map(r => r.k + (r.g || "")).join() === rowSig) { const hub = root.querySelector("#psHub"), ae = root.activeElement; if (hub && !hub.contains(ae)) { hub.innerHTML = hubHTML(rowItems()[cur()]); paint(hub); return; } }
+    if (!P && !stack.length && rowItems().map(r => r.k + (r.g || "")).join() === rowSig) { const hub = root.querySelector("#psHub"), ae = root.activeElement, tp = root.querySelector(".ps-top"); if (tp && !tp.contains(ae)) { tp.outerHTML = topHTML(); paint(root.querySelector(".ps-top")); } if (hub && !hub.contains(ae)) { hub.innerHTML = hubHTML(rowItems()[cur()]); paint(hub); return; } }
     draw(); }
   function push(L){ stack.push(L); fresh = true; beep("open"); draw(); }
   function pop(){ if (!stack.length) return false; stack.pop(); beep("back"); draw(); return true; }
   function openPage(P){ stack = []; pages.push(P); fresh = true; beep("open"); draw(); }
-  function popPage(){ if (!pages.length) return false; pages.pop(); fresh = !pages.length ? false : true; beep("back"); draw(); return true; }
+  function popPage(){ if (!pages.length || onUsers()) return false; pages.pop(); fresh = !pages.length ? false : true; beep("back"); draw(); return true; }
   function goHome(){ stack = []; pages = []; fresh = true; draw(); }
 
   /* ---------- actions ---------- */
@@ -435,6 +492,19 @@ export function makeBP(H){
       if (x.k === "store") return openPage({t:"store"}); if (x.k === "library") return openPage({t:"library"}); if (x.k === "gallery" || x.k === "mhub") return openPage({t:"gallery"});
       if (x.k === "clips") return activate(fake({bp:"clips"})); if (x.k === "engine") return activate(fake({bp:"engine"}));
       if (x.k === "welcome") { const f = root.querySelector("#psHub [data-bp]"); if (f) focusEl(f); } return; }
+    if (busy) return;
+    if (k === "user") return signInAs(el.dataset.uid);
+    if (k === "uadd") return push({t:"login", email:"", pass:""});
+    if (k === "upower") return push({t:"power"});
+    if (k === "uforget") { const uid = el.dataset.uid, a = (H.accounts() || []).find(x => x.uid === uid) || {}; stack = [];
+      return push({t:"confirm", title:"تزيل " + (a.name || "") + " من هذا الجهاز؟", text:"الحساب نفسه ما ينحذف. تحتاج كلمة السر عشان ترجّعه.", ok:"إزالة", yes:async () => { await H.forgetUser(uid); }}); }
+    if (k === "lfield") { const L = top, f = el.dataset.f;
+      return push({t:"kbd", v:L[f] || "", lang:"en", mail:f === "email", secret:f === "pass", ph:f === "email" ? "الإيميل" : "كلمة السر", done:v => { L[f] = f === "email" ? v.trim() : v; L.err = ""; }}); }
+    if (k === "lgo") return loginGo(top);
+    if (k === "lnew") { close(); H.signUp(); return; }
+    if (k === "me") return push({t:"me"});
+    if (k === "switchu") { pages = [{t:"users"}]; stack = []; fresh = true; beep("open"); return draw(); }
+    if (k === "logout") { pages = [{t:"users"}]; stack = []; fresh = true; try { await H.logout(); } catch(e) {} beep("back"); return draw(); }
     if (k === "space") return setSpace(el.dataset.v);
     if (k === "page") { if (el.dataset.p === "downloads" || el.dataset.p === "friends") stack = []; return openPage({t:el.dataset.p}); }
     if (k === "gpage") { stack = []; return openPage({t:"game", g:el.dataset.g}); }
@@ -463,7 +533,8 @@ export function makeBP(H){
     if (k === "libtab") { libTab = el.dataset.t; fresh = true; return draw(); }
     if (k === "sort") { ST.sort = ST.sort === "az" ? "recent" : "az"; saveUI(); return draw(); }
     if (k === "search") return push({t:"kbd", v:q, lang:/[a-z]/i.test(q) ? "en" : "ar", ph:"ابحث…", done:v => { q = v; }});
-    if (k === "k") { top.v = (top.v + el.dataset.c).slice(0, 60); return draw(); }
+    if (k === "k") { top.v = (top.v + el.dataset.c).slice(0, 80); return draw(); }
+    if (k === "kcaps") { top.caps = !top.caps; return draw(); }
     if (k === "kdel") { top.v = top.v.slice(0, -1); return draw(); }
     if (k === "klang") { top.lang = top.lang === "ar" ? "en" : "ar"; return draw(); }
     if (k === "kok") { stack.pop(); top.done(top.v); return draw(); }
@@ -500,11 +571,13 @@ export function makeBP(H){
   function setSpace(v){ if (v === space && !pages.length) return; space = v; stack = []; pages = []; fresh = true; beep("move"); draw(); }
   function context(btn){
     const top = stack[stack.length - 1], P = pages[pages.length - 1], a = root.activeElement;
+    if (onUsers() && btn !== "start") return;
     if (btn === "guide") { if (top && top.t === "cc") return pop(); stack = []; return push({t:"cc", panel:null}); }
     if (btn === "x") { if (top && top.t === "kbd") { top.v = top.v.slice(0, -1); return draw(); }
       if (!top && P && P.t === "game") { const eds = ownedEds(P.g); if (eds.length > 1) { const c = P.ed || gameState(H.byId(P.g)).ed; P.ed = eds[(eds.indexOf(c) + 1) % eds.length]; beep("move"); draw(); } } return; }
     if (btn === "y") { if (top && top.t === "kbd") { top.v += " "; return draw(); } if (!top) { if (P && (P.t === "store" || P.t === "search" || P.t === "library")) return activate(root.querySelector('[data-bp="search"]')); return openPage({t:"search"}); } return; }
     if (btn === "start") { if (top && top.t === "kbd") { stack.pop(); top.done(top.v); beep("ok"); return draw(); }
+      if (onUsers()) { if (top && top.t === "umenu") return pop(); if (!top && a && a.dataset.uid) return push({t:"umenu", uid:a.dataset.uid}); return; }
       if (top && top.t === "menu") return pop();
       const g = a && a.dataset && a.dataset.g; if (g && !top) return push({t:"menu", g, list:P && P.t === "list" ? P.id : ""});
       if (!top && P && P.t === "list") return push({t:"listmenu", id:P.id});
@@ -528,19 +601,20 @@ export function makeBP(H){
     if (best) focusEl(best);
   }
   function back(){ const top = stack[stack.length - 1];
-    if (top) return pop(); if (popPage()) return;
+    if (top) return pop(); if (onUsers()) return beep("back"); if (popPage()) return;
     const a = root.activeElement;
     if (a && a.dataset.bp !== "tile") { beep("back"); const t = root.querySelector(`.ps-t[data-i="${cur()}"]`); if (t) t.focus({preventScroll:true}); return; }
     if (space === "media") return setSpace("games");
     if (cur() !== 1 && space === "games") { focusTile(1); return; }
     beep("back"); }
   function viewStep(d){ const top = stack[stack.length - 1]; if (top && top.t === "view") { top.i = (top.i + d + SHOTS.length) % SHOTS.length; draw(); return true; } return false; }
-  function shoulder(d){ const P = pages[pages.length - 1];
+  function shoulder(d){ const P = pages[pages.length - 1]; if (onUsers()) return;
     if (P && P.t === "library") { const t = ["installed","owned","all"]; libTab = t[(t.indexOf(libTab) + d + 3) % 3]; fresh = true; beep("move"); return draw(); }
     if (!P && !stack.length) setSpace(space === "games" ? "media" : "games"); }
   function key(e){ if (!on) return; const k = e.key, top = stack[stack.length - 1];
+    if (document.activeElement !== host) { const ae = document.activeElement; if (ae && ae.blur) ae.blur(); if (!(top && top.t === "kbd")) { const f = scope().querySelector("[data-bp]"); if (f) f.focus({preventScroll:true}); } }
     const map = {ArrowLeft:[-1, 0], ArrowRight:[1, 0], ArrowUp:[0, -1], ArrowDown:[0, 1]};
-    if (top && top.t === "kbd" && k.length === 1 && !e.ctrlKey && !e.altKey) { e.preventDefault(); top.v = (top.v + k).slice(0, 60); return draw(); }
+    if (top && top.t === "kbd" && k.length === 1 && !e.ctrlKey && !e.altKey) { e.preventDefault(); top.v = (top.v + k).slice(0, 80); return draw(); }
     if (top && top.t === "kbd" && k === "Backspace") { e.preventDefault(); top.v = top.v.slice(0, -1); return draw(); }
     if (map[k]) { e.preventDefault(); host.classList.add("nomouse"); if (k === "ArrowLeft" || k === "ArrowRight") { if (viewStep(k === "ArrowLeft" ? -1 : 1)) return; } move(...map[k]); }
     else if (k === "Enter" || k === " ") { e.preventDefault(); if (top && top.t === "kbd" && k === "Enter") return context("start"); const a = root.activeElement; if (a && a.dataset && a.dataset.bp) activate(a); }
@@ -581,7 +655,7 @@ export function makeBP(H){
         else if (k === "x" || k === "y") context(k);
         else if (k === "start") context("start");
         else if (k === "guide") context("guide");
-        else if (k === "sel") { stack = []; openPage({t:"downloads"}); }
+        else if (k === "sel") { if (!onUsers()) { stack = []; openPage({t:"downloads"}); } }
       }
     }
     raf = requestAnimationFrame(poll);
@@ -603,6 +677,6 @@ export function makeBP(H){
     if (ended.length && PS && PS.focusMain) { PS.focusMain().catch(() => {}); if (PS.fullscreen) PS.fullscreen(true).catch(() => {}); }   // back to the console screen when a game closes
     if (started.length) SHOTS = null; if (ended.length) SHOTS = null;
     softRefresh(); }
-  setInterval(() => { if (on) { const c = root && root.querySelector(".ps-top .clock"); if (c) c.textContent = clock(); } }, 15000);
+  setInterval(() => { if (on) { const c = root && root.querySelector(".ps-top .clock, .ps-users .clock"); if (c) c.textContent = clock(); } }, 15000);
   return {open, close, refresh, get on(){ return on; }};
 }

@@ -251,3 +251,53 @@
 
 .ps-help{position:absolute;bottom:1vw;right:2vw;z-index:30;display:flex;gap:1.6vw;font-size:.95vw;color:rgba(255,255,255,.6);direction:rtl}
 #bp:not(.nomouse) .ps-help{opacity:.4}
+
+/* ---------- who's using this controller? ---------- */
+.ps-bg.users .shade.page{background:linear-gradient(180deg,rgba(0,0,0,.12),rgba(0,0,0,0) 40%,rgba(0,0,0,.18))}
+.ps-users{position:absolute;inset:0;z-index:2;direction:rtl;text-align:center;text-shadow:0 .1vw .6vw rgba(0,0,0,.35)}
+.ps-users .clock{position:absolute;top:3vw;right:4.5vw;font-size:2.4vw;font-weight:200;direction:rtl}
+.ps-users h1{margin:0;padding-top:9vw;font-size:2.7vw;font-weight:300}
+.ps-users>p{margin:.9vw 0 0;font-size:1.3vw;font-weight:300}
+.ps-urow{position:absolute;left:0;top:23vw;display:flex;align-items:flex-start;gap:4.2vw;direction:ltr;transition:transform .3s cubic-bezier(.2,.8,.2,1)}
+.ps-u{flex:none;width:12vw;display:flex;flex-direction:column;align-items:center;gap:1vw;position:relative;padding-top:3vw!important;outline:none}
+.ps-u .ring{width:11vw;height:11vw;border-radius:50%;display:grid;place-items:center;font-size:4.6vw;font-weight:700;color:#fff;
+  background:radial-gradient(circle at 35% 30%,hsl(var(--h,210) 70% 62%),hsl(var(--h,210) 60% 30%));box-shadow:0 1vw 3vw rgba(0,0,0,.25);transition:transform .2s,box-shadow .2s}
+.ps-u.add .ring{background:rgba(255,255,255,.28);font-size:5vw;font-weight:200;box-shadow:none}
+.ps-u>b{font-size:1.85vw;font-weight:300;white-space:nowrap;color:#fff}
+.ps-u small{font-size:1.15vw;font-weight:600;opacity:0;display:flex;align-items:center;gap:.4vw;transition:opacity .2s}
+.ps-u .padn{position:absolute;top:0;left:50%;transform:translateX(-50%);width:2.6vw;opacity:0;font-style:normal;transition:opacity .2s}
+.ps-u .padn svg{width:2.6vw;height:2.6vw;fill:#fff;stroke:#fff}.ps-u .padn b{position:absolute;top:-.9vw;left:50%;transform:translateX(-50%);font-size:.85vw}
+.ps-u:focus .ring{transform:scale(1.3);box-shadow:0 0 0 .3vw #111,0 0 0 .55vw rgba(255,255,255,.95),0 1.4vw 3.4vw rgba(0,0,0,.35)}
+.ps-u:focus>b{transform:translateY(2vw)}.ps-u>b{transition:transform .2s}
+.ps-u:focus small{opacity:1;transform:translateY(2vw)}.ps-u:focus .padn{opacity:1;transform:translate(-50%,-1.6vw)}
+.ps-upow{position:absolute;left:50%;bottom:4.5vw;transform:translateX(-50%);width:3.8vw;height:3.8vw;border-radius:50%;background:rgba(255,255,255,.35)!important;display:grid;place-items:center;padding:.9vw!important}
+.ps-upow:focus{background:#fff!important;color:#111!important;box-shadow:var(--ring)}
+.ps-busy{position:absolute;inset:0;z-index:40;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1.2vw;background:rgba(0,0,0,.45);font-size:1.5vw;direction:rtl}
+.ps-busy .spin,.ps-dlpill .spin{width:3vw;height:3vw;border-radius:50%;border:.3vw solid rgba(255,255,255,.25);border-top-color:#fff;animation:psSpin .9s linear infinite}
+@keyframes psSpin{to{transform:rotate(360deg)}}
+/* sign in inside the console */
+.ps-dlg.login{width:36vw}
+.ps-field{display:flex;flex-direction:column;gap:.3vw;padding:1vw 1.2vw!important;border-radius:.6vw;background:rgba(255,255,255,.07)!important;text-align:right}
+.ps-field small{font-size:1vw;color:var(--dim)}.ps-field span{font-size:1.35vw;text-align:left}.ps-field i{opacity:.4;font-style:normal}
+.ps-field:focus{box-shadow:var(--ring);background:rgba(255,255,255,.14)!important}
+.ps-dlg .err{color:#ff8d8d;font-size:1.1vw;margin:0}
+.ps-mi.ok{background:#1f6fff!important;text-align:center}.ps-mi.ok:focus{background:#fff!important}
+.ps-kbd .k.on{background:#fff!important;color:#111!important}
+/* the account menu under the avatar */
+.ps-layer.t-me{display:block;background:rgba(0,0,0,.35)}
+.ps-menu.me{position:absolute;top:7vw;right:9vw;width:24vw}
+.ps-menu.me .who{display:flex;align-items:center;gap:1vw;padding:.4vw .2vw 1vw;border-bottom:.1vw solid var(--line);margin-bottom:.4vw}
+.ps-menu.me .who b{display:block;font-size:1.4vw}.ps-menu.me .who small{font-size:1vw;color:var(--dim)}
+.uav{width:3.4vw;height:3.4vw;flex:none;border-radius:50%;display:grid;place-items:center;font-weight:800;font-size:1.5vw;background:radial-gradient(circle at 35% 30%,hsl(var(--h,210) 70% 62%),hsl(var(--h,210) 60% 30%))}
+.ps-mi .mic{display:inline-block;width:1.5vw;height:1.5vw;vertical-align:middle;margin-left:.8vw}
+.ps-ib.av{background:radial-gradient(circle at 35% 30%,hsl(var(--h,210) 70% 62%),hsl(var(--h,210) 60% 30%))!important}
+/* labels under the top icons when they have the focus (بحث / الإعدادات / your name) */
+.ps-top .right .ps-ib:focus::after{content:attr(aria-label);position:absolute;top:calc(100% + .7vw);left:50%;transform:translateX(-50%);white-space:nowrap;background:rgba(10,10,14,.92);color:#fff;font-size:1vw;font-weight:600;padding:.35vw .8vw;border-radius:.35vw;pointer-events:none}
+/* download in progress, above the welcome widgets */
+.ps-dlpill{position:absolute;top:1.2vw;left:9.2vw;display:flex;align-items:center;gap:.8vw;padding:.5vw 1vw!important;border-radius:99px;background:rgba(17,19,25,.85)!important;font-size:1.1vw;direction:rtl;z-index:2}
+.ps-dlpill .ic{width:1.4vw;height:1.4vw;color:#3ddc6f}.ps-dlpill .bar{width:9vw;margin:0}.ps-dlpill .bar i{background:#3ddc6f}.ps-dlpill small{color:var(--dim)}
+.ps-dlpill:focus{box-shadow:var(--ring)}
+/* library tile: the installed games right under the row */
+.ps-hub.lib{justify-content:flex-start;padding-top:1.4vw}
+.ps-grid.mini{grid-template-columns:repeat(5,10.5vw)!important;gap:1vw!important}
+.ps-grid.mini .ps-cover{width:10.5vw}

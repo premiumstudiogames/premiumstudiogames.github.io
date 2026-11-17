@@ -1,9 +1,9 @@
-import { makeBP } from "./bp.js?v=7";
+import { makeBP } from "./bp.js?v=8";
 import { makeRTC } from "./rtc.js?v=1";
 import { SOON, SOON_GENRES } from "./soon.js?v=1";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut,
-  sendPasswordResetEmail, sendEmailVerification, updateProfile, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+  sendPasswordResetEmail, sendEmailVerification, updateProfile, setPersistence, browserLocalPersistence, updateCurrentUser } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, collectionGroup, onSnapshot,
   serverTimestamp, writeBatch, Timestamp, increment, addDoc, query, orderBy, limit, where, arrayUnion, arrayRemove } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
@@ -30,13 +30,31 @@ const PACKS = [             // must match coinPacks() in firestore.rules (coins 
   {id:"u100000",coins:100000, price:1000000}
 ];
 const coins = n => ((n || 0) / COIN_UNIT).toLocaleString("en-US", {minimumFractionDigits:0, maximumFractionDigits:4});
-const SITE_VERSION = "00.00.31";
+const SITE_VERSION = "00.00.32";
 const APP_DL = "downloads/PremiumStudioSetup.exe";
 
 const fb = initializeApp(firebaseConfig);
 const auth = getAuth(fb);
 const fs = getFirestore(fb);
 setPersistence(auth, browserLocalPersistence).catch(()=>{});
+
+/* ---------- accounts on this PC (console mode asks "who's using this controller?", like the PS5) ----------
+   every account that signs in here keeps its own session in its own named Firebase app, so switching users needs no password.
+   Signing out from the store page locks that account again (its password is needed next time); the list itself stays. */
+const ACC_KEY = "pg-accounts", accSlots = {};
+const accList = () => { try { const l = JSON.parse(localStorage.getItem(ACC_KEY) || "[]"); return Array.isArray(l) ? l : []; } catch(e) { return []; } };
+const accSave = l => { try { localStorage.setItem(ACC_KEY, JSON.stringify(l)); } catch(e) {} };
+function accSlot(uid){ if (!accSlots[uid]) { const a = getAuth(initializeApp(firebaseConfig, "pg-u-" + uid)); setPersistence(a, browserLocalPersistence).catch(() => {}); accSlots[uid] = a; } return accSlots[uid]; }
+function accTouch(u, used){ if (!u) return; const l = accList(), i = l.findIndex(a => a.uid === u.uid), o = i >= 0 ? l[i] : {uid:u.uid, at:Date.now()};
+  o.name = (PROFILE && PROFILE.name) || u.displayName || o.name || (u.email || "").split("@")[0]; o.username = (PROFILE && PROFILE.username) || o.username || ""; o.email = u.email || o.email || "";
+  if (used) o.at = Date.now(); if (i >= 0) l[i] = o; else l.push(o); accSave(l); }
+async function accRemember(u){ accTouch(u, true); try { const s = accSlot(u.uid); await s.authStateReady(); if (!s.currentUser || s.currentUser.uid !== u.uid) await updateCurrentUser(s, u); } catch(e) {} }
+async function accSwitch(uid){ if (user && user.uid === uid) { accTouch(user, true); return true; }
+  const s = accSlot(uid); await s.authStateReady(); if (!s.currentUser) return false;
+  await updateCurrentUser(auth, s.currentUser); return true; }
+async function accLock(uid){ try { const s = accSlot(uid); await s.authStateReady(); if (s.currentUser) await signOut(s); } catch(e) {} }
+async function accForget(uid){ await accLock(uid); accSave(accList().filter(a => a.uid !== uid)); if (user && user.uid === uid) await signOut(auth); }
+async function signOutHere(){ if (user) await accLock(user.uid); await signOut(auth); }
 
 /* desktop app bridge (only present inside the Premium Games app) */
 const PS = window.premiumStudio || null;
@@ -739,7 +757,7 @@ function registerDevice(){
 }
 function checkSignOutAll(){
   if (!user || !SECURITY.signOutBefore) return; let at = 0; try { at = +localStorage.getItem(LOGIN_KEY + user.uid) || 0; } catch(e) {}
-  if (at && at < tsMs(SECURITY.signOutBefore)) { try { localStorage.removeItem(LOGIN_KEY + user.uid); } catch(e) {} toast("طلعت من كل الأجهزة. سجّل دخولك من جديد"); signOut(auth); }
+  if (at && at < tsMs(SECURITY.signOutBefore)) { try { localStorage.removeItem(LOGIN_KEY + user.uid); } catch(e) {} toast("طلعت من كل الأجهزة. سجّل دخولك من جديد"); signOutHere(); }
 }
 function securityBox(){
   const me = deviceId(), list = Object.entries(DEVICES).sort((a, b) => tsMs(b[1].last) - tsMs(a[1].last));
@@ -997,7 +1015,7 @@ function renderAccount(){
     ${user.emailVerified ? "" : '<div class="row"><button class="btn mini" id="aVerify" type="button">أرسل رابط التأكيد مرة ثانية</button><button class="btn mini ghost" id="aReload" type="button">أكدت، حدّث</button></div>'}</div>
     <div class="panel"><h3>الحساب</h3><p class="muted" style="font-size:14px">نفس الحساب يشتغل في الموقع وفي تطبيق Premium Games.</p><div class="row"><button class="btn mini" id="aReset" type="button">تغيير كلمة السر</button><button class="btn mini danger" id="aOut" type="button">تسجيل الخروج</button></div></div>`;
   $("#aUser").textContent = PROFILE && PROFILE.username ? "@" + PROFILE.username : "—"; $("#aName").textContent = (PROFILE && PROFILE.name) || user.displayName || "—"; $("#aMail").textContent = user.email;
-  $("#aOut").onclick = async () => { await signOut(auth); toast("سجّلت خروج"); location.hash = "#store"; };
+  $("#aOut").onclick = async () => { await signOutHere(); toast("سجّلت خروج"); location.hash = "#store"; };
   $("#aReset").onclick = async () => { try { await sendPasswordResetEmail(auth, user.email); toast("أرسلنا رابط تغيير كلمة السر لإيميلك"); } catch(e) { toast(authErr(e)); } };
   const v = $("#aVerify"); if (v) v.onclick = async () => { try { await sendEmailVerification(user); toast("أرسلنا رابط التأكيد لإيميلك"); } catch(e) { toast(authErr(e)); } };
   const rl = $("#aReload"); if (rl) rl.onclick = async () => { await user.reload(); await user.getIdToken(true); setAdmin(); render(); toast(user.emailVerified ? "تم تأكيد الإيميل ✓" : "لسا ما تأكد. افتح الرابط في إيميلك"); };
@@ -1360,6 +1378,9 @@ function bigPicture(){ if (!BP) BP = makeBP({$, esc, GAMES, ownedEds, instOf, ED
   byId, lastPlayed, SOON, soonArt, notes, pendingUpdates, achOf, sendMsg, lowPrice, saleOf,
   installed:() => INSTALLED, saleLeft:gid => { const s = saleOf(gid); return s ? "ينتهي بعد " + cdText(tsMs(s.ends) - Date.now()) : ""; },
   call:fid => rtc().start("voice", [fid], {[fid]:(FRIENDS[fid] || {}).username}).catch(() => {}),
+  accounts:() => accList().sort((a, b) => (b.at || 0) - (a.at || 0)).map(a => ({...a, cur:!!(user && user.uid === a.uid)})),
+  switchUser:accSwitch, forgetUser:accForget, logout:() => signOut(auth), signUp:() => showAuth("signup"), authErr,
+  signIn:(m, p) => signInWithEmailAndPassword(auth, String(m).trim().toLowerCase(), p),
   padConnected:async () => { try { if (PS && PS.getSettings && (await PS.getSettings()).consolePad && document.hasFocus()) { location.hash = "#bigpicture"; } } catch(e) {} },
   state:() => ({user, PROFILE, FRIENDS, PLAY, RUNNING, PROGRESS, online:isOnline, playing:playingNow})}); return BP; }
 if (PS) setTimeout(() => bigPicture(), 0);
@@ -1504,10 +1525,10 @@ onAuthStateChanged(auth, async u => {
   unsubs.forEach(f => { try { f(); } catch(e) {} }); unsubs = []; LIB = {}; PROFILE = null; FRIENDS = {}; watchPresence(); watchChats(); PLAY = {}; REFUNDS = {}; ACH = {}; WISH = {}; PREFS = {fav:[], hidden:[]}; lastPub = ""; frBadge();
     SHARED = {}; for (const k of Object.keys(famUnsubs)) { famUnsubs[k](); delete famUnsubs[k]; } CARDS = {}; DROPS = {}; CBADGES = {}; LISTINGS = []; FAMILY = null; GIFTS = []; USERS = {}; ORDERS = []; CODES = {}; MYCO = []; COINORDERS = [];
   user = u; authReady = true; setAdmin();
-  if (u) {
+  if (u) { accRemember(u);
     $("#gate").hidden = true; guest = false;
     try { await ensureProfile(u, pendingName, pendingUname); } catch(e) { toast("ما قدرت أفتح حسابك في قاعدة البيانات: " + (e.code || e.message)); }
-    unsubs.push(onSnapshot(doc(fs, "users", u.uid), s => { PROFILE = s.exists() ? s.data() : null; applyChrome(); sendUserToApp();
+    unsubs.push(onSnapshot(doc(fs, "users", u.uid), s => { PROFILE = s.exists() ? s.data() : null; applyChrome(); sendUserToApp(); accTouch(u); if (BP && BP.on) BP.refresh();
       if (PROFILE && PROFILE.pid && !PROFILE.username && !$("#uf")) askUsername(u); if (curView === "account") renderAccount(); if (curView === "coins") renderCoins(); }));
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "library"), s => { LIB = {}; s.forEach(d => LIB[d.id] = libItem(d.data())); render(); autoInstall(); sendOwned(); }, e => toast("ما قدرت أقرأ مكتبتك: " + e.code)));
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "friends"), s => { FRIENDS = {}; s.forEach(d => FRIENDS[d.id] = d.data()); watchChats(); frBadge(); watchPresence(); if (curView === "friends") renderFriends(); }, () => {}));
