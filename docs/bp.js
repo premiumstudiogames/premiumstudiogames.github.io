@@ -1,271 +1,565 @@
-/* Console mode: the PC as a games console. Full screen, works entirely with a game controller
-   (Xbox or PlayStation), the keyboard or the mouse. Loaded by app.js; uses its data through the hooks it passes in. */
+/* Console mode, PlayStation 5 style: the PC as a games console. Works with a controller (Xbox / PlayStation),
+   the keyboard or the mouse. Two spaces (الألعاب / وسائط), a row of tiles, a hub for the focused tile,
+   a game library, a control center (Home/PS button) and notifications. Loaded by app.js through hooks. */
 export function makeBP(H){
   const {esc, GAMES, ownedEds, instOf, ED_TAG, PS, toast, cover, money, ent, state} = H;
-  let fresh = false, on = false, tab = "home", root = null, raf = 0, stack = [], heroG = "", lastRun = {}, hideT = 0;
-  const pad = {last:{}, held:{}}, ST = {glyphs:"auto", sounds:true};
-  const TABS = [["home","الرئيسية"],["library","المكتبة"],["store","المتجر"],["friends","الأصدقاء"],["downloads","التحميلات"],["shots","اللقطات"],["settings","الإعدادات"]];
-  const clock = () => new Date().toLocaleTimeString("ar-SA-u-nu-latn", {hour:"numeric", minute:"2-digit"});
+  let on = false, root = null, host = null, sheet = null, raf = 0, wallRaf = 0, hideT = 0, fresh = false, lastRun = {};
+  let space = "games", sel = {games:-1, media:0}, pages = [], stack = [], toasts = [], unProg = null;
+  const pad = {last:{}, held:{}}, ST = {glyphs:"auto", sounds:true, wall:"autumn"};
+  try { Object.assign(ST, JSON.parse(localStorage.getItem("bp-ui") || "{}")); } catch(e) {}
+  const saveUI = () => { try { localStorage.setItem("bp-ui", JSON.stringify({wall:ST.wall, sort:ST.sort})); } catch(e) {} };
   const S = () => state();
+  const clock = () => new Date().toLocaleTimeString("ar-SA-u-nu-latn", {hour:"numeric", minute:"2-digit"});
   const mins = gid => ((S().PLAY[gid] || {}).minutes) || 0;
   const hrs = m => m >= 60 ? (m / 60).toFixed(1).replace(/\.0$/, "") + " ساعة" : m + " دقيقة";
   const last = gid => H.lastPlayed(gid);
   const mine = () => GAMES.filter(g => ownedEds(g.id).length).sort((a, b) => last(b.id) - last(a.id));
+  const title = g => esc(g.en || g.title);
+  const running = gid => Object.keys(S().RUNNING).some(k => k.split("--")[0] === gid || (S().RUNNING[k] || {}).game === gid);
+  const GB = n => n >= 1e9 ? `<span class="num">${(n / 1e9).toFixed(2)}</span> غيغابايت` : `<span class="num">${(n / 1e6).toFixed(0)}</span> ميغابايت`;   // numbers only in .num (font features break Arabic joining)
+  function ago(t){ const d = (Date.now() - t) / 60000; return d < 60 ? "منذ " + Math.max(1, Math.round(d)) + " دقيقة" : d < 1440 ? "منذ " + Math.round(d / 60) + " ساعة" : "منذ " + Math.round(d / 1440) + " يوم"; }
 
-  /* ---------- sounds (made on the fly, no files) ---------- */
+  /* ---------- game lists (like PS5 "قوائم الألعاب"), kept on this PC ---------- */
+  const LISTS = { all(){ try { return JSON.parse(localStorage.getItem("bp-lists") || "[]"); } catch(e) { return []; } },
+    save(l){ try { localStorage.setItem("bp-lists", JSON.stringify(l)); } catch(e) {} } };
+
+  /* ---------- sounds (made on the fly) ---------- */
   let ac = null;
   function beep(kind){ if (!ST.sounds) return; try { ac = ac || new AudioContext(); const t = ac.currentTime, o = ac.createOscillator(), g = ac.createGain();
-    const f = {move:[880, 0.035, .035], ok:[660, 0.09, .06], back:[330, 0.08, .05], open:[520, 0.12, .05], err:[180, 0.15, .06]}[kind] || [700, .04, .03];
-    o.type = kind === "err" ? "square" : "sine"; o.frequency.setValueAtTime(f[0], t); if (kind === "ok" || kind === "open") o.frequency.exponentialRampToValueAtTime(f[0] * 1.5, t + f[1]);
-    if (kind === "back") o.frequency.exponentialRampToValueAtTime(f[0] * .6, t + f[1]);
+    const f = {move:[1250, .025, .025], ok:[760, .08, .05], back:[420, .07, .04], open:[560, .14, .045], err:[190, .15, .05], note:[990, .18, .04]}[kind] || [700, .04, .03];
+    o.type = kind === "err" ? "square" : "sine"; o.frequency.setValueAtTime(f[0], t);
+    if (kind === "ok" || kind === "open" || kind === "note") o.frequency.exponentialRampToValueAtTime(f[0] * 1.5, t + f[1]);
+    if (kind === "back") o.frequency.exponentialRampToValueAtTime(f[0] * .65, t + f[1]);
     g.gain.setValueAtTime(f[2], t); g.gain.exponentialRampToValueAtTime(.0001, t + f[1]); o.connect(g).connect(ac.destination); o.start(t); o.stop(t + f[1] + .02); } catch(e) {} }
 
-  /* ---------- button names follow the controller you hold ---------- */
-  let padKind = "xbox";
+  /* ---------- button names follow the controller in your hands ---------- */
+  let padKind = "xbox", padOn = false;
   const G = b => { const k = ST.glyphs === "auto" ? padKind : ST.glyphs;
-    const m = k === "ps" ? {a:"✕", b:"○", x:"□", y:"△", lb:"L1", rb:"R1", start:"OPTIONS", guide:"PS"} : {a:"A", b:"B", x:"X", y:"Y", lb:"LB", rb:"RB", start:"☰", guide:"⊙"};
-    return `<kbd class="g-${k}-${b}">${m[b]}</kbd>`; };
+    const m = k === "ps" ? {a:"✕", b:"○", x:"□", y:"△", lb:"L1", rb:"R1", start:"OPTIONS", guide:"PS"} : {a:"A", b:"B", x:"X", y:"Y", lb:"LB", rb:"RB", start:"☰", guide:"Xbox"};
+    return `<kbd class="g g-${k}-${b}">${m[b]}</kbd>`; };
+
+  /* ---------- small icons (drawn, no image files) ---------- */
+  const I = {
+    search:'<svg viewBox="0 0 24 24"><circle cx="10" cy="10" r="6.5"/><path d="M15 15l6 6"/></svg>',
+    gear:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M10.3 2.8h3.4l.5 2.4 1.7.8 2.1-1.3 2.4 2.4-1.3 2.1.8 1.7 2.4.5v3.4l-2.4.5-.8 1.7 1.3 2.1-2.4 2.4-2.1-1.3-1.7.8-.5 2.4h-3.4l-.5-2.4-1.7-.8-2.1 1.3-2.4-2.4 1.3-2.1-.8-1.7-2.4-.5v-3.4l2.4-.5.8-1.7-1.3-2.1 2.4-2.4 2.1 1.3 1.7-.8z"/></svg>',
+    store:'<svg viewBox="0 0 24 24"><path d="M5 8h14l-1.2 12H6.2z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg>',
+    lib:'<svg viewBox="0 0 24 24"><rect x="3" y="3" width="4" height="4"/><rect x="9" y="3" width="4" height="4"/><rect x="15" y="3" width="4" height="4"/><rect x="3" y="9" width="4" height="4"/><path d="M11 13h7a3 3 0 0 1 3 3v2a2 2 0 0 1-3.4 1.4L16 18h-3l-1.6 1.4A2 2 0 0 1 8 18v-2a3 3 0 0 1 3-3z"/></svg>',
+    hub:'<svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><path d="M17 3l4 7h-8z"/><path d="M3.5 14.5l6 6M9.5 14.5l-6 6"/><circle cx="17" cy="17.5" r="3.5"/></svg>',
+    media:'<svg viewBox="0 0 24 24"><rect x="3" y="4" width="13" height="10" rx="1"/><path d="M6 4v10M13 4v10M3 8h3M3 11h3M13 8h3M13 11h3"/><path d="M18 9v9.5a2 2 0 1 1-1.5-2V10l4-1v7.5a2 2 0 1 1-1.5-2"/></svg>',
+    shot:'<svg viewBox="0 0 24 24"><rect x="3" y="5" width="13" height="10" rx="1"/><path d="M5 19h4"/><rect x="13" y="12" width="8" height="6" rx="1"/><circle cx="17" cy="15" r="1.6"/></svg>',
+    clip:'<svg viewBox="0 0 24 24"><rect x="3" y="5" width="13" height="12" rx="1.5"/><path d="M16 9l5-3v12l-5-3z"/></svg>',
+    eng:'<svg viewBox="0 0 24 24"><path d="M12 2l9 5v10l-9 5-9-5V7z"/><path d="M12 22V12M21 7l-9 5-9-5"/></svg>',
+    pad:'<svg viewBox="0 0 24 24"><path d="M7 7h10a4 4 0 0 1 4 4v4a2.5 2.5 0 0 1-4.3 1.7L15 15H9l-1.7 1.7A2.5 2.5 0 0 1 3 15v-4a4 4 0 0 1 4-4z"/><path d="M7.5 10v3M6 11.5h3"/><circle cx="16" cy="10.5" r=".8"/><circle cx="17.5" cy="12.5" r=".8"/></svg>',
+    switcher:'<svg viewBox="0 0 24 24"><rect x="4" y="9" width="16" height="11" rx="1.5"/><path d="M6 6h12M8 3.5h8"/></svg>',
+    base:'<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3"/><path d="M6 15c1.5-2 3.5-3 6-3s4.5 1 6 3"/><ellipse cx="12" cy="18" rx="9" ry="3"/></svg>',
+    bell:'<svg viewBox="0 0 24 24"><path d="M6 17V11a6 6 0 0 1 12 0v6l1.5 2h-15z"/><path d="M10 21h4"/></svg>',
+    dl:'<svg viewBox="0 0 24 24"><path d="M12 3v11M7.5 9.5L12 14l4.5-4.5"/><path d="M8 20h8"/><circle cx="12" cy="17.5" r=".9"/></svg>',
+    home:'<svg viewBox="0 0 24 24"><path d="M3 11.5L12 4l9 7.5"/><path d="M5.5 10v10h13V10"/><path d="M10 20v-5h4v5"/></svg>',
+    sound:'<svg viewBox="0 0 24 24"><path d="M4 9.5h4L13 5v14l-5-4.5H4z"/><path d="M16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11"/></svg>',
+    mute:'<svg viewBox="0 0 24 24"><path d="M4 9.5h4L13 5v14l-5-4.5H4z"/><path d="M16.5 9.5l5 5M21.5 9.5l-5 5"/></svg>',
+    power:'<svg viewBox="0 0 24 24"><path d="M12 3v8"/><path d="M7 6.5a7.5 7.5 0 1 0 10 0"/></svg>',
+    more:'<svg viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="18" cy="12" r="1.6"/></svg>',
+    sort:'<svg viewBox="0 0 24 24"><path d="M7 4v15M3.5 15.5L7 19l3.5-3.5"/><path d="M13 6h8M13 11h6M13 16h4"/></svg>',
+    addlist:'<svg viewBox="0 0 24 24"><path d="M4 16a3 3 0 0 1 3-3h7a3 3 0 0 1 3 3v2a2 2 0 0 1-3.4 1.4L12 18H9l-1.6 1.4A2 2 0 0 1 4 18z"/><path d="M18 3v6M15 6h6"/></svg>',
+    trophy:'<svg viewBox="0 0 24 24"><path d="M7 4h10v5a5 5 0 0 1-10 0z"/><path d="M7 6H4a3 3 0 0 0 3 4M17 6h3a3 3 0 0 1-3 4M12 14v4M8 21h8M9 18h6"/></svg>',
+    news:'<svg viewBox="0 0 24 24"><path d="M3 10v4h3l7 4V6l-7 4z"/><path d="M17 9.5a3 3 0 0 1 0 5M19 7l2-1M19 17l2 1"/></svg>',
+    tip:'<svg viewBox="0 0 24 24"><path d="M5 19l9-9"/><path d="M14 4l1 2.5L17.5 7.5 15 8.5 14 11l-1-2.5L10.5 7.5 13 6.5z"/><circle cx="19" cy="14" r="1"/><circle cx="8" cy="5" r=".9"/></svg>',
+    friends:'<svg viewBox="0 0 24 24"><circle cx="9" cy="8.5" r="3"/><circle cx="16.5" cy="9.5" r="2.4"/><path d="M3.5 19c.8-3.2 3-5 5.5-5s4.7 1.8 5.5 5M14.5 14.3c2.6-.7 5 .9 6 4.7"/></svg>'
+  };
 
   /* ---------- open / close ---------- */
-  async function open(){ if (on) return; on = true; document.body.classList.add("bp-on"); tab = "home"; stack = [];
-    root = document.createElement("div"); root.id = "bp"; document.body.appendChild(root);
+  // the console lives in its own shadow root, so the store's CSS can't change it (and its CSS can't leak out)
+  async function loadSheet(){ if (sheet) return sheet; sheet = new CSSStyleSheet();
+    try { const u = new URL("bp.css?v=3", import.meta.url); sheet.replaceSync(await (await fetch(u)).text()); } catch(e) {} return sheet; }
+  async function open(){ if (on) return; on = true; document.body.classList.add("bp-on"); pages = []; stack = []; space = "games"; sel.games = -1;
+    host = document.createElement("div"); host.id = "bpHost"; host.className = "nomouse"; document.body.appendChild(host);
+    root = host.attachShadow({mode:"open"}); root.adoptedStyleSheets = [await loadSheet()];
     if (PS && PS.fullscreen) PS.fullscreen(true).catch(() => {}); else { try { document.documentElement.requestFullscreen(); } catch(e) {} }
     document.addEventListener("keydown", key, true); root.addEventListener("mousemove", wake); root.addEventListener("mouseover", hover);
+    root.addEventListener("wheel", wheel, {passive:false});
     raf = requestAnimationFrame(poll); lastRun = Object.assign({}, S().RUNNING);
+    if (PS && PS.onProgress) unProg = PS.onProgress(p => { if (!on || !p) return;
+      if (p.phase === "done") notify(I.dl, (H.keyTitle(p.id) || "") + " · اكتمل التحميل");
+      else if (p.phase === "error") notify(I.dl, "ما اكتمل التحميل: " + (H.keyTitle(p.id) || ""));
+      const d = root && root.querySelector(`[data-progk="${CSS.escape(p.id)}"]`); if (d && p.total) d.style.width = H.pct(p) + "%"; });
     try { if (PS && PS.getSettings) Object.assign(ST, await PS.getSettings()); } catch(e) {}
-    draw(); beep("open"); }
-  function close(){ if (!on) return; on = false; document.body.classList.remove("bp-on"); if (root) root.remove(); root = null; stack = [];
-    document.removeEventListener("keydown", key, true); cancelAnimationFrame(raf);
+    fresh = true; draw(); beep("open"); }
+  function close(){ if (!on) return; on = false; document.body.classList.remove("bp-on"); stopWall(); if (host) host.remove(); host = null; root = null; pages = []; stack = [];
+    document.removeEventListener("keydown", key, true); cancelAnimationFrame(raf); if (unProg) { unProg(); unProg = null; }
     if (PS && PS.fullscreen) PS.fullscreen(false).catch(() => {}); else { try { if (document.fullscreenElement) document.exitFullscreen(); } catch(e) {} }
     if (location.hash === "#bigpicture") location.hash = "#library"; }
-  function wake(){ if (!root) return; root.classList.remove("nomouse"); clearTimeout(hideT); hideT = setTimeout(() => root && root.classList.add("nomouse"), 3000); }
-  function hover(e){ const t = e.target.closest("[data-bp]"); if (t && !t.disabled && document.activeElement !== t && !root.classList.contains("nomouse")) t.focus({preventScroll:true}); }
+  function wake(){ if (!host) return; host.classList.remove("nomouse"); clearTimeout(hideT); hideT = setTimeout(() => host && host.classList.add("nomouse"), 3000); }
+  function hover(e){ const t = e.target.closest("[data-bp]"); if (t && !t.disabled && root.activeElement !== t && !host.classList.contains("nomouse") && inScope(t)) focusEl(t, true); }
+  function wheel(e){ const r = e.target.closest(".ps-row"); if (r && !stack.length && !pages.length) { e.preventDefault(); const it = rowItems(), i = cur(); const n = Math.max(0, Math.min(it.length - 1, i + (e.deltaY > 0 || e.deltaX > 0 ? 1 : -1))); focusTile(n); } }
+
+  /* ---------- notifications (top corner, like the PS5) ---------- */
+  function notify(icon, text){ if (!on || !root) return; beep("note"); const id = Math.random().toString(36).slice(2);
+    toasts.push({id, icon, text}); drawToasts(); setTimeout(() => { toasts = toasts.filter(t => t.id !== id); drawToasts(); }, 4500); }
+  function drawToasts(){ const b = root && root.querySelector("#psToasts"); if (!b) return;
+    b.innerHTML = toasts.slice(-3).map(t => `<div class="ps-toast"><span class="ic">${t.icon}</span><span class="tx">${esc(t.text)}</span></div>`).join(""); }
 
   /* ---------- state of a game ---------- */
   function gameState(g, prefer){ const s = S(), eds = ownedEds(g.id).slice().reverse();
     if (prefer && eds.includes(prefer)) eds.unshift(prefer);
     for (const ed of eds) { const [k, inst] = instOf(g.id, ed); if (inst && s.RUNNING[k]) return {k, ed, run:true}; }
     for (const ed of eds) { const [k] = instOf(g.id, ed); if (s.PROGRESS[k]) return {k, ed, prog:s.PROGRESS[k]}; }
-    for (const ed of eds) { const [k, inst] = instOf(g.id, ed); if (inst) return {k, ed, inst:true}; }
+    for (const ed of eds) { const [k, inst] = instOf(g.id, ed); if (inst) return {k, ed, inst:true, info:inst}; }
     return {k:instOf(g.id, eds[0] || "demo")[0], ed:eds[0], none:true}; }
-  function actBtn(g, prefer, big){ const st = gameState(g, prefer), c = big ? " big" : "";
-    if (st.run) return `<button class="bp-btn stop${c}" data-bp="act" data-a="stop" data-g="${g.id}" data-e="${st.ed}">■ إغلاق</button>`;
-    if (st.prog) return `<button class="bp-btn${c}" data-bp="act" data-a="none" data-g="${g.id}">يحمّل ${H.pct(st.prog)}%</button>`;
-    if (st.inst) return `<button class="bp-btn play${c}" data-bp="act" data-a="play" data-g="${g.id}" data-e="${st.ed}">▶ لعب</button>`;
-    if (st.ed) return `<button class="bp-btn inst${c}" data-bp="act" data-a="install" data-g="${g.id}" data-e="${st.ed}">⬇ تثبيت</button>`;
-    return `<button class="bp-btn buy${c}" data-bp="buy" data-g="${g.id}">🛒 صفحة الشراء</button>`; }
-  const tile = (g, extra = "") => `<button class="bp-tile" data-bp="game" data-g="${g.id}"${extra}><span class="art" data-cover="${g.id}">${S().RUNNING && Object.keys(S().RUNNING).some(k => k.split("--")[0] === g.id) ? '<i class="bp-live">● شغالة</i>' : ""}</span><b>${esc(g.en || g.title)}</b></button>`;
-  const soonTile = x => `<button class="bp-tile soon" data-bp="soon" data-s="${x.id}"><span class="art">${H.soonArt(x)}<i class="bp-soon">قريبًا</i></span><b>${esc(x.title)}</b></button>`;
+  function actBtn(g, prefer){ const st = gameState(g, prefer);
+    if (st.run) return `<button class="ps-btn stop" data-bp="act" data-a="stop" data-g="${g.id}" data-e="${st.ed}">إغلاق اللعبة</button>`;
+    if (st.prog) return `<button class="ps-btn" data-bp="act" data-a="none" data-g="${g.id}">يحمّل <span class="num">${H.pct(st.prog)}%</span></button>`;
+    if (st.inst) return `<button class="ps-btn play" data-bp="act" data-a="play" data-g="${g.id}" data-e="${st.ed}">العب</button>`;
+    if (st.ed) return `<button class="ps-btn" data-bp="act" data-a="install" data-g="${g.id}" data-e="${st.ed}">تنزيل</button>`;
+    return `<button class="ps-btn" data-bp="buy" data-g="${g.id}">عرض في المتجر</button>`; }
 
-  /* ---------- screens ---------- */
-  function vHome(){
-    const s = S(), l = mine(), g = H.byId(heroG) || l[0] || GAMES[0]; heroG = g.id;
-    const on2 = Object.entries(s.FRIENDS).filter(([id, f]) => f.status === "ok" && s.online(id));
-    const notOwned = GAMES.filter(x => !x.hidden && !ownedEds(x.id).length);
-    return `<section class="bp-hero" id="bpHero">${heroHTML(g)}</section>
-      ${l.length ? `<h3 class="bp-h">كمّل اللعب</h3><div class="bp-row">${l.map(x => tile(x, ' data-hero="1"')).join("")}</div>` : `<div class="bp-note">مكتبتك فاضية. اختر لعبة من المتجر.</div>`}
-      ${on2.length ? `<h3 class="bp-h">أصدقاء متصلين</h3><div class="bp-row">${on2.map(([id, f]) => friendChip(id, f)).join("")}</div>` : ""}
-      <h3 class="bp-h">من المتجر</h3><div class="bp-row">${notOwned.map(x => tile(x, ' data-hero="1"')).join("")}${H.SOON.slice(0, 10).map(soonTile).join("")}</div>`; }
-  function heroHTML(g){ const m = mins(g.id), lp = last(g.id), own = ownedEds(g.id).length;
-    return `<span class="bp-bg" data-cover="${g.id}"></span><div class="bp-info"><div class="bp-eyebrow">${own ? (lp ? "آخر مرة لعبت: " + ago(lp) : "في مكتبتك") : "من المتجر"}</div><h1>${esc(g.en || g.title)}</h1>
-      <div class="bp-meta">${own ? `<span>${m ? hrs(m) + " لعب" : "ما لعبتها للحين"}</span>` : `<span>${esc(g.tagline || "")}</span>`}</div>
-      <div class="bp-acts">${actBtn(g)}<button class="bp-btn ghost" data-bp="game" data-g="${g.id}">التفاصيل</button></div></div>`; }
-  function ago(t){ const d = (Date.now() - t) / 60000; return d < 60 ? "قبل " + Math.max(1, Math.round(d)) + " دقيقة" : d < 1440 ? "قبل " + Math.round(d / 60) + " ساعة" : "قبل " + Math.round(d / 1440) + " يوم"; }
-  function vLibrary(){ const l = mine();
-    return l.length ? `<div class="bp-grid lib">${l.map(x => tile(x)).join("")}</div>` : `<div class="bp-empty">مكتبتك فاضية.<button class="bp-btn" data-bp="tab" data-t="store">روح للمتجر</button></div>`; }
-  let q = "";
-  function vStore(){ const ql = q.trim().toLowerCase(), m = x => !ql || (x.title + " " + (x.en || "") + " " + (x.genreAr || "")).toLowerCase().includes(ql);
-    const gs = GAMES.filter(x => (!x.hidden || ownedEds(x.id).length) && m(x)), ss = H.SOON.filter(m);
-    return `<div class="bp-search"><button class="bp-input" data-bp="search">${q ? esc(q) : '<span>ابحث عن لعبة…</span>'}</button><span class="bp-hint">${G("y")} بحث</span></div>
-      ${gs.length ? `<h3 class="bp-h">الألعاب</h3><div class="bp-grid">${gs.map(g => { const e = ent(g.id), s = H.saleOf(g.id);
-        return `<button class="bp-card" data-bp="game" data-g="${g.id}"><span class="art" data-cover="${g.id}">${s && !e.best ? `<i class="bp-soon sale">-${s.pct}%</i>` : ""}</span><b>${esc(g.en || g.title)}</b><small>${e.best ? "في مكتبتك ✓" : "من " + money(Math.round(H.lowPrice(g) * 100) / 100) + (s ? " · تخفيض" : " · ديمو مجاني")}</small></button>`; }).join("")}</div>` : ""}
-      ${ss.length ? `<h3 class="bp-h">قريبًا · ${ss.length}</h3><div class="bp-grid">${ss.slice(0, 48).map(x => `<button class="bp-card" data-bp="soon" data-s="${x.id}"><span class="art">${H.soonArt(x)}<i class="bp-soon">قريبًا</i></span><b>${esc(x.title)}</b><small>${esc(x.genreAr)} · ${esc(x.when)}</small></button>`).join("")}</div>` : ""}
-      ${!gs.length && !ss.length ? `<div class="bp-empty">ما لقينا شي باسم «${esc(q)}»</div>` : ""}`; }
-  function friendChip(id, f){ const s = S(), pl = s.playing(id), onl = s.online(id);
-    return `<button class="bp-friend${onl ? " on" : ""}" data-bp="friend" data-f="${id}"><span class="bp-av">${esc((f.username || "?")[0].toUpperCase())}</span><span><b>@${esc(f.username)}</b><small>${pl ? "يلعب " + esc(pl) : onl ? "متصل" : "غير متصل"}</small></span></button>`; }
-  function vFriends(){ const s = S(), fr = Object.entries(s.FRIENDS).filter(([, f]) => f.status === "ok").sort((a, b) => s.online(b[0]) - s.online(a[0]));
-    return fr.length ? `<div class="bp-grid fr">${fr.map(([id, f]) => friendChip(id, f)).join("")}</div>` : `<div class="bp-empty">ما عندك أصدقاء للحين. أضفهم من صفحة الأصدقاء في المتجر.</div>`; }
-  function vDownloads(){ const s = S(), act = Object.entries(s.PROGRESS), ups = H.pendingUpdates ? H.pendingUpdates() : [];
-    if (!PS) return `<div class="bp-empty">التحميلات تشتغل في تطبيق Premium Games على الكمبيوتر.</div>`;
-    return (act.length ? `<h3 class="bp-h">يحمّل الحين</h3><div class="bp-list">${act.map(([k, p]) => `<div class="bp-dl" data-bp="item"><b>${esc(H.keyTitle(k))}</b><div class="bp-bar"><i style="width:${H.pct(p)}%"></i></div><small class="num">${H.progText(p)}</small></div>`).join("")}</div>` : "")
-      + (ups.length ? `<h3 class="bp-h">تحديثات</h3><div class="bp-list">${ups.map(([k]) => `<button class="bp-dl" data-bp="update" data-k="${k}"><b>${esc(H.keyTitle(k))}</b><small>تحديث جاهز · ${G("a")} حدّث</small></button>`).join("")}</div>` : "")
-      + (!act.length && !ups.length ? `<div class="bp-empty">كل ألعابك محدّثة ✓</div>` : ""); }
-  let shots = null;
-  function vShots(){
-    if (!PS || !PS.screenshots) return `<div class="bp-empty">اللقطات في تطبيق Premium Games.</div>`;
-    if (!shots) { shots = []; Promise.all(mine().map(g => PS.screenshots(g.id).then(l => l.map(x => Object.assign(x, {g:g.id}))).catch(() => []))).then(r => { shots = r.flat().sort((a, b) => b.name.localeCompare(a.name)); draw(); }); return `<div class="bp-empty">يحمّل اللقطات…</div>`; }
-    return shots.length ? `<div class="bp-grid shots">${shots.map((x, i) => `<button class="bp-shot" data-bp="shot" data-i="${i}"><img src="${x.thumb}" alt=""><small>${esc(H.byId(x.g) ? (H.byId(x.g).en || H.byId(x.g).title) : "")} · ${esc(x.name)}</small></button>`).join("")}</div>`
-      : `<div class="bp-empty">ما عندك لقطات. اضغط F12 وأنت تلعب.</div>`; }
-  function vSettings(){ const t = (k, n, d) => `<button class="bp-set" data-bp="set" data-k="${k}"><span><b>${n}</b><small>${d}</small></span><i class="sw${ST[k] ? " on" : ""}"></i></button>`;
-    const gl = {auto:"تلقائي حسب اليد", xbox:"إكس بوكس (A B X Y)", ps:"بلايستيشن (✕ ○ □ △)"};
-    return `<div class="bp-list set">
-      ${PS ? t("consoleBoot", "شغّل الكمبيوتر على وضع الكونسل", "أول ما يشتغل الويندوز يفتح Premium Games على هالشاشة، مثل جهاز ألعاب") : ""}
+  /* ---------- the home row ---------- */
+  function rowItems(){
+    if (space === "media") return [{k:"mhub", n:"اكتشف"}, {k:"gallery", n:"معرض الوسائط"}, {k:"clips", n:"المقاطع"}, ...(PS && PS.engine ? [{k:"engine", n:"Premium Engine"}] : [])];
+    return [{k:"store", n:"المتجر"}, {k:"welcome", n:"الترحيب"}, ...mine().slice(0, 14).map(g => ({k:"game", g:g.id, n:g.en || g.title})), {k:"library", n:"مكتبة الألعاب"}];
+  }
+  const cur = () => { const it = rowItems(); let i = sel[space]; if (i < 0) i = space === "games" ? (it.findIndex(x => x.k === "game") >= 0 && mine().some(g => last(g.id)) ? it.findIndex(x => x.k === "game") : 1) : 0; return Math.max(0, Math.min(it.length - 1, i)); };
+  function tileHTML(x, i){ const c = i === cur() ? " sel" : "";
+    if (x.k === "game") return `<button class="ps-t game${c}" data-bp="tile" data-i="${i}" data-g="${x.g}"><span class="art" data-cover="${x.g}"></span>${running(x.g) ? '<i class="live"></i>' : ""}</button>`;
+    const ic = {store:I.store, welcome:I.hub, library:I.lib, mhub:I.media, gallery:I.shot, clips:I.clip, engine:I.eng}[x.k];
+    return `<button class="ps-t sys ${x.k}${c}" data-bp="tile" data-i="${i}"><span class="art">${ic}</span></button>`; }
+  function labelHTML(x){ if (!x) return "";
+    if (x.k !== "game") return `<span class="ps-lbl sys">${esc(x.n)}</span>`;
+    const g = H.byId(x.g), st = gameState(g), ed = st.ed && ED_TAG[st.ed];
+    return `<span class="ps-lbl"><i class="plat">PC</i><b>${title(g)}</b>${ed ? `<span class="ed">${esc(ed)}</span>` : ""}${running(x.g) ? '<span class="ed run">شغّالة</span>' : ""}</span>`; }
+
+  /* the area under the row changes with the focused tile */
+  function hubHTML(x){
+    if (!x) return "";
+    if (x.k === "welcome") return widgetsHTML();
+    if (x.k === "game") return gameHubHTML(H.byId(x.g));
+    if (x.k === "store") { const deals = GAMES.filter(g => !g.hidden && H.saleOf(g.id)), news = GAMES.filter(g => !g.hidden && !ownedEds(g.id).length);
+      return `<div class="ps-hub"><div class="ps-hubtitle">المتجر</div><div class="ps-acts"><button class="ps-btn play" data-bp="page" data-p="store">افتح المتجر</button></div>
+        <div class="ps-cards">${[...deals, ...news].filter((g, i, a) => a.indexOf(g) === i).slice(0, 6).map(g => { const s = H.saleOf(g.id);
+          return `<button class="ps-card art" data-bp="gpage" data-g="${g.id}"><span class="cv" data-cover="${g.id}"></span><span class="cap"><b>${title(g)}</b><small>${s ? "خصم " + s.pct + "% · " + H.saleLeft(g.id) : esc(g.tagline || "")}</small></span></button>`; }).join("")}
+        ${H.SOON.slice(0, 3).map(s => `<button class="ps-card art" data-bp="soon" data-s="${s.id}"><span class="cv">${H.soonArt(s)}</span><span class="cap"><b>${esc(s.title)}</b><small>قريبًا · ${esc(s.when)}</small></span></button>`).join("")}</div></div>`; }
+    if (x.k === "library") { const own = mine(), inst = own.filter(g => gameState(g).inst || gameState(g).run);
+      return `<div class="ps-hub"><div class="ps-hubtitle">مكتبة الألعاب</div><div class="ps-acts"><button class="ps-btn play" data-bp="page" data-p="library">افتح المكتبة</button></div>
+        <div class="ps-cards"><div class="ps-card info"><b class="num">${inst.length}</b><small>مثبّتة</small></div><div class="ps-card info"><b class="num">${own.length}</b><small>في مكتبتك</small></div><div class="ps-card info"><b class="num">${LISTS.all().length}</b><small>قوائم الألعاب</small></div></div></div>`; }
+    if (x.k === "mhub") return `<div class="ps-hub media"><div class="ps-banner" id="psBanner">${bannerHTML()}</div><div class="ps-sec">من أجلك</div><div class="ps-cards" id="psForYou">${forYouHTML()}</div></div>`;
+    if (x.k === "gallery") return `<div class="ps-hub"><div class="ps-hubtitle">معرض الوسائط</div><p class="ps-sub">كل لقطات الشاشة من ألعابك. اضغط F12 وأنت تلعب.</p><div class="ps-acts"><button class="ps-btn play" data-bp="page" data-p="gallery">افتح</button></div></div>`;
+    if (x.k === "clips") return `<div class="ps-hub"><div class="ps-hubtitle">المقاطع</div><p class="ps-sub">سجّل وأنت تلعب بـ F9، والمقاطع تنحفظ في مجلد الفيديوهات.</p><div class="ps-acts"><button class="ps-btn play" data-bp="clips">افتح المجلد</button></div></div>`;
+    if (x.k === "engine") return `<div class="ps-hub"><div class="ps-hubtitle">Premium Engine</div><p class="ps-sub">اصنع ألعابك للكمبيوتر. يفتح المحرر على سطح المكتب.</p><div class="ps-acts"><button class="ps-btn play" data-bp="engine">افتح المحرك</button></div></div>`;
+    return ""; }
+
+  function gameHubHTML(g){ const st = gameState(g), m = mins(g.id), lp = last(g.id), ach = H.achOf(g.id), s = S();
+    const fr = Object.entries(s.FRIENDS).filter(([id, f]) => f.status === "ok" && s.playing(id) && (s.playing(id) === (g.en || g.title) || s.playing(id) === g.title));
+    return `<div class="ps-hub game"><div class="ps-logo">${title(g)}</div>
+      <div class="ps-acts">${actBtn(g)}<button class="ps-btn icon" data-bp="menu" data-g="${g.id}" aria-label="خيارات">${I.more}</button></div>
+      <div class="ps-cards">
+        <div class="ps-card fr"><div class="avs">${fr.slice(0, 5).map(([, f]) => `<i>${esc((f.username || "?")[0].toUpperCase())}</i>`).join("") || '<i class="none">·</i>'}${fr.length > 5 ? `<i class="more">${fr.length}</i>` : ""}</div><b>${fr.length ? "أصدقاء يلعبون هذه اللعبة" : "ما فيه أصدقاء يلعبونها الحين"}</b></div>
+        ${ach.all ? `<button class="ps-card tro" data-bp="gpage" data-g="${g.id}"><span class="ic">${I.trophy}</span><b class="num">${ach.got}/${ach.all}</b><small>التروفيات</small><span class="bar"><i style="width:${Math.round(ach.got / ach.all * 100)}%"></i></span></button>` : ""}
+        <div class="ps-card info"><b class="num">${m ? hrs(m) : "—"}</b><small>وقت اللعب${lp ? " · آخر مرة " + ago(lp) : ""}</small></div>
+        <button class="ps-card info" data-bp="gpage" data-g="${g.id}"><b>تفاصيل اللعبة</b><small>${esc(g.tagline || "")}</small></button>
+        ${st.prog ? `<div class="ps-card info"><b>يحمّل</b><span class="bar"><i data-progk="${st.k}" style="width:${H.pct(st.prog)}%"></i></span></div>` : ""}
+      </div></div>`; }
+
+  let SHOTS = null, DISK = null, rowSig = "";
+  function loadShots(){ if (SHOTS || !PS || !PS.screenshots) return; SHOTS = [];
+    Promise.all(mine().map(g => PS.screenshots(g.id).then(l => l.map(x => Object.assign(x, {g:g.id}))).catch(() => []))).then(r => { SHOTS = r.flat().sort((a, b) => b.name.localeCompare(a.name)); if (on) softRefresh(); }); }
+  function bannerHTML(){ loadShots(); const x = SHOTS && SHOTS[0];
+    return x ? `<button class="ps-banner-in" data-bp="shot" data-i="0"><img src="${x.thumb}" alt=""><span class="cap"><b>آخر لقطة</b><small><bdi dir="ltr">${esc((H.byId(x.g) || {}).en || "")}</bdi> · <bdi dir="ltr">${esc(x.name)}</bdi></small></span></button>`
+      : `<div class="ps-banner-in empty"><b>اكتشف</b><small>لقطاتك ومقاطعك تطلع هنا. اضغط F12 وأنت تلعب.</small></div>`; }
+  function forYouHTML(){ loadShots(); return SHOTS && SHOTS.length ? SHOTS.slice(1, 9).map((x, i) => `<button class="ps-card art" data-bp="shot" data-i="${i + 1}"><img class="cv" src="${x.thumb}" alt=""></button>`).join("") : ""; }
+
+  function widgetsHTML(){
+    const s = S(), onl = Object.entries(s.FRIENDS).filter(([id, f]) => f.status === "ok" && s.online(id));
+    const act = Object.entries(s.FRIENDS).filter(([id, f]) => f.status === "ok" && s.playing(id));
+    const pads = navigator.getGamepads ? [...navigator.getGamepads()].filter(Boolean) : [];
+    const inst = H.installed ? Object.values(H.installed()) : [], gamesBytes = inst.reduce((a, v) => a + (v.size || 0), 0);
+    if (!DISK && PS && PS.disk) PS.disk().then(d => { DISK = d; if (on) softRefresh(); }).catch(() => { DISK = {}; });
+    const tot = DISK && DISK.total, free = DISK && DISK.free, other = tot ? Math.max(0, tot - free - gamesBytes) : 0;
+    const sale = GAMES.find(g => !g.hidden && H.saleOf(g.id)), feat = sale || GAMES.find(g => !g.hidden && !ownedEds(g.id).length) || GAMES[0];
+    const soon = H.SOON[0];
+    return `<div class="ps-widgets">
+      <div class="ps-col">
+        <div class="ps-w pads">${[0, 1, 2].map(i => { const p = pads[i]; return `<span class="ring${p ? " on" : ""}">${p ? `<b class="num">${i + 1}</b>` : ""}${I.pad}</span>`; }).join("")}</div>
+        <div class="ps-w store-w"><h4><span class="ic">${I.dl}</span> تخزين الجهاز</h4>
+          ${tot ? `<div class="kv big"><span>المساحة الخالية</span><b>${GB(free)}</b></div><div class="sbar"><i class="a" style="width:${gamesBytes / tot * 100}%"></i><i class="c" style="width:${other / tot * 100}%"></i></div>` : ""}
+          <div class="kv"><span><i class="dot a"></i>الألعاب</span><b>${GB(gamesBytes)}</b></div>${tot ? `<div class="kv"><span><i class="dot c"></i>أخرى</span><b>${GB(other)}</b></div>` : ""}
+          <div class="kv"><span><i class="dot b"></i>ألعاب مثبتة</span><b class="num">${inst.length}</b></div></div>
+      </div>
+      <button class="ps-w news" data-bp="${sale ? "gpage" : "soon"}" ${sale ? `data-g="${feat.id}"` : `data-s="${soon ? soon.id : ""}"`}>
+        <span class="cv"${sale ? ` data-cover="${feat.id}"` : ""}>${sale ? "" : soon ? H.soonArt(soon) : ""}</span>
+        <h4><span class="ic">${I.news}</span> الأخبار</h4><span class="cap"><b class="ltr">${sale ? esc(feat.en || feat.title) : soon ? esc(soon.title) : ""}</b><small>${sale ? "خصم " + H.saleOf(feat.id).pct + "% · " + H.saleLeft(feat.id) : soon ? "قريبًا · " + esc(soon.when) : ""}</small></span></button>
+      <div class="ps-col">
+        <button class="ps-w frw" data-bp="page" data-p="friends"><h4><span class="ic">${I.friends}</span> الأصدقاء المتصلون</h4>${onl.length ? `<div class="avs">${onl.slice(0, 6).map(([, f]) => `<i>${esc((f.username || "?")[0].toUpperCase())}</i>`).join("")}</div><small>${onl.length} متصل</small>` : "<small>لا يوجد أصدقاء متصلون.</small>"}</button>
+        <button class="ps-w act" data-bp="page" data-p="friends"><h4><span class="ic">${I.base}</span> نشاط الأصدقاء</h4>${act.length ? act.slice(0, 2).map(([id, f]) => `<div class="kv"><span><b>@${esc(f.username)}</b> يلعب</span><span>${esc(s.playing(id))}</span></div>`).join("") : "<small>ما أحد من أصدقائك يلعب الحين.</small>"}</button>
+      </div>
+      <button class="ps-w feat" data-bp="gpage" data-g="${feat.id}"><span class="cv" data-cover="${feat.id}"></span><h4><span class="ic">${I.store}</span> من المتجر</h4><span class="cap"><b>${title(feat)}</b><small>${ent(feat.id).best ? "في مكتبتك" : "من " + money(Math.round(H.lowPrice(feat) * 100) / 100)}</small></span></button>
+    </div>`; }
+
+  /* ---------- full pages ---------- */
+  let libTab = "installed", q = "";
+  function pageHTML(P){
+    if (P.t === "library") return libraryHTML();
+    if (P.t === "list") { const L = LISTS.all().find(l => l.id === P.id); if (!L) return `<div class="ps-page"><p>القائمة انحذفت.</p></div>`;
+      const gs = L.games.map(H.byId).filter(Boolean);
+      return `<div class="ps-page"><header class="ps-ph"><span class="pic">${I.lib}</span><h1>${esc(L.name)}</h1></header><div class="ps-count"><span>الألعاب: <b class="num">${gs.length}</b></span><span>${G("start")} خيارات القائمة</span></div>
+        <div class="ps-grid">${gs.map(g => coverTile(g, `data-list="${L.id}"`)).join("") || '<p class="ps-empty">القائمة فاضية. أضف ألعاب من زر الخيارات ⋯ على أي لعبة.</p>'}</div></div>`; }
+    if (P.t === "store") { const ql = q.trim().toLowerCase(), m = x => !ql || (x.title + " " + (x.en || "") + " " + (x.genreAr || "")).toLowerCase().includes(ql);
+      const gs = GAMES.filter(x => (!x.hidden || ownedEds(x.id).length) && m(x)), ss = H.SOON.filter(m);
+      return `<div class="ps-page"><header class="ps-ph"><span class="pic">${I.store}</span><h1>المتجر</h1><button class="ps-search" data-bp="search">${I.search}<span>${q ? esc(q) : "ابحث عن لعبة"}</span></button></header>
+        ${gs.length ? `<div class="ps-grid">${gs.map(g => { const e = ent(g.id), s = H.saleOf(g.id); return coverTile(g, "", e.best ? "في مكتبتك" : s ? "خصم " + s.pct + "%" : "من " + money(Math.round(H.lowPrice(g) * 100) / 100)); }).join("")}</div>` : ""}
+        ${ss.length ? `<div class="ps-sec">قريبًا</div><div class="ps-grid">${ss.slice(0, 40).map(x => `<button class="ps-cover" data-bp="soon" data-s="${x.id}"><span class="art">${H.soonArt(x)}</span><span class="nm">${esc(x.title)}</span></button>`).join("")}</div>` : ""}
+        ${!gs.length && !ss.length ? `<p class="ps-empty">ما لقينا شي باسم «${esc(q)}»</p>` : ""}</div>`; }
+    if (P.t === "search") { const ql = q.trim().toLowerCase(), s = S();
+      const gs = ql ? GAMES.filter(x => (!x.hidden || ownedEds(x.id).length) && (x.title + " " + (x.en || "")).toLowerCase().includes(ql)) : [];
+      const fr = ql ? Object.entries(s.FRIENDS).filter(([, f]) => f.status === "ok" && (f.username || "").toLowerCase().includes(ql)) : [];
+      return `<div class="ps-page"><header class="ps-ph"><span class="pic">${I.search}</span><button class="ps-search wide" data-bp="search"><span>${q ? esc(q) : "ابحث في الألعاب والأصدقاء"}</span></button></header>
+        ${gs.length ? `<div class="ps-sec">الألعاب</div><div class="ps-grid">${gs.map(g => coverTile(g)).join("")}</div>` : ""}
+        ${fr.length ? `<div class="ps-sec">الأصدقاء</div><div class="ps-list">${fr.map(([id, f]) => friendRow(id, f)).join("")}</div>` : ""}
+        ${ql && !gs.length && !fr.length ? `<p class="ps-empty">ما فيه نتائج لـ «${esc(q)}»</p>` : ""}${!ql ? `<p class="ps-empty">اكتب اسم لعبة أو صديق.</p>` : ""}</div>`; }
+    if (P.t === "friends") { const s = S(), fr = Object.entries(s.FRIENDS).filter(([, f]) => f.status === "ok").sort((a, b) => s.online(b[0]) - s.online(a[0]));
+      return `<div class="ps-page"><header class="ps-ph"><span class="pic">${I.base}</span><h1>قاعدة الألعاب</h1></header><div class="ps-count"><span>الأصدقاء: <b class="num">${fr.length}</b></span><span>متصل: <b class="num">${fr.filter(([id]) => s.online(id)).length}</b></span></div>
+        <div class="ps-list">${fr.map(([id, f]) => friendRow(id, f)).join("") || '<p class="ps-empty">ما عندك أصدقاء للحين. أضفهم من المتجر.</p>'}</div></div>`; }
+    if (P.t === "gallery") { loadShots();
+      return `<div class="ps-page"><header class="ps-ph"><span class="pic">${I.shot}</span><h1>معرض الوسائط</h1></header>
+        ${!PS || !PS.screenshots ? '<p class="ps-empty">المعرض في تطبيق Premium Games.</p>' : !SHOTS ? '<p class="ps-empty">يحمّل…</p>' : SHOTS.length ? `<div class="ps-count"><span>اللقطات: <b class="num">${SHOTS.length}</b></span></div><div class="ps-grid shots">${SHOTS.map((x, i) => `<button class="ps-cover shot" data-bp="shot" data-i="${i}"><img src="${x.thumb}" alt=""><span class="nm">${esc((H.byId(x.g) || {}).en || "")}</span></button>`).join("")}</div>` : '<p class="ps-empty">ما عندك لقطات. اضغط F12 وأنت تلعب.</p>'}</div>`; }
+    if (P.t === "downloads") { const s = S(), act = Object.entries(s.PROGRESS), ups = H.pendingUpdates ? H.pendingUpdates() : [];
+      return `<div class="ps-page"><header class="ps-ph"><span class="pic">${I.dl}</span><h1>التنزيلات</h1></header>
+        ${!PS ? '<p class="ps-empty">التنزيلات في تطبيق Premium Games.</p>' : ""}
+        ${act.length ? `<div class="ps-list">${act.map(([k, p]) => `<div class="ps-row-i" data-bp="item"><span class="cvs" data-cover="${(k.split("--")[0])}"></span><span class="t"><b>${esc(H.keyTitle(k))}</b><span class="bar"><i data-progk="${k}" style="width:${H.pct(p)}%"></i></span><small class="num">${H.progText(p)}</small></span></div>`).join("")}</div>` : ""}
+        ${ups.length ? `<div class="ps-sec">تحديثات</div><div class="ps-list">${ups.map(([k]) => `<button class="ps-row-i" data-bp="update" data-k="${k}"><span class="t"><b>${esc(H.keyTitle(k))}</b><small>تحديث جاهز · ${G("a")} حدّث</small></span></button>`).join("")}</div>` : ""}
+        ${PS && !act.length && !ups.length ? '<p class="ps-empty">ما فيه تنزيلات. كل ألعابك محدّثة ✓</p>' : ""}</div>`; }
+    if (P.t === "settings") return settingsHTML();
+    if (P.t === "profile") return profileHTML();
+    if (P.t === "game") return gamePageHTML(P);
+    if (P.t === "soon") { const x = H.SOON.find(s => s.id === P.s) || {};
+      return `<div class="ps-page gp"><span class="gbg">${H.soonArt(x)}</span><div class="ginfo"><div class="eyebrow">قريبًا · ${esc(x.genreAr || "")}</div><h1>${esc(x.title || "")}</h1><p>${esc(x.tagline || "")}</p>
+        <div class="ps-cards"><div class="ps-card info"><b>${esc(x.when || "")}</b><small>موعد الإصدار</small></div></div></div></div>`; }
+    return ""; }
+  const coverTile = (g, extra = "", sub = "") => `<button class="ps-cover" data-bp="gpage" data-g="${g.id}" ${extra}><span class="art" data-cover="${g.id}"></span>${running(g.id) ? '<i class="live"></i>' : ""}<span class="nm">${title(g)}${sub ? `<small>${esc(sub)}</small>` : ""}</span></button>`;
+  function friendRow(id, f){ const s = S(), pl = s.playing(id), onl = s.online(id);
+    return `<button class="ps-row-i fr${onl ? " on" : ""}" data-bp="friend" data-f="${id}"><span class="av">${esc((f.username || "?")[0].toUpperCase())}</span><span class="t"><b>@${esc(f.username)}</b><small>${pl ? "يلعب " + esc(pl) : onl ? "متصل" : "غير متصل"}</small></span></button>`; }
+  function libraryHTML(){ const own = mine(), all = GAMES.filter(g => !g.hidden || ownedEds(g.id).length);
+    let gs = libTab === "installed" ? own.filter(g => { const s = gameState(g); return s.inst || s.run; }) : libTab === "owned" ? own : all;
+    if (ST.sort === "az") gs = gs.slice().sort((a, b) => (a.en || a.title).localeCompare(b.en || b.title));
+    const lists = LISTS.all();
+    return `<div class="ps-page lib"><aside class="ps-side"><button class="ps-ib" data-bp="search" aria-label="بحث">${I.search}</button><button class="ps-ib" data-bp="sort" aria-label="فرز">${I.sort}</button>${libTab === "owned" ? `<button class="ps-ib" data-bp="newlist" aria-label="قائمة جديدة">${I.addlist}</button>` : ""}</aside>
+      <header class="ps-ph"><span class="pic">${I.lib}</span><h1>مكتبة الألعاب</h1></header>
+      <nav class="ps-tabs">${[["installed","مثبّت"],["owned","مكتبتك"],["all","كل الألعاب"]].map(([k, n]) => `<button class="ps-tab${libTab === k ? " on" : ""}" data-bp="libtab" data-t="${k}">${n}</button>`).join("")}<span class="hint">${G("lb")}${G("rb")}</span></nav>
+      ${libTab === "owned" && lists.length ? `<div class="ps-count"><span>قوائم الألعاب: <b class="num">${lists.length}</b></span></div><div class="ps-lists">${lists.map(l => `<button class="ps-listc" data-bp="list" data-id="${l.id}"><span class="cvs">${l.games.slice(0, 3).map(id => `<span data-cover="${id}"></span>`).join("")}</span><span class="nm"><b>${esc(l.name)}</b><small class="num">${l.games.length} ألعاب</small></span></button>`).join("")}</div>` : ""}
+      <div class="ps-count"><span>${libTab === "installed" ? "تخزين الجهاز" : "الكل"}: <b class="num">${gs.length}</b></span><span>فرز حسب: ${ST.sort === "az" ? "الاسم (A - Z)" : "الأحدث"}</span></div>
+      <div class="ps-grid">${gs.map(g => coverTile(g)).join("") || `<p class="ps-empty">${libTab === "installed" ? "ما فيه ألعاب مثبّتة." : "مكتبتك فاضية. روح للمتجر."}</p>`}</div></div>`; }
+  function gamePageHTML(P){ const g = H.byId(P.g), eds = ownedEds(g.id), ach = H.achOf(g.id), ed = P.ed || gameState(g).ed, e = (g.editions || []).find(x => x.id === ed);
+    return `<div class="ps-page gp"><span class="gbg" data-cover="${g.id}"></span><div class="ginfo">
+      <div class="eyebrow">${eds.length ? "في مكتبتك" : "من المتجر"}${g.tags ? " · " + g.tags.map(esc).join(" · ") : ""}</div><h1>${title(g)}</h1>
+      ${eds.length > 1 ? `<div class="eds">${eds.map(x => `<span class="${x === ed ? "on" : ""}">${esc(ED_TAG[x] || x)}</span>`).join("")}<small>${G("x")} غيّر النسخة</small></div>` : ""}
+      <p>${esc(g.tagline || "")}</p>
+      <div class="ps-acts">${actBtn(g, ed)}<button class="ps-btn icon" data-bp="menu" data-g="${g.id}" aria-label="خيارات">${I.more}</button>${eds.length ? "" : `<button class="ps-btn ghost" data-bp="buy" data-g="${g.id}">الإصدارات والأسعار</button>`}</div>
+      <div class="ps-cards">${eds.length ? `<div class="ps-card info"><b class="num">${mins(g.id) ? hrs(mins(g.id)) : "—"}</b><small>وقت اللعب</small></div><div class="ps-card info"><b>${last(g.id) ? ago(last(g.id)) : "—"}</b><small>آخر مرة</small></div>` : `<div class="ps-card info"><b class="num">${money(Math.round(H.lowPrice(g) * 100) / 100)}</b><small>يبدأ من${H.saleOf(g.id) ? " · خصم " + H.saleOf(g.id).pct + "%" : ""}</small></div>`}
+        ${ach.all ? `<div class="ps-card info"><b class="num">${ach.got}/${ach.all}</b><small>التروفيات</small></div>` : ""}${e && e.d ? `<div class="ps-card info"><b>${esc(e.d)}</b><small>${esc(e.name)}</small></div>` : ""}</div>
+      ${ach.all ? `<div class="achs">${ach.list.slice(0, 30).map(a => `<span class="${a.got ? "got" : ""}" title="${esc(a.desc)}">${ach.icon(a.tier, a.got)} ${esc(a.name)}</span>`).join("")}${ach.all > 30 ? `<span>+${ach.all - 30}</span>` : ""}</div>` : ""}
+      </div></div>`; }
+  function settingsHTML(){ const t = (k, n, d) => `<button class="ps-set" data-bp="set" data-k="${k}"><span><b>${n}</b><small>${d}</small></span><i class="sw${ST[k] ? " on" : ""}"></i></button>`;
+    const gl = {auto:"تلقائي حسب اليد", xbox:"إكس بوكس (A B X Y)", ps:"بلايستيشن (✕ ○ □ △)"}, wl = {autumn:"خريف", night:"ليل", aurora:"شفق"};
+    return `<div class="ps-page"><header class="ps-ph"><span class="pic">${I.gear}</span><h1>الإعدادات</h1></header><div class="ps-list set">
+      ${PS ? t("consoleBoot", "شغّل الكمبيوتر على وضع الكونسل", "أول ما يشتغل الويندوز يفتح هالشاشة، مثل جهاز ألعاب") : ""}
       ${PS ? t("startup", "يشتغل مع الويندوز", "التطبيق يجهز بالخلفية عشان ألعابك تفتح بسرعة") : ""}
       ${PS ? t("consolePad", "افتح وضع الكونسل لما توصل يد تحكم", "توصّل اليد وتطلع لك هالشاشة على طول") : ""}
       ${t("sounds", "أصوات الواجهة", "صوت خفيف لما تتنقل وتختار")}
-      <button class="bp-set" data-bp="glyph"><span><b>شكل أزرار اليد</b><small>${gl[ST.glyphs] || gl.auto}</small></span><i class="bp-val">تغيير</i></button>
-      <button class="bp-set" data-bp="test"><span><b>اختبر يد التحكم</b><small>شوف كل زر وعصا تشتغل</small></span><i class="bp-val">${G("a")}</i></button>
-      <button class="bp-set" data-bp="exit"><span><b>اطلع من وضع الكونسل</b><small>ترجع لشاشة المتجر العادية</small></span><i class="bp-val">⏏</i></button></div>`; }
+      <button class="ps-set" data-bp="wall"><span><b>الخلفية</b><small>${wl[ST.wall] || wl.autumn}</small></span><i class="val">تغيير</i></button>
+      <button class="ps-set" data-bp="glyph"><span><b>شكل أزرار اليد</b><small>${gl[ST.glyphs] || gl.auto}</small></span><i class="val">تغيير</i></button>
+      <button class="ps-set" data-bp="test"><span><b>اختبر يد التحكم</b><small>شوف كل زر وعصا تشتغل</small></span><i class="val">${G("a")}</i></button>
+      <button class="ps-set" data-bp="exit"><span><b>اطلع من وضع الكونسل</b><small>ترجع لشاشة المتجر العادية</small></span><i class="val">⏏</i></button></div></div>`; }
+  function profileHTML(){ const s = S(), p = s.PROFILE || {}, own = mine(), tot = own.reduce((a, g) => a + mins(g.id), 0), tro = own.reduce((a, g) => a + H.achOf(g.id).got, 0);
+    const n = p.name || (s.user && s.user.displayName) || "ضيف";
+    return `<div class="ps-page"><div class="ps-prof"><span class="bigav">${esc((p.username || n || "?")[0].toUpperCase())}</span><div><h1>${esc(n)}</h1><b class="ltr">${p.username ? "@" + esc(p.username) : ""}</b><small>${p.pid ? "PG ID " + esc(p.pid) : ""}</small></div></div>
+      <div class="ps-cards"><div class="ps-card info"><b class="num">${own.length}</b><small>ألعاب</small></div><div class="ps-card info"><b class="num">${hrs(tot)}</b><small>وقت اللعب</small></div><div class="ps-card info"><b class="num">${tro}</b><small>تروفي</small></div><div class="ps-card info"><b class="num">${Object.values(s.FRIENDS).filter(f => f.status === "ok").length}</b><small>أصدقاء</small></div></div>
+      <div class="ps-acts"><button class="ps-btn" data-bp="page" data-p="friends">الأصدقاء</button><button class="ps-btn ghost" data-bp="exit">اطلع من وضع الكونسل</button></div></div>`; }
 
-  /* ---------- layers (game page, keyboard, quick menu, power, viewer) ---------- */
+  /* ---------- overlays ---------- */
+  const CC = [["switcher","المبدل",I.switcher],["base","قاعدة الألعاب",I.base],["profile","الملف الشخصي",null],["notes","الإشعارات",I.bell],["downloads","التنزيلات",I.dl],["home","الرئيسية",I.home],["sound","الأصوات",null],["pads","وحدات التحكم",I.pad],["power","الطاقة",I.power]];
   function layerHTML(L){
-    if (L.t === "game") { const g = H.byId(L.g), eds = ownedEds(g.id), m = mins(g.id), lp = last(g.id), ach = H.achOf(g.id);
-      const ed = L.ed || gameState(g).ed, e = g.editions.find(x => x.id === ed);
-      return `<div class="bp-page"><span class="bp-bg" data-cover="${g.id}"></span><div class="bp-pinfo">
-        <div class="bp-eyebrow">${eds.length ? "في مكتبتك" : "من المتجر"}${g.tags ? " · " + g.tags.map(esc).join(" · ") : ""}</div><h1>${esc(g.en || g.title)}</h1>
-        ${eds.length > 1 ? `<div class="bp-eds">${eds.map(x => `<span class="${x === ed ? "on" : ""}">${esc(ED_TAG[x] || x)}</span>`).join("")}<small>${G("x")} غيّر النسخة</small></div>` : ed ? `<div class="bp-eds"><span class="on">${esc(ED_TAG[ed] || ed)}</span></div>` : ""}
-        <p class="bp-desc">${esc(g.tagline || "")}</p>
-        <div class="bp-acts">${actBtn(g, ed, true)}${eds.length ? "" : `<button class="bp-btn ghost" data-bp="buy" data-g="${g.id}">الإصدارات والأسعار</button>`}</div>
-        <div class="bp-stats">${eds.length ? `<div><b>${m ? hrs(m) : "—"}</b><small>وقت اللعب</small></div><div><b>${lp ? ago(lp) : "—"}</b><small>آخر مرة</small></div>` : `<div><b>${money(Math.round(H.lowPrice(g) * 100) / 100)}</b><small>يبدأ من${H.saleOf(g.id) ? " · خصم " + H.saleOf(g.id).pct + "%" : ""}</small></div><div><b>مجاني</b><small>الديمو</small></div>`}
-          ${ach.all ? `<div><b>${ach.got}/${ach.all}</b><small>التروفيات</small></div>` : ""}${e && e.d ? `<div><b>${esc(e.d)}</b><small>${esc(e.name)}</small></div>` : ""}</div>
-        ${ach.all ? `<div class="bp-achs">${ach.list.slice(0, 24).map(a => `<span class="${a.got ? "got" : ""}" title="${esc(a.desc)}">${ach.icon(a.tier, a.got)} ${esc(a.name)}</span>`).join("")}${ach.all > 24 ? `<span>+${ach.all - 24}</span>` : ""}</div>` : ""}
-        </div></div>`; }
-    if (L.t === "soon") { const x = H.SOON.find(s => s.id === L.s);
-      return `<div class="bp-page soonp"><span class="bp-bg">${H.soonArt(x)}</span><div class="bp-pinfo"><div class="bp-eyebrow">قريبًا · ${esc(x.genreAr)}</div><h1>${esc(x.title)}</h1><p class="bp-desc">${esc(x.tagline)}</p>
-        <div class="bp-stats"><div><b>${esc(x.when)}</b><small>موعد الإصدار</small></div></div><div class="bp-acts"><button class="bp-btn ghost" data-bp="back">رجوع</button></div></div></div>`; }
+    if (L.t === "cc") { const s = S(), prof = s.PROFILE || {}, n = H.notes().length, run = Object.entries(s.RUNNING);
+      return `<div class="ps-cc">${ccPanelHTML(L)}
+        <nav class="ps-ccbar">${CC.map(([k, nm, ic]) => `<button class="ps-cci${L.panel === k ? " act" : ""}" data-bp="cc" data-k="${k}" data-tip="${nm}">${k === "profile" ? `<span class="av">${esc((prof.username || "?")[0].toUpperCase())}</span>` : k === "sound" ? (ST.sounds ? I.sound : I.mute) : ic}${k === "notes" && n ? `<i class="badge num">${n}</i>` : ""}${k === "switcher" && run.length ? '<i class="dot"></i>' : ""}${k === "downloads" && Object.keys(s.PROGRESS).length ? '<i class="dot"></i>' : ""}</button>`).join("")}</nav>
+        <div class="ps-cctip" id="psTip"></div></div>`; }
+    if (L.t === "menu") { const g = H.byId(L.g), st = gameState(g), eds = ownedEds(g.id), lists = LISTS.all(), inList = L.list;
+      return `<div class="ps-menu"><h3>${title(g)}</h3>
+        <button class="ps-mi" data-bp="gpage" data-g="${g.id}">تفاصيل اللعبة</button>
+        ${eds.length ? `<button class="ps-mi" data-bp="addto" data-g="${g.id}">أضف إلى قائمة ألعاب</button>` : ""}
+        ${inList ? `<button class="ps-mi" data-bp="rmfrom" data-g="${g.id}" data-id="${inList}">احذف من هذي القائمة</button>` : ""}
+        ${st.inst && PS ? `<button class="ps-mi" data-bp="mact" data-a="shortcut" data-k="${st.k}">أيقونة على سطح المكتب</button><button class="ps-mi" data-bp="mact" data-a="folder" data-k="${st.k}">افتح مكان الملفات</button><button class="ps-mi" data-bp="mact" data-a="verify" data-k="${st.k}">تحقّق من ملفات اللعبة</button><button class="ps-mi danger" data-bp="mact" data-a="uninstall" data-k="${st.k}">احذف</button>` : ""}
+        ${st.run ? `<button class="ps-mi danger" data-bp="act" data-a="stop" data-g="${g.id}" data-e="${st.ed}">إغلاق اللعبة</button>` : ""}
+        <button class="ps-mi" data-bp="buy" data-g="${g.id}">صفحة المتجر</button></div>`; }
+    if (L.t === "lists") { const lists = LISTS.all();
+      return `<div class="ps-dlg"><h2>أضف إلى قائمة</h2>${lists.map(l => `<button class="ps-mi${l.games.includes(L.g) ? " sel" : ""}" data-bp="toggleList" data-id="${l.id}" data-g="${L.g}">${esc(l.name)} <small class="num">(${l.games.length})</small></button>`).join("")}<button class="ps-mi" data-bp="newlist" data-g="${L.g}">＋ قائمة جديدة</button></div>`; }
+    if (L.t === "listmenu") return `<div class="ps-menu"><h3>القائمة</h3><button class="ps-mi" data-bp="renlist" data-id="${L.id}">غيّر الاسم</button><button class="ps-mi danger" data-bp="dellist" data-id="${L.id}">احذف القائمة</button></div>`;
     if (L.t === "kbd") return kbdHTML(L);
-    if (L.t === "quick") { const s = S(), run = Object.entries(s.RUNNING), n = H.notes();
-      return `<aside class="bp-quick"><h2>القائمة السريعة</h2>
-        ${run.map(([k, r]) => `<div class="bp-qrun"><b>${esc(r.name || H.keyTitle(k))}</b><small>شغالة الحين</small><button class="bp-btn stop" data-bp="qstop" data-k="${k}">■ أقفل اللعبة</button></div>`).join("")}
-        <h3>الإشعارات${n.length ? ` · ${n.length}` : ""}</h3>${n.length ? n.slice(0, 6).map(x => `<div class="bp-note2">${x.i} ${esc(x.t)}</div>`).join("") : '<div class="bp-note2 muted">ما فيه شي جديد</div>'}
-        <button class="bp-q" data-bp="tab" data-t="friends">👥 الأصدقاء</button><button class="bp-q" data-bp="tab" data-t="downloads">⬇ التحميلات</button>
-        <button class="bp-q" data-bp="set" data-k="sounds">${ST.sounds ? "🔊 الأصوات شغالة" : "🔇 الأصوات مقفلة"}</button>
-        <button class="bp-q" data-bp="power">⏻ الطاقة</button></aside>`; }
-    if (L.t === "power") return `<div class="bp-dlg"><h2>الطاقة</h2>
-        ${PS && PS.power ? `<button class="bp-q" data-bp="pw" data-w="sleep">🌙 وضع السكون</button><button class="bp-q" data-bp="pw" data-w="restart">↻ إعادة تشغيل الكمبيوتر</button><button class="bp-q" data-bp="pw" data-w="shutdown">⏻ إطفاء الكمبيوتر</button><button class="bp-q" data-bp="pw" data-w="desktop">🖥 ارجع لسطح المكتب</button><button class="bp-q" data-bp="pw" data-w="quit">✕ اقفل Premium Games</button>` : ""}
-        <button class="bp-q" data-bp="exit">⏏ اطلع من وضع الكونسل</button></div>`;
-    if (L.t === "confirm") return `<div class="bp-dlg"><h2>${esc(L.title)}</h2><p>${esc(L.text)}</p><button class="bp-q danger" data-bp="yes">${esc(L.ok)}</button><button class="bp-q" data-bp="back">إلغاء</button></div>`;
-    if (L.t === "view") { const x = shots[L.i]; return `<div class="bp-view"><img src="${x.thumb}" alt=""><div class="bp-vcap">${esc(x.name)} · ${L.i + 1}/${shots.length}<button class="bp-btn ghost" data-bp="showshot">افتح في المجلد</button></div></div>`; }
+    if (L.t === "confirm") return `<div class="ps-dlg"><h2>${esc(L.title)}</h2><p>${esc(L.text || "")}</p><button class="ps-mi danger" data-bp="yes">${esc(L.ok)}</button><button class="ps-mi" data-bp="back">إلغاء</button></div>`;
+    if (L.t === "view") { const x = SHOTS[L.i]; return `<div class="ps-view"><img src="${x.thumb}" alt=""><div class="cap">${esc(x.name)} · <span class="num">${L.i + 1}/${SHOTS.length}</span><button class="ps-btn ghost" data-bp="showshot">افتح في المجلد</button></div></div>`; }
     if (L.t === "friend") { const f = S().FRIENDS[L.f] || {}, quick = ["يلا نلعب؟", "دقيقة وجاي", "أحسنت 👏", "باي، أشوفك بعدين"];
-      return `<div class="bp-dlg"><h2>@${esc(f.username || "")}</h2>
-        <button class="bp-q" data-bp="call" data-f="${L.f}">📞 مكالمة صوتية</button>
-        <h3>رسالة سريعة</h3>${quick.map(t => `<button class="bp-q" data-bp="qmsg" data-f="${L.f}" data-m="${esc(t)}">💬 ${esc(t)}</button>`).join("")}
-        <button class="bp-q" data-bp="qtype" data-f="${L.f}">⌨ اكتب رسالة</button></div>`; }
-    if (L.t === "test") return `<div class="bp-dlg wide"><h2>اختبار يد التحكم</h2><div id="bpTest" class="bp-test"></div><p class="muted">اضغط ${G("b")} مرتين ورا بعض للرجوع</p></div>`;
-    if (L.t === "glyph") return `<div class="bp-dlg"><h2>شكل أزرار اليد</h2>${[["auto","تلقائي حسب اليد"],["xbox","إكس بوكس"],["ps","بلايستيشن"]].map(([k, n]) => `<button class="bp-q${ST.glyphs === k ? " sel" : ""}" data-bp="glyphset" data-v="${k}">${n}</button>`).join("")}</div>`;
+      return `<div class="ps-dlg"><h2>@${esc(f.username || "")}</h2><button class="ps-mi" data-bp="call" data-f="${L.f}">📞 مكالمة صوتية</button>
+        ${quick.map(t => `<button class="ps-mi" data-bp="qmsg" data-f="${L.f}" data-m="${esc(t)}">💬 ${esc(t)}</button>`).join("")}<button class="ps-mi" data-bp="qtype" data-f="${L.f}">⌨ اكتب رسالة</button></div>`; }
+    if (L.t === "test") return `<div class="ps-dlg wide"><h2>اختبار يد التحكم</h2><div id="bpTest" class="ps-test"></div><p class="muted">اضغط ${G("b")} مرتين ورا بعض للرجوع</p></div>`;
+    if (L.t === "glyph") return `<div class="ps-dlg"><h2>شكل أزرار اليد</h2>${[["auto","تلقائي حسب اليد"],["xbox","إكس بوكس"],["ps","بلايستيشن"]].map(([k, n]) => `<button class="ps-mi${ST.glyphs === k ? " sel" : ""}" data-bp="glyphset" data-v="${k}">${n}</button>`).join("")}</div>`;
+    if (L.t === "wall") return `<div class="ps-dlg"><h2>الخلفية</h2>${[["autumn","خريف"],["night","ليل"],["aurora","شفق"]].map(([k, n]) => `<button class="ps-mi${ST.wall === k ? " sel" : ""}" data-bp="wallset" data-v="${k}">${n}</button>`).join("")}</div>`;
+    return ""; }
+  function ccPanelHTML(L){ const s = S();
+    const card = (ic, a, b, extra = "", attrs = "") => `<button class="ps-ccc" ${attrs}><span class="ic">${ic}</span>${extra}<span class="cap"><small>${a}</small><b>${b}</b></span></button>`;
+    if (!L.panel) { loadShots(); const sh = SHOTS && SHOTS[0], sale = GAMES.find(g => !g.hidden && H.saleOf(g.id)), run = Object.entries(s.RUNNING)[0];
+      return `<div class="ps-cccards">${run ? card(I.pad, "شغّالة الحين", esc(run[1].name || H.keyTitle(run[0])), "", `data-bp="qstop" data-k="${run[0]}"`) : ""}
+        ${sh ? card(I.shot, "أنشئ مؤخرًا", "لقطة شاشة جديدة", `<img src="${sh.thumb}" alt="">`, `data-bp="shot" data-i="0"`) : ""}
+        ${sale ? card(I.news, "خصم " + H.saleOf(sale.id).pct + "%", title(sale), `<span class="cv" data-cover="${sale.id}"></span>`, `data-bp="gpage" data-g="${sale.id}"`) : ""}
+        ${card(I.tip, "اكتشف", "نصائح وضع الكونسل", "", `data-bp="cc" data-k="tips"`)}</div>`; }
+    if (L.panel === "tips") return `<div class="ps-ccpanel"><h3>نصائح</h3><ul class="tips"><li>${G("guide")} أو F1: مركز التحكم في أي وقت</li><li>${G("start")}: خيارات اللعبة المحددة</li><li>${G("lb")}${G("rb")}: بين الألعاب والوسائط</li><li>${G("y")}: البحث</li><li>F12 وأنت تلعب: لقطة شاشة · F9: سجّل مقطع</li><li>Shift+Tab أو زر اليد الرئيسي داخل اللعبة: قائمة اللعبة</li></ul></div>`;
+    if (L.panel === "switcher") { const run = Object.entries(s.RUNNING), rec = mine().filter(g => last(g.id)).slice(0, 4);
+      return `<div class="ps-ccpanel"><h3>المبدل</h3><div class="ps-cccards">${run.map(([k, r]) => card(I.pad, "شغّالة · " + G("a") + " إغلاق", esc(r.name || H.keyTitle(k)), "", `data-bp="qstop" data-k="${k}"`)).join("")}
+        ${rec.map(g => `<button class="ps-ccc art" data-bp="gpage" data-g="${g.id}"><span class="cv" data-cover="${g.id}"></span><span class="cap"><small>${ago(last(g.id))}</small><b>${title(g)}</b></span></button>`).join("")}${!run.length && !rec.length ? '<p class="ps-empty">ما فيه شي مفتوح.</p>' : ""}</div></div>`; }
+    if (L.panel === "notes") { const n = H.notes();
+      return `<div class="ps-ccpanel"><h3>الإشعارات</h3><div class="ps-list">${n.length ? n.slice(0, 8).map(x => `<div class="ps-row-i note" data-bp="item"><span class="em">${x.i}</span><span class="t"><b>${esc(x.t)}</b></span></div>`).join("") : '<p class="ps-empty">ما فيه إشعارات جديدة.</p>'}</div></div>`; }
+    if (L.panel === "downloads") { const act = Object.entries(s.PROGRESS);
+      return `<div class="ps-ccpanel"><h3>التنزيلات</h3><div class="ps-list">${act.map(([k, p]) => `<div class="ps-row-i" data-bp="item"><span class="t"><b>${esc(H.keyTitle(k))}</b><span class="bar"><i data-progk="${k}" style="width:${H.pct(p)}%"></i></span><small class="num">${H.progText(p)}</small></span></div>`).join("") || '<p class="ps-empty">ما فيه تنزيلات الحين.</p>'}</div><button class="ps-mi" data-bp="page" data-p="downloads">كل التنزيلات والتحديثات</button></div>`; }
+    if (L.panel === "pads") { const pads = navigator.getGamepads ? [...navigator.getGamepads()].filter(Boolean) : [];
+      return `<div class="ps-ccpanel"><h3>وحدات التحكم</h3><div class="ps-list">${pads.map((p, i) => `<div class="ps-row-i" data-bp="item"><span class="em num">${i + 1}</span><span class="t"><b>${/054c|playstation|dualsense|dualshock|wireless controller/i.test(p.id) ? "يد بلايستيشن" : "يد إكس بوكس / عامة"}</b><small class="ltr">${esc(p.id.slice(0, 60))}</small></span></div>`).join("") || '<p class="ps-empty">ما فيه يد متصلة. وصّلها وأضغط أي زر.</p>'}</div>
+        <button class="ps-mi" data-bp="test">اختبر يد التحكم</button><button class="ps-mi" data-bp="glyph">شكل أزرار اليد</button></div>`; }
+    if (L.panel === "power") return `<div class="ps-ccpanel"><h3>الطاقة</h3>
+        ${PS && PS.power ? `<button class="ps-mi" data-bp="pw" data-w="sleep">🌙 وضع السكون</button><button class="ps-mi" data-bp="pw" data-w="restart">↻ إعادة تشغيل الكمبيوتر</button><button class="ps-mi" data-bp="pw" data-w="shutdown">⏻ إطفاء الكمبيوتر</button><button class="ps-mi" data-bp="pw" data-w="desktop">🖥 ارجع لسطح المكتب</button><button class="ps-mi" data-bp="pw" data-w="quit">✕ اقفل Premium Games</button>` : ""}
+        <button class="ps-mi" data-bp="exit">⏏ اطلع من وضع الكونسل</button></div>`;
     return ""; }
 
-  /* on-screen keyboard (Arabic / English), for the controller */
+  /* on-screen keyboard (Arabic / English) */
   const KB = {ar:["ض ص ث ق ف غ ع ه خ ح ج", "ش س ي ب ل ا ت ن م ك ط", "ئ ء ؤ ر ى ة و ز ظ د ذ", "1 2 3 4 5 6 7 8 9 0 ؟"], en:["q w e r t y u i o p", "a s d f g h j k l", "z x c v b n m", "1 2 3 4 5 6 7 8 9 0 ?"]};
-  function kbdHTML(L){ return `<div class="bp-kbd"><div class="bp-kin">${esc(L.v) || `<span>${esc(L.ph || "")}</span>`}<i class="caret"></i></div>
-    ${KB[L.lang].map(r => `<div class="bp-krow">${r.split(" ").map(c => `<button class="bp-k" data-bp="k" data-c="${esc(c)}">${esc(c)}</button>`).join("")}</div>`).join("")}
-    <div class="bp-krow"><button class="bp-k w2" data-bp="klang">${L.lang === "ar" ? "EN" : "عربي"}</button><button class="bp-k w5" data-bp="k" data-c=" ">مسافة</button><button class="bp-k w2" data-bp="kdel">⌫ ${G("x")}</button><button class="bp-k w2 ok" data-bp="kok">تم ${G("start")}</button></div></div>`; }
+  function kbdHTML(L){ return `<div class="ps-kbd"><div class="in" dir="auto">${esc(L.v) || `<span>${esc(L.ph || "")}</span>`}<i class="caret"></i></div>
+    ${KB[L.lang].map(r => `<div class="kr" dir="${L.lang === "ar" ? "rtl" : "ltr"}">${r.split(" ").map(c => `<button class="k" data-bp="k" data-c="${esc(c)}">${esc(c)}</button>`).join("")}</div>`).join("")}
+    <div class="kr"><button class="k w2" data-bp="klang">${L.lang === "ar" ? "EN" : "عربي"}</button><button class="k w5" data-bp="k" data-c=" ">مسافة</button><button class="k w2" data-bp="kdel">⌫ ${G("x")}</button><button class="k w2 ok" data-bp="kok">تم ${G("start")}</button></div></div>`; }
+
+  /* ---------- animated wallpaper (no image files) ---------- */
+  let wall = null;
+  function startWall(){ const c = root && root.querySelector("#psWall"); if (!c) return;
+    if (wall && wall.c === c) return; stopWall();
+    const g = c.getContext("2d"), W = c.width = Math.round(innerWidth / 2), Hh = c.height = Math.round(innerHeight / 2), theme = ST.wall || "autumn";
+    const parts = Array.from({length:theme === "night" ? 140 : 70}, () => ({x:Math.random() * W, y:Math.random() * Hh, s:Math.random(), r:Math.random() * 6.28, v:.2 + Math.random() * .6}));
+    const pal = {autumn:{top:"#3a1e0e", mid:"#a2541c", glow:"rgba(255,190,110,.55)", hill:["#4a2410", "#2a140a", "#160b06"], p:["#f08a24", "#c4401a", "#f6b73c", "#8a2c12"]},
+      night:{top:"#04060f", mid:"#0d1d3d", glow:"rgba(120,160,255,.25)", hill:["#0c1426", "#080e1c", "#050811"], p:["#ffffff", "#bcd2ff"]},
+      aurora:{top:"#020a12", mid:"#073040", glow:"rgba(60,255,190,.25)", hill:["#062126", "#04161a", "#020c0f"], p:["#7fffd4", "#9fd8ff"]}}[theme] || {};
+    wall = {c, t:0}; const draw = () => { if (!wall || wall.c !== c) return; wall.t += 1;
+      const t = wall.t / 60, sky = g.createLinearGradient(0, 0, 0, Hh); sky.addColorStop(0, pal.top); sky.addColorStop(.62, pal.mid); sky.addColorStop(1, pal.hill[2]);
+      g.fillStyle = sky; g.fillRect(0, 0, W, Hh);
+      const rg = g.createRadialGradient(W * .62, Hh * .42, 10, W * .62, Hh * .42, W * .55); rg.addColorStop(0, pal.glow); rg.addColorStop(1, "rgba(0,0,0,0)"); g.fillStyle = rg; g.fillRect(0, 0, W, Hh);
+      if (theme === "aurora") for (let b = 0; b < 3; b++) { g.beginPath(); for (let x = 0; x <= W; x += 8) { const y = Hh * (.22 + b * .07) + Math.sin(x / 90 + t * .6 + b) * 18; x ? g.lineTo(x, y) : g.moveTo(x, y); }
+        g.strokeStyle = `rgba(${b ? "120,200,255" : "60,255,180"},.18)`; g.lineWidth = 26 - b * 6; g.stroke(); }
+      pal.hill.forEach((col, i) => { g.beginPath(); g.moveTo(0, Hh); for (let x = 0; x <= W; x += 10) g.lineTo(x, Hh * (.58 + i * .1) + Math.sin(x / (130 - i * 25) + i * 2) * (28 - i * 6) + Math.sin(x / 41 + i) * 6); g.lineTo(W, Hh); g.fillStyle = col; g.fill(); });
+      for (const p of parts) { p.y += p.v * (theme === "night" ? .15 : 1); p.x += Math.sin(t + p.s * 9) * .5 - (theme === "night" ? 0 : .25); p.r += .02 + p.s * .03;
+        if (p.y > Hh + 10) { p.y = -10; p.x = Math.random() * W; } if (p.x < -10) p.x = W + 10;
+        g.save(); g.translate(p.x, p.y); g.rotate(p.r); g.fillStyle = pal.p[Math.floor(p.s * pal.p.length)];
+        if (theme === "autumn") { g.globalAlpha = .75; g.beginPath(); g.ellipse(0, 0, 2.5 + p.s * 3, 1.3 + p.s * 1.6, 0, 0, 6.28); g.fill(); }
+        else { g.globalAlpha = .35 + .5 * Math.abs(Math.sin(t * 2 + p.s * 20)); g.fillRect(0, 0, 1 + p.s, 1 + p.s); }
+        g.restore(); }
+      wallRaf = requestAnimationFrame(draw); };
+    draw(); }
+  function stopWall(){ cancelAnimationFrame(wallRaf); wall = null; }
 
   /* ---------- drawing ---------- */
+  function topHTML(){ const s = S(), prof = s.PROFILE || {};
+    return `<header class="ps-top"><nav class="spaces"><button class="sp${space === "games" ? " on" : ""}" data-bp="space" data-v="games">الألعاب</button><button class="sp${space === "media" ? " on" : ""}" data-bp="space" data-v="media">وسائط</button></nav>
+      <div class="right"><button class="ps-ib" data-bp="page" data-p="search" aria-label="بحث">${I.search}</button><button class="ps-ib" data-bp="page" data-p="settings" aria-label="الإعدادات">${I.gear}</button>
+      <button class="ps-ib av" data-bp="page" data-p="profile" aria-label="الملف الشخصي">${esc((prof.username || "?")[0].toUpperCase())}${Object.keys(s.PROGRESS).length ? '<i class="spin"></i>' : ""}</button><span class="clock num">${clock()}</span></div></header>`; }
+  function homeHTML(){ const it = rowItems(), i = cur(), x = it[i], bgGame = x && x.k === "game";
+    rowSig = it.map(r => r.k + (r.g || "")).join();
+    return `<div class="ps-bg">${bgGame ? `<span class="gbg" data-cover="${x.g}"></span>` : '<canvas id="psWall"></canvas>'}<i class="shade${bgGame ? " game" : ""}"></i></div>
+      ${topHTML()}<div class="ps-row"><div class="ps-strip" id="psStrip">${it.map(tileHTML).join("")}</div><div id="psLbl">${labelHTML(x)}</div></div>
+      <main class="ps-main" id="psHub">${hubHTML(x)}</main>`; }
   function draw(){
     if (!on || !root) return;
-    const s = S(), prof = s.PROFILE || {}, u = s.user;
-    const online = Object.keys(s.FRIENDS).filter(id => s.FRIENDS[id].status === "ok" && s.online(id)).length, n = H.notes().length;
-    const ae = root.contains(document.activeElement) ? document.activeElement : null;
-    const keep = !fresh && ae && ae.dataset.bp ? `[data-bp="${ae.dataset.bp}"]` + ["g","t","a","i","k","f","s","c","w","v","e"].filter(k => ae.dataset[k] != null).map(k => `[data-${k}="${CSS.escape(ae.dataset[k])}"]`).join("") : "";
-    const scrollTop = (root.querySelector(".bp-main") || {}).scrollTop || 0;
-    const views = {home:vHome, library:vLibrary, store:vStore, friends:vFriends, downloads:vDownloads, shots:vShots, settings:vSettings};
-    root.innerHTML = `<header class="bp-top"><span class="bp-logo"><i>P</i><i>G</i></span>
-        <nav>${TABS.map(([id, nm]) => `<button class="bp-tab${tab === id ? " on" : ""}" data-bp="tab" data-t="${id}">${nm}${id === "downloads" && Object.keys(s.PROGRESS).length ? ' <i class="dot"></i>' : ""}</button>`).join("")}</nav>
-        <span class="bp-me">${n ? `<span class="bp-badge">🔔 ${n}</span>` : ""}${online ? `<span class="bp-fr">● ${online}</span>` : ""}<span class="bp-pad" title="يد التحكم">${padOn ? "🎮" : ""}</span><b>${esc(prof.username ? "@" + prof.username : (u ? "" : "ضيف"))}</b><span class="num bp-clock">${clock()}</span></span></header>
-      <main class="bp-main">${views[tab]()}</main>
-      ${stack.map((L, i) => `<div class="bp-layer t-${L.t}" data-li="${i}">${layerHTML(L)}</div>`).join("")}
-      <footer class="bp-help"><span>${G("a")} اختيار</span><span>${G("b")} رجوع</span><span>${G("lb")}${G("rb")} الأقسام</span>${tab === "store" && !stack.length ? `<span>${G("y")} بحث</span>` : ""}<span>${G("start")} القائمة السريعة</span></footer>`;
-    root.querySelectorAll("[data-cover]").forEach(el => cover(el, el.dataset.cover));
-    root.querySelectorAll("[data-bp]").forEach(el => el.onclick = () => activate(el));
-    const m = root.querySelector(".bp-main"); if (m) m.scrollTop = scrollTop;
+    const ae = root.activeElement;
+    const keep = !fresh && ae && ae.dataset.bp ? `[data-bp="${ae.dataset.bp}"]` + ["g","t","a","i","k","f","s","c","w","v","e","p","id"].filter(k => ae.dataset[k] != null).map(k => `[data-${k}="${CSS.escape(ae.dataset[k])}"]`).join("") : "";
+    const P = pages[pages.length - 1], sc0 = (root.querySelector(".ps-page") || {}).scrollTop || 0, hs0 = (root.querySelector(".ps-main") || {}).scrollLeft || 0;
+    root.innerHTML = `<div id="bp">` + (P ? `<div class="ps-bg">${P.t === "game" ? "" : '<canvas id="psWall"></canvas>'}<i class="shade page"></i></div>${pageHTML(P)}` : homeHTML())
+      + stack.map((L, i) => `<div class="ps-layer t-${L.t}" data-li="${i}">${layerHTML(L)}</div>`).join("")
+      + `<div id="psToasts" class="ps-toasts"></div><footer class="ps-help"><span>${G("a")} اختيار</span><span>${G("b")} رجوع</span><span>${G("guide")} مركز التحكم</span>${!P ? `<span>${G("lb")}${G("rb")} الألعاب / الوسائط</span>` : ""}<span>${G("start")} خيارات</span></footer></div>`;
+    paint(root); drawToasts();
+    const pg = root.querySelector(".ps-page"); if (pg) pg.scrollTop = sc0; const mn = root.querySelector(".ps-main"); if (mn) mn.scrollLeft = hs0;
+    if (root.querySelector("#psWall")) startWall(); else stopWall();
+    const sc = scope();
+    let f = keep && sc.querySelector(keep);
+    const first = list => { for (const q of list) { const e = sc.querySelector(q); if (e) return e; } return null; };   // in this order of preference
+    if (!f) f = stack.length ? first([".k", ".ps-ccpanel [data-bp]", ".ps-mi", "[data-bp]"]) : P ? first([".ps-page .ps-btn.play", ".ps-page .ps-btn", ".ps-page .ps-cover", ".ps-page .ps-listc", ".ps-page .ps-row-i", ".ps-page .ps-set", ".ps-page .ps-search", ".ps-page [data-bp]"]) : sc.querySelector(`.ps-t[data-i="${cur()}"]`);
+    if (stack.length && stack[stack.length - 1].t === "cc" && !keep) f = sc.querySelector(`.ps-cci[data-k="${stack[stack.length - 1].panel || "home"}"]`) || f;
     fresh = false;
-    const sc = scope(), f = (keep && sc.querySelector(keep)) || sc.querySelector(".bp-btn.play, .bp-btn.stop, .bp-btn.inst, .bp-k") || (stack.length ? sc.querySelector("[data-bp]") : sc.querySelector(".bp-main [data-bp]")) || sc.querySelector(".bp-tab.on");
     if (f) focusEl(f, true);
+    if (!P) placeStrip();
     if (stack.length && stack[stack.length - 1].t === "test") testLoop();
   }
-  const scope = () => (root && root.querySelector(".bp-layer:last-of-type")) || root;
-  function focusEl(el, quiet){ el.focus({preventScroll:true}); el.scrollIntoView({block:"nearest", inline:"nearest", behavior:quiet ? "auto" : "smooth"});
+  function paint(el){ el.querySelectorAll("[data-cover]").forEach(x => cover(x, x.dataset.cover)); el.querySelectorAll("[data-bp]").forEach(x => x.onclick = () => activate(x)); }
+  const scope = () => { const l = root ? root.querySelectorAll(".ps-layer") : []; return l.length ? l[l.length - 1] : root; };
+  const inScope = el => scope().contains(el);
+  function focusEl(el, quiet){ el.focus({preventScroll:true});
+    if (!el.closest(".ps-strip")) el.scrollIntoView({block:"nearest", inline:"nearest", behavior:quiet ? "auto" : "smooth"});
     if (!quiet) beep("move");
-    if (el.dataset.hero && el.dataset.g && el.dataset.g !== heroG) { heroG = el.dataset.g; const h = root.querySelector("#bpHero"); if (h) { h.innerHTML = heroHTML(H.byId(heroG)); h.querySelectorAll("[data-cover]").forEach(x => cover(x, x.dataset.cover)); h.querySelectorAll("[data-bp]").forEach(x => x.onclick = () => activate(x)); } } }
+    if (el.classList.contains("ps-cci")) { const t = root.querySelector("#psTip"); if (t) { t.textContent = el.dataset.tip; const r = el.getBoundingClientRect(); t.style.left = (r.left + r.width / 2) + "px"; } }
+    if (el.dataset.bp === "tile" && !pages.length) focusTile(+el.dataset.i, true); }
+  /* the focused tile stays at the same place on screen; the strip slides under it (like the PS5) */
+  function placeStrip(){ const st = root && root.querySelector("#psStrip"), t = st && st.querySelector(".ps-t.sel"); if (!t) return;
+    // measured from the final sizes, not offsetLeft/offsetWidth (those are mid-transition while tiles grow/shrink)
+    const vw = innerWidth / 100, small = 5.6 * vw, gap = .6 * vw, big = 9.2 * vw, idx = [...st.children].indexOf(t);
+    const anchor = Math.max(24, innerWidth * .09); st.style.transform = `translateX(${anchor - idx * (small + gap)}px)`;
+    const lb = root.querySelector("#psLbl");
+    st.querySelectorAll(".ps-t").forEach(x => { x.style.marginLeft = ""; });
+    if (lb) { lb.style.left = (anchor + big + 18) + "px"; lb.style.top = (t.offsetTop + big - lb.offsetHeight - 6) + "px";
+      // the tiles after the focused one move past its label, so the label never covers them
+      const nx = t.nextElementSibling; if (nx) nx.style.marginLeft = (lb.offsetWidth + 36) + "px"; } }
+  function focusTile(i, fromFocus){ const it = rowItems(); if (it.map(r => r.k + (r.g || "")).join() !== rowSig) { sel[space] = i; fresh = true; return draw(); } i = Math.max(0, Math.min(it.length - 1, i));
+    const changed = i !== cur(); sel[space] = i;
+    const st = root.querySelector("#psStrip"); if (!st) return;
+    st.querySelectorAll(".ps-t").forEach(t => t.classList.toggle("sel", +t.dataset.i === i));
+    const t = st.querySelector(`.ps-t[data-i="${i}"]`); if (!fromFocus && t) t.focus({preventScroll:true});
+    placeStrip();
+    if (changed) { const x = it[i], lb = root.querySelector("#psLbl"), hub = root.querySelector("#psHub"), bg = root.querySelector(".ps-bg");
+      if (lb) { lb.innerHTML = labelHTML(x); placeStrip(); }
+      if (hub) { hub.innerHTML = hubHTML(x); hub.scrollLeft = 0; paint(hub); }
+      if (bg) { const game = x.k === "game"; if (game) { stopWall(); bg.innerHTML = `<span class="gbg" data-cover="${x.g}"></span><i class="shade game"></i>`; paint(bg); }
+        else if (!bg.querySelector("#psWall")) { bg.innerHTML = '<canvas id="psWall"></canvas><i class="shade"></i>'; startWall(); } }
+      if (!fromFocus) beep("move"); } }
+  function softRefresh(){ if (!on || !root || stack.some(L => L.t === "kbd")) return; const P = pages[pages.length - 1];
+    if (!P && !stack.length && rowItems().map(r => r.k + (r.g || "")).join() === rowSig) { const hub = root.querySelector("#psHub"), ae = root.activeElement; if (hub && !hub.contains(ae)) { hub.innerHTML = hubHTML(rowItems()[cur()]); paint(hub); return; } }
+    draw(); }
   function push(L){ stack.push(L); fresh = true; beep("open"); draw(); }
-  function pop(){ if (!stack.length) return false; stack.pop(); fresh = !!stack.length; beep("back"); draw(); return true; }
+  function pop(){ if (!stack.length) return false; stack.pop(); beep("back"); draw(); return true; }
+  function openPage(P){ stack = []; pages.push(P); fresh = true; beep("open"); draw(); }
+  function popPage(){ if (!pages.length) return false; pages.pop(); fresh = !pages.length ? false : true; beep("back"); draw(); return true; }
+  function goHome(){ stack = []; pages = []; fresh = true; draw(); }
 
   /* ---------- actions ---------- */
+  const fake = d => { const b = document.createElement("button"); for (const [k, v] of Object.entries(d)) b.dataset[k] = v; return b; };
   async function activate(el){
-    const k = el.dataset.bp, top = stack[stack.length - 1]; beep("ok");
-    if (k === "tab") { stack = []; if (el.dataset.t === "exit") return close(); tab = el.dataset.t; fresh = true; if (tab === "shots") shots = null; draw(); return; }
-    if (k === "game") return push({t:"game", g:el.dataset.g});
-    if (k === "soon") return push({t:"soon", s:el.dataset.s});
+    const k = el.dataset.bp, top = stack[stack.length - 1]; if (!k) return; beep("ok");
+    if (k === "tile") { const x = rowItems()[+el.dataset.i]; if (!x) return; if (+el.dataset.i !== cur()) return focusTile(+el.dataset.i);
+      if (x.k === "game") { const g = H.byId(x.g), st = gameState(g); if (st.inst && !st.run) return activate(fake({bp:"act", a:"play", g:g.id, e:st.ed})); return openPage({t:"game", g:x.g}); }
+      if (x.k === "store") return openPage({t:"store"}); if (x.k === "library") return openPage({t:"library"}); if (x.k === "gallery" || x.k === "mhub") return openPage({t:"gallery"});
+      if (x.k === "clips") return activate(fake({bp:"clips"})); if (x.k === "engine") return activate(fake({bp:"engine"}));
+      if (x.k === "welcome") { const f = root.querySelector("#psHub [data-bp]"); if (f) focusEl(f); } return; }
+    if (k === "space") return setSpace(el.dataset.v);
+    if (k === "page") { if (el.dataset.p === "downloads" || el.dataset.p === "friends") stack = []; return openPage({t:el.dataset.p}); }
+    if (k === "gpage") { stack = []; return openPage({t:"game", g:el.dataset.g}); }
+    if (k === "soon") { if (!el.dataset.s) return; stack = []; return openPage({t:"soon", s:el.dataset.s}); }
     if (k === "back") return pop();
     if (k === "buy") { close(); location.hash = el.dataset.g; return; }
     if (k === "act") { const a = el.dataset.a, g = H.byId(el.dataset.g), st = gameState(g, el.dataset.e);
-      if (a === "none") return;
-      if (!PS) { beep("err"); return toast("التشغيل من تطبيق Premium Games على الكمبيوتر"); }
-      el.disabled = true;
-      try { if (a === "play") { await PS.launch(st.k, st.ed); toast("يشغّل " + (g.en || g.title) + "…"); } else if (a === "stop") await PS.stop(st.k); else if (a === "install") { await PS.install(st.k, {edition:st.ed}); toast("بدأ التثبيت"); } }
-      catch(e) { beep("err"); toast(String(e && e.message || e)); }
-      setTimeout(draw, 500); return; }
-    if (k === "update") { try { await PS.install(el.dataset.k); toast("بدأ التحديث"); } catch(e) { toast(String(e.message || e)); } return setTimeout(draw, 500); }
-    if (k === "search") return push({t:"kbd", v:q, lang:/[a-z]/i.test(q) ? "en" : "ar", ph:"ابحث عن لعبة…", done:v => { q = v; }});
+      if (a === "none") return; if (!PS) { beep("err"); return notify(I.pad, "التشغيل من تطبيق Premium Games على الكمبيوتر"); }
+      if (el.isConnected) el.disabled = true; stack = stack.filter(L => L.t !== "menu");
+      try { if (a === "play") { await PS.launch(st.k, st.ed); notify(I.pad, "يشغّل " + (g.en || g.title) + "…"); } else if (a === "stop") await PS.stop(st.k); else if (a === "install") { await PS.install(st.k, {edition:st.ed}); notify(I.dl, "بدأ التنزيل: " + (g.en || g.title)); } }
+      catch(e) { beep("err"); notify(I.pad, String(e && e.message || e)); }
+      setTimeout(softRefresh, 500); return; }
+    if (k === "menu") return push({t:"menu", g:el.dataset.g, list:(pages[pages.length - 1] || {}).t === "list" ? pages[pages.length - 1].id : ""});
+    if (k === "mact") { const a = el.dataset.a, key2 = el.dataset.k; stack = [];
+      if (a === "uninstall") return push({t:"confirm", title:"تحذف " + H.keyTitle(key2) + "؟", text:"تقدر تنزّلها مرة ثانية من مكتبتك.", ok:"احذف", yes:async () => { await PS.uninstall(key2); notify(I.dl, "انحذفت " + H.keyTitle(key2)); }});
+      try { if (a === "shortcut") { await PS.shortcut(key2); notify(I.home, "انحطت الأيقونة على سطح المكتب"); } else if (a === "folder") await PS.showFolder(key2); else if (a === "verify") { notify(I.dl, "يتحقق من الملفات…"); const r = await PS.verify(key2); notify(I.dl, r && r.fixed ? "تصلّحت " + r.fixed + " ملفات" : "الملفات سليمة ✓"); } }
+      catch(e) { notify(I.pad, String(e && e.message || e)); } return draw(); }
+    if (k === "addto") { stack = []; return push({t:"lists", g:el.dataset.g}); }
+    if (k === "toggleList") { const l = LISTS.all(), L = l.find(x => x.id === el.dataset.id); if (L) { const i = L.games.indexOf(el.dataset.g); if (i >= 0) L.games.splice(i, 1); else L.games.unshift(el.dataset.g); LISTS.save(l); notify(I.lib, i >= 0 ? "انشالت من «" + L.name + "»" : "انضافت إلى «" + L.name + "»"); } return draw(); }
+    if (k === "rmfrom") { const l = LISTS.all(), L = l.find(x => x.id === el.dataset.id); if (L) { L.games = L.games.filter(x => x !== el.dataset.g); LISTS.save(l); } stack = []; return draw(); }
+    if (k === "newlist") { const g = el.dataset.g; stack = stack.filter(L => L.t !== "lists");
+      return push({t:"kbd", v:"", lang:"ar", ph:"اسم القائمة", done:v => { v = v.trim().slice(0, 30); if (!v) return; const l = LISTS.all(); l.push({id:Date.now().toString(36), name:v, games:g ? [g] : []}); LISTS.save(l); notify(I.lib, "انعملت القائمة «" + v + "»"); if (g) libTab = "owned"; }}); }
+    if (k === "list") return openPage({t:"list", id:el.dataset.id});
+    if (k === "renlist") { const id = el.dataset.id, L = LISTS.all().find(x => x.id === id); stack = []; return push({t:"kbd", v:L ? L.name : "", lang:"ar", ph:"اسم القائمة", done:v => { const l = LISTS.all(), x = l.find(y => y.id === id); if (x && v.trim()) { x.name = v.trim().slice(0, 30); LISTS.save(l); } }}); }
+    if (k === "dellist") { const id = el.dataset.id; stack = []; return push({t:"confirm", title:"تحذف القائمة؟", text:"الألعاب نفسها ما تنحذف.", ok:"احذف", yes:() => { LISTS.save(LISTS.all().filter(x => x.id !== id)); if ((pages[pages.length - 1] || {}).id === id) pages.pop(); }}); }
+    if (k === "libtab") { libTab = el.dataset.t; fresh = true; return draw(); }
+    if (k === "sort") { ST.sort = ST.sort === "az" ? "recent" : "az"; saveUI(); return draw(); }
+    if (k === "search") return push({t:"kbd", v:q, lang:/[a-z]/i.test(q) ? "en" : "ar", ph:"ابحث…", done:v => { q = v; }});
     if (k === "k") { top.v = (top.v + el.dataset.c).slice(0, 60); return draw(); }
     if (k === "kdel") { top.v = top.v.slice(0, -1); return draw(); }
     if (k === "klang") { top.lang = top.lang === "ar" ? "en" : "ar"; return draw(); }
     if (k === "kok") { stack.pop(); top.done(top.v); return draw(); }
     if (k === "friend") return push({t:"friend", f:el.dataset.f});
     if (k === "call") { stack = []; draw(); return H.call(el.dataset.f); }
-    if (k === "qmsg") { try { await H.sendMsg(el.dataset.f, el.dataset.m); toast("انرسلت ✓"); } catch(e) { toast("ما انرسلت"); } return pop(); }
-    if (k === "qtype") { const f = el.dataset.f; stack.pop(); return push({t:"kbd", v:"", lang:"ar", ph:"اكتب رسالتك…", done:async v => { if (v.trim()) { try { await H.sendMsg(f, v.trim()); toast("انرسلت ✓"); } catch(e) { toast("ما انرسلت"); } } }}); }
-    if (k === "shot") return push({t:"view", i:+el.dataset.i});
-    if (k === "showshot") { const x = shots[top.i]; if (PS && PS.openShots) PS.openShots(x.file); return; }
+    if (k === "qmsg") { try { await H.sendMsg(el.dataset.f, el.dataset.m); notify(I.friends, "انرسلت ✓"); } catch(e) { notify(I.friends, "ما انرسلت"); } return pop(); }
+    if (k === "qtype") { const f = el.dataset.f; stack.pop(); return push({t:"kbd", v:"", lang:"ar", ph:"اكتب رسالتك…", done:async v => { if (v.trim()) { try { await H.sendMsg(f, v.trim()); notify(I.friends, "انرسلت ✓"); } catch(e) { notify(I.friends, "ما انرسلت"); } } }}); }
+    if (k === "shot") { if (!SHOTS || !SHOTS[+el.dataset.i]) return; stack = stack.filter(L => L.t !== "cc"); return push({t:"view", i:+el.dataset.i}); }
+    if (k === "showshot") { const x = SHOTS[top.i]; if (PS && PS.openShots) PS.openShots(x.file); return; }
+    if (k === "clips") { if (PS && PS.openClips) PS.openClips().catch(() => {}); else notify(I.clip, "المقاطع في تطبيق Premium Games"); return; }
+    if (k === "engine") { if (!PS || !PS.engine) return notify(I.eng, "المحرك في تطبيق Premium Games");
+      try { const s = await PS.engine.status(); const v = s.installed[0]; if (!v) { notify(I.eng, "ثبّت Premium Engine من تبويب Engine في التطبيق"); return; } await PS.engine.launch(v.version); notify(I.eng, "يفتح Premium Engine على سطح المكتب…"); } catch(e) { notify(I.eng, String(e && e.message || e)); } return; }
     if (k === "set") { ST[el.dataset.k] = !ST[el.dataset.k]; if (PS && PS.setSettings) { try { Object.assign(ST, await PS.setSettings({[el.dataset.k]:ST[el.dataset.k]})); } catch(e) {} } return draw(); }
     if (k === "glyph") return push({t:"glyph"});
     if (k === "glyphset") { ST.glyphs = el.dataset.v; if (PS && PS.setSettings) PS.setSettings({glyphs:ST.glyphs}).catch(() => {}); return pop(); }
+    if (k === "wall") return push({t:"wall"});
+    if (k === "wallset") { ST.wall = el.dataset.v; saveUI(); stopWall(); return pop(); }
     if (k === "test") return push({t:"test"});
     if (k === "exit") return close();
-    if (k === "power") { stack = stack.filter(L => L.t !== "quick"); return push({t:"power"}); }
+    if (k === "cc") { const c = el.dataset.k;
+      if (c === "home") return goHome();
+      if (c === "base") return openPage({t:"friends"});
+      if (c === "profile") return openPage({t:"profile"});
+      if (c === "sound") { ST.sounds = !ST.sounds; if (PS && PS.setSettings) PS.setSettings({sounds:ST.sounds}).catch(() => {}); beep("ok"); return draw(); }
+      top.panel = top.panel === c ? null : c; fresh = true; return draw(); }
     if (k === "pw") { const w = el.dataset.w;
       if (w === "restart" || w === "shutdown") return push({t:"confirm", title:w === "restart" ? "إعادة تشغيل الكمبيوتر؟" : "إطفاء الكمبيوتر؟", text:Object.keys(S().RUNNING).length ? "اللعبة الشغالة بتنحفظ وتنقفل أول." : "", ok:w === "restart" ? "أعد التشغيل" : "أطفئ", yes:() => PS.power(w)});
       if (w === "quit") return push({t:"confirm", title:"تقفل Premium Games؟", text:"", ok:"اقفل", yes:() => PS.power("quit")});
-      stack = []; draw(); try { await PS.power(w); } catch(e) { toast(String(e.message || e)); } return; }
-    if (k === "yes") { const fn = top.yes; stack = []; draw(); try { await fn(); } catch(e) { toast(String(e.message || e)); } return; }
+      stack = []; draw(); try { await PS.power(w); } catch(e) { notify(I.power, String(e.message || e)); } return; }
+    if (k === "yes") { const fn = top.yes; stack = []; draw(); try { await fn(); } catch(e) { notify(I.pad, String(e.message || e)); } return draw(); }
     if (k === "qstop") { try { await PS.stop(el.dataset.k); } catch(e) {} stack = []; return setTimeout(draw, 400); }
+    if (k === "update") { try { await PS.install(el.dataset.k); notify(I.dl, "بدأ التحديث"); } catch(e) { notify(I.dl, String(e.message || e)); } return setTimeout(draw, 500); }
   }
-  function context(btn){   // X / Y / Start inside a layer or screen
-    const top = stack[stack.length - 1];
+  function setSpace(v){ if (v === space && !pages.length) return; space = v; stack = []; pages = []; fresh = true; beep("move"); draw(); }
+  function context(btn){
+    const top = stack[stack.length - 1], P = pages[pages.length - 1], a = root.activeElement;
+    if (btn === "guide") { if (top && top.t === "cc") return pop(); stack = []; return push({t:"cc", panel:null}); }
     if (btn === "x") { if (top && top.t === "kbd") { top.v = top.v.slice(0, -1); return draw(); }
-      if (top && top.t === "game") { const eds = ownedEds(top.g); if (eds.length > 1) { const cur = top.ed || gameState(H.byId(top.g)).ed; top.ed = eds[(eds.indexOf(cur) + 1) % eds.length]; beep("move"); draw(); } } return; }
-    if (btn === "y") { if (top && top.t === "kbd") { top.v += " "; return draw(); } if (!stack.length && tab === "store") return activate(root.querySelector('[data-bp="search"]')); return; }
+      if (!top && P && P.t === "game") { const eds = ownedEds(P.g); if (eds.length > 1) { const c = P.ed || gameState(H.byId(P.g)).ed; P.ed = eds[(eds.indexOf(c) + 1) % eds.length]; beep("move"); draw(); } } return; }
+    if (btn === "y") { if (top && top.t === "kbd") { top.v += " "; return draw(); } if (!top) { if (P && (P.t === "store" || P.t === "search" || P.t === "library")) return activate(root.querySelector('[data-bp="search"]')); return openPage({t:"search"}); } return; }
     if (btn === "start") { if (top && top.t === "kbd") { stack.pop(); top.done(top.v); beep("ok"); return draw(); }
-      if (top && top.t === "quick") return pop(); return push({t:"quick"}); }
+      if (top && top.t === "menu") return pop();
+      const g = a && a.dataset && a.dataset.g; if (g && !top) return push({t:"menu", g, list:P && P.t === "list" ? P.id : ""});
+      if (!top && P && P.t === "list") return push({t:"listmenu", id:P.id});
+      if (!top && !P) { const x = rowItems()[cur()]; if (x && x.k === "game") return push({t:"menu", g:x.g}); }
+      return; }
   }
 
   /* ---------- moving the focus ---------- */
   function move(dx, dy){
-    const sc = scope(), items = [...sc.querySelectorAll("[data-bp]")].filter(e => !e.disabled && e.offsetParent !== null), cur = document.activeElement;
-    if (!items.length) return; if (!items.includes(cur)) return focusEl(items[0]);
-    const r0 = cur.getBoundingClientRect(), c0 = {x:r0.left + r0.width / 2, y:r0.top + r0.height / 2};
+    const sc = scope(), items = [...sc.querySelectorAll("[data-bp]")].filter(e => !e.disabled && e.offsetParent !== null), c = root.activeElement;
+    if (!items.length) return; if (!items.includes(c)) return focusEl(items[0]);
+    // inside the home row: left / right walk the tiles
+    if (c.dataset.bp === "tile" && dx) { const n = cur() + dx; if (n >= 0 && n < rowItems().length) focusTile(n); return; }
+    const r0 = c.getBoundingClientRect(), c0 = {x:r0.left + r0.width / 2, y:r0.top + r0.height / 2};
     let best = null, bd = 1e9;
-    for (const e of items) { if (e === cur) continue; const r = e.getBoundingClientRect(), c = {x:r.left + r.width / 2, y:r.top + r.height / 2};
-      const vx = c.x - c0.x, vy = c.y - c0.y;
+    for (const e of items) { if (e === c) continue; const r = e.getBoundingClientRect(); if (e.dataset.bp === "tile" && (r.right < 0 || r.left > innerWidth)) continue; if (dy && e.closest(".ps-side") && !c.closest(".ps-side")) continue;   // the side icons are reached with left / right only
+      const p = {x:r.left + r.width / 2, y:r.top + r.height / 2}, vx = p.x - c0.x, vy = p.y - c0.y;
       if (dx && (Math.sign(vx) !== dx || Math.abs(vx) < 4)) continue; if (dy && (Math.sign(vy) !== dy || Math.abs(vy) < 4)) continue;
-      const d = dx ? Math.abs(vx) + Math.abs(vy) * 3 : Math.abs(vy) + Math.abs(vx) * 3; if (d < bd) { bd = d; best = e; } }
+      const d = dx ? Math.abs(vx) + Math.abs(vy) * 3 : Math.abs(vy) + Math.abs(vx) * 2.2; if (d < bd) { bd = d; best = e; } }
+    if (best && best.dataset.bp === "tile" && c.dataset.bp !== "tile") best = root.querySelector(`.ps-t[data-i="${cur()}"]`) || best;   // back into the row: the selected tile
     if (best) focusEl(best);
   }
-  function cycleTab(d){ stack = []; fresh = true; const ids = TABS.map(t => t[0]); tab = ids[(ids.indexOf(tab) + d + ids.length) % ids.length]; if (tab === "shots") shots = null; beep("move"); draw(); }
-  function back(){ if (pop()) return; const cur = document.activeElement;
-    if (cur && cur.dataset.bp !== "tab") { beep("back"); root.querySelector(".bp-tab.on")?.focus(); } else if (tab !== "home") { tab = "home"; beep("back"); draw(); } else { beep("back"); close(); } }
-  function viewStep(d){ const top = stack[stack.length - 1]; if (top && top.t === "view") { top.i = (top.i + d + shots.length) % shots.length; draw(); return true; } return false; }
+  function back(){ const top = stack[stack.length - 1];
+    if (top) return pop(); if (popPage()) return;
+    const a = root.activeElement;
+    if (a && a.dataset.bp !== "tile") { beep("back"); const t = root.querySelector(`.ps-t[data-i="${cur()}"]`); if (t) t.focus({preventScroll:true}); return; }
+    if (space === "media") return setSpace("games");
+    if (cur() !== 1 && space === "games") { focusTile(1); return; }
+    beep("back"); }
+  function viewStep(d){ const top = stack[stack.length - 1]; if (top && top.t === "view") { top.i = (top.i + d + SHOTS.length) % SHOTS.length; draw(); return true; } return false; }
+  function shoulder(d){ const P = pages[pages.length - 1];
+    if (P && P.t === "library") { const t = ["installed","owned","all"]; libTab = t[(t.indexOf(libTab) + d + 3) % 3]; fresh = true; beep("move"); return draw(); }
+    if (!P && !stack.length) setSpace(space === "games" ? "media" : "games"); }
   function key(e){ if (!on) return; const k = e.key, top = stack[stack.length - 1];
-    const map = {ArrowLeft:[1, 0], ArrowRight:[-1, 0], ArrowUp:[0, -1], ArrowDown:[0, 1]};
+    const map = {ArrowLeft:[-1, 0], ArrowRight:[1, 0], ArrowUp:[0, -1], ArrowDown:[0, 1]};
     if (top && top.t === "kbd" && k.length === 1 && !e.ctrlKey && !e.altKey) { e.preventDefault(); top.v = (top.v + k).slice(0, 60); return draw(); }
     if (top && top.t === "kbd" && k === "Backspace") { e.preventDefault(); top.v = top.v.slice(0, -1); return draw(); }
-    if (map[k]) { e.preventDefault(); if (k === "ArrowLeft" || k === "ArrowRight") { if (viewStep(k === "ArrowLeft" ? 1 : -1)) return; } move(...map[k]); }
-    else if (k === "Enter" || k === " ") { e.preventDefault(); if (top && top.t === "kbd" && k === "Enter") return context("start"); const a = document.activeElement; if (a && a.dataset && a.dataset.bp) activate(a); }
+    if (map[k]) { e.preventDefault(); host.classList.add("nomouse"); if (k === "ArrowLeft" || k === "ArrowRight") { if (viewStep(k === "ArrowLeft" ? -1 : 1)) return; } move(...map[k]); }
+    else if (k === "Enter" || k === " ") { e.preventDefault(); if (top && top.t === "kbd" && k === "Enter") return context("start"); const a = root.activeElement; if (a && a.dataset && a.dataset.bp) activate(a); }
     else if (k === "Escape" || k === "Backspace") { e.preventDefault(); back(); }
-    else if (k === "Tab") { e.preventDefault(); cycleTab(e.shiftKey ? -1 : 1); }
-    else if (k === "q" || k === "Q" || k === "F1") { e.preventDefault(); context("start"); }
-    else if (k === "/" ) { e.preventDefault(); if (tab !== "store") { tab = "store"; stack = []; draw(); } context("y"); }
+    else if (k === "Tab") { e.preventDefault(); shoulder(e.shiftKey ? -1 : 1); }
+    else if (k === "F1" || k === "Home" || k === "q" || k === "Q") { e.preventDefault(); context("guide"); }
+    else if (k === "F2" || k === "o" || k === "O" || k === "ContextMenu") { e.preventDefault(); context("start"); }
+    else if (k === "/") { e.preventDefault(); context("y"); }
     else if (k === "x" || k === "X") { e.preventDefault(); context("x"); } }
 
   /* ---------- game controllers (Xbox / PlayStation, standard mapping) ---------- */
-  let padOn = false, testBack = 0;
-  addEventListener("gamepadconnected", e => { padOn = true; padKind = /054c|playstation|dualsense|dualshock|wireless controller/i.test(e.gamepad.id) ? "ps" : "xbox";
-    if (on) { toast("🎮 انوصلت يد التحكم"); draw(); } else if (H.padConnected) H.padConnected(); });
-  addEventListener("gamepaddisconnected", () => { padOn = [...(navigator.getGamepads ? navigator.getGamepads() : [])].some(Boolean); if (on) { toast("انفصلت يد التحكم"); draw(); } });
+  let testBack = 0;
+  const isPS = id => /054c|playstation|dualsense|dualshock|wireless controller/i.test(id);
+  addEventListener("gamepadconnected", e => { padOn = true; padKind = isPS(e.gamepad.id) ? "ps" : "xbox";
+    if (on) { notify(I.pad, "انوصلت يد التحكم " + (e.gamepad.index + 1)); draw(); } else if (H.padConnected) H.padConnected(); });
+  addEventListener("gamepaddisconnected", e => { padOn = [...(navigator.getGamepads ? navigator.getGamepads() : [])].some(Boolean); if (on) { notify(I.pad, "انفصلت يد التحكم " + (e.gamepad.index + 1)); draw(); } });
   function poll(){
     if (!on) return; const pads = navigator.getGamepads ? [...navigator.getGamepads()].filter(Boolean) : [];
-    if (pads.length && !padOn) { padOn = true; padKind = /054c|playstation|dualsense|dualshock|wireless controller/i.test(pads[0].id) ? "ps" : "xbox"; draw(); }
+    if (pads.length && !padOn) { padOn = true; padKind = isPS(pads[0].id) ? "ps" : "xbox"; draw(); }
     const top = stack[stack.length - 1];
     if (top && top.t === "test") { raf = requestAnimationFrame(poll); return; }
     for (const p of pads) {
@@ -275,18 +569,19 @@ export function makeBP(H){
       for (const [k, v] of Object.entries(st)) {
         const prev = pad.last[p.index + k]; pad.last[p.index + k] = v;
         const rep = ["up","down","left","right","lt","rt"].includes(k);
-        if (v && !prev) pad.held[p.index + k] = now + 260;
+        if (v && !prev) pad.held[p.index + k] = now + 280;
         const fire = v && (!prev || (rep && now > pad.held[p.index + k]));
-        if (!fire) continue; if (prev) pad.held[p.index + k] = now + 90;
-        if (root && root.classList.contains("nomouse") === false) root.classList.add("nomouse");
+        if (!fire) continue; if (prev) pad.held[p.index + k] = now + 85;
+        if (host) host.classList.add("nomouse");
         if (k === "up") move(0, -1); else if (k === "down") move(0, 1);
-        else if (k === "left") { if (!viewStep(1)) move(1, 0); } else if (k === "right") { if (!viewStep(-1)) move(-1, 0); }
-        else if (k === "a") { const a = document.activeElement; if (a && a.dataset && a.dataset.bp) activate(a); }
-        else if (k === "b") back(); else if (k === "lb") cycleTab(-1); else if (k === "rb") cycleTab(1);
-        else if (k === "lt" || k === "rt") { const m = root.querySelector(".bp-main"); if (m && !stack.length) m.scrollBy({top:(k === "rt" ? 1 : -1) * innerHeight * .6, behavior:"smooth"}); }
+        else if (k === "left") { if (!viewStep(-1)) move(-1, 0); } else if (k === "right") { if (!viewStep(1)) move(1, 0); }
+        else if (k === "a") { const a = root.activeElement; if (a && a.dataset && a.dataset.bp) activate(a); }
+        else if (k === "b") back(); else if (k === "lb") shoulder(-1); else if (k === "rb") shoulder(1);
+        else if (k === "lt" || k === "rt") { const m = root.querySelector(".ps-page") || root.querySelector(".ps-main"); if (m && !stack.length) m.scrollBy({top:(k === "rt" ? 1 : -1) * innerHeight * .6, behavior:"smooth"}); }
         else if (k === "x" || k === "y") context(k);
-        else if (k === "start" || k === "guide") context("start");
-        else if (k === "sel") { if (!stack.length) { tab = "downloads"; draw(); } }
+        else if (k === "start") context("start");
+        else if (k === "guide") context("guide");
+        else if (k === "sel") { stack = []; openPage({t:"downloads"}); }
       }
     }
     raf = requestAnimationFrame(poll);
@@ -296,18 +591,18 @@ export function makeBP(H){
     const p = [...(navigator.getGamepads ? navigator.getGamepads() : [])].filter(Boolean)[0];
     const names = ["A/✕","B/○","X/□","Y/△","LB","RB","LT","RT","Back","Start","L3","R3","↑","↓","←","→","Home"];
     if (!p) el.innerHTML = '<p>وصّل يد التحكم واضغط أي زر.</p>';
-    else { el.innerHTML = `<p class="muted">${esc(p.id)}</p><div class="bp-tb">${names.map((n, i) => `<span class="${p.buttons[i] && p.buttons[i].pressed ? "on" : ""}">${n}</span>`).join("")}</div>
-      <div class="bp-ta">${[0, 2].map(i => `<span class="stick"><i style="transform:translate(${(p.axes[i] || 0) * 28}px,${(p.axes[i + 1] || 0) * 28}px)"></i></span>`).join("")}</div>`;
+    else { el.innerHTML = `<p class="muted ltr">${esc(p.id)}</p><div class="tb">${names.map((n, i) => `<span class="${p.buttons[i] && p.buttons[i].pressed ? "on" : ""}">${n}</span>`).join("")}</div>
+      <div class="ta">${[0, 2].map(i => `<span class="stick"><i style="transform:translate(${(p.axes[i] || 0) * 28}px,${(p.axes[i + 1] || 0) * 28}px)"></i></span>`).join("")}</div>`;
       const bb = p.buttons[1] && p.buttons[1].pressed; if (bb && !pad.last.testB) { const t = performance.now(); if (t - testBack < 700) { testBack = 0; pad.last.testB = bb; stack.pop(); return draw(); } testBack = t; } pad.last.testB = bb; }
     requestAnimationFrame(testLoop);
   }
 
   /* ---------- live updates ---------- */
   function refresh(){ if (!on) return;
-    const run = S().RUNNING, ended = Object.keys(lastRun).filter(k => !run[k]); lastRun = Object.assign({}, run);
+    const run = S().RUNNING, ended = Object.keys(lastRun).filter(k => !run[k]), started = Object.keys(run).filter(k => !lastRun[k]); lastRun = Object.assign({}, run);
     if (ended.length && PS && PS.focusMain) { PS.focusMain().catch(() => {}); if (PS.fullscreen) PS.fullscreen(true).catch(() => {}); }   // back to the console screen when a game closes
-    const top = stack[stack.length - 1]; if (top && top.t === "kbd") return;   // don't disturb typing
-    draw(); }
-  setInterval(() => { if (on) { const c = root && root.querySelector(".bp-clock"); if (c) c.textContent = clock(); } }, 15000);
+    if (started.length) SHOTS = null; if (ended.length) SHOTS = null;
+    softRefresh(); }
+  setInterval(() => { if (on) { const c = root && root.querySelector(".ps-top .clock"); if (c) c.textContent = clock(); } }, 15000);
   return {open, close, refresh, get on(){ return on; }};
 }

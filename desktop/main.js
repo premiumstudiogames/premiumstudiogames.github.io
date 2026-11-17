@@ -1034,6 +1034,11 @@ function watchProjects() { if (engWatch) return; try { fs.mkdirSync(PROJECTS_DIR
   engWatch = fs.watch(PROJECTS_DIR(), { recursive: true }, () => { clearTimeout(t); t = setTimeout(engineChanged, 600); }); } catch (e) {} }
 app.whenReady().then(watchProjects);
 
+// free / total space of the drive the games are installed on (console mode: "تخزين الجهاز")
+ipcMain.handle('ps:disk', guard(async () => {
+  let dir = path.join(LOCAL, 'PremiumStudio'); while (!fs.existsSync(dir) && path.dirname(dir) !== dir) dir = path.dirname(dir);
+  const st = await fsp.statfs(dir); return { free: st.bavail * st.bsize, total: st.blocks * st.bsize };
+}));
 ipcMain.handle('ps:getInstalled', guard(async () => installedNow()));
 ipcMain.handle('ps:install', guard(async (id, opts) => { await install(id, opts); return true; }));
 ipcMain.handle('ps:getLatest', guard(async () => getLatest()));

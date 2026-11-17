@@ -1,4 +1,4 @@
-import { makeBP } from "./bp.js?v=5";
+import { makeBP } from "./bp.js?v=7";
 import { makeRTC } from "./rtc.js?v=1";
 import { SOON, SOON_GENRES } from "./soon.js?v=1";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
@@ -1358,6 +1358,7 @@ function achOf(gid){ const list = troList(gid);
   return {all:list.length, got:list.filter(a => a.got).length, list, icon:troIcon}; }
 function bigPicture(){ if (!BP) BP = makeBP({$, esc, GAMES, ownedEds, instOf, ED_TAG, PS, toast, cover, money, ent, keyTitle, pct, progText,
   byId, lastPlayed, SOON, soonArt, notes, pendingUpdates, achOf, sendMsg, lowPrice, saleOf,
+  installed:() => INSTALLED, saleLeft:gid => { const s = saleOf(gid); return s ? "ينتهي بعد " + cdText(tsMs(s.ends) - Date.now()) : ""; },
   call:fid => rtc().start("voice", [fid], {[fid]:(FRIENDS[fid] || {}).username}).catch(() => {}),
   padConnected:async () => { try { if (PS && PS.getSettings && (await PS.getSettings()).consolePad && document.hasFocus()) { location.hash = "#bigpicture"; } } catch(e) {} },
   state:() => ({user, PROFILE, FRIENDS, PLAY, RUNNING, PROGRESS, online:isOnline, playing:playingNow})}); return BP; }

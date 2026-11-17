@@ -38,6 +38,7 @@ if (ok) {
     consoleMode: true,
     openShots: file => ipcRenderer.invoke('ps:openShots', file),
     openClips: () => ipcRenderer.invoke('ps:openClips'),
+    disk: () => ipcRenderer.invoke('ps:disk'),
     retryOnline: () => ipcRenderer.invoke('ps:retryOnline'),
     onProgress: cb => { const f = (e, p) => cb(p); ipcRenderer.on('ps:progress', f); return () => ipcRenderer.removeListener('ps:progress', f); },
     getRunning: () => ipcRenderer.invoke('ps:getRunning'),
