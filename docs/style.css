@@ -523,3 +523,25 @@ s.was{color:var(--muted);font-size:.78em;margin-inline-end:.4em}
 
 body.bp-on{overflow:hidden}
 #bpHost{position:fixed;inset:0;z-index:100}
+
+/* ---------- Premium Plus ---------- */
+#tabs .navplus{color:#f6c343}
+.plushero{border-radius:18px;padding:34px 30px;background:radial-gradient(ellipse at 85% 20%,rgba(255,214,90,.35),transparent 55%),linear-gradient(135deg,#1c1503,#3a2a02 55%,#6b4c00);display:flex;flex-direction:column;gap:10px;margin-bottom:8px}
+.plushero h1{margin:0;font-size:30px}
+.pluslogo{display:flex;align-items:center;gap:10px;font:800 15px/1 "Chakra Petch",sans-serif;letter-spacing:.12em;direction:ltr;justify-content:flex-end}
+.pluslogo span span{color:#f6c343}
+.plusmark{width:34px;height:34px;border-radius:9px;background:#f6c343;color:#1c1503;display:grid;place-items:center;font:900 26px/1 system-ui}
+.plusmonths{display:flex;gap:8px;margin-bottom:12px}
+.plustiers{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.plustier{background:var(--panel,#121722);border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:20px;display:flex;flex-direction:column;gap:8px}
+.plustier .tn{font-size:20px;font-weight:700;color:#f6c343}.plustier .price{font-size:28px;font-weight:700}
+.plustier ul{margin:6px 0;padding-inline-start:18px;display:flex;flex-direction:column;gap:6px;font-size:14px;flex:1}
+.plustier.cur{border-color:#f6c343;box-shadow:0 0 0 1px #f6c343 inset}
+.plustier.t-premium{background:linear-gradient(160deg,#211a06,#121722 60%)}
+.pluslist{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.pluscard{background:var(--panel,#121722);border-radius:14px;overflow:hidden;display:flex;flex-direction:column}
+.pluscard .cv{display:block;aspect-ratio:16/9;background:#0b0e15}.pluscard .cv canvas,.pluscard .cv svg{width:100%!important;height:100%!important;object-fit:cover;display:block}
+.pluscard .pi{padding:12px;display:flex;flex-direction:column;gap:6px;align-items:flex-start}
+.salepct.plus{background:#f6c343;color:#1c1503}
+.st.plus{background:rgba(246,195,67,.16);color:#f6c343}.st.rejected{background:rgba(255,90,90,.14);color:#ff8d8d}
+@media (max-width:760px){.plustiers{grid-template-columns:1fr}}

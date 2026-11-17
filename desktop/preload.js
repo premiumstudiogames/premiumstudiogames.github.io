@@ -39,6 +39,8 @@ if (ok) {
     openShots: file => ipcRenderer.invoke('ps:openShots', file),
     openClips: () => ipcRenderer.invoke('ps:openClips'),
     disk: () => ipcRenderer.invoke('ps:disk'),
+    tv: { open: app => ipcRenderer.invoke('tv:open', app), close: () => ipcRenderer.invoke('tv:close'), apps: ['youtube'],
+      onClosed: cb => { const f = (e, a) => cb(a); ipcRenderer.on('tv:closed', f); return () => ipcRenderer.removeListener('tv:closed', f); } },
     retryOnline: () => ipcRenderer.invoke('ps:retryOnline'),
     onProgress: cb => { const f = (e, p) => cb(p); ipcRenderer.on('ps:progress', f); return () => ipcRenderer.removeListener('ps:progress', f); },
     getRunning: () => ipcRenderer.invoke('ps:getRunning'),

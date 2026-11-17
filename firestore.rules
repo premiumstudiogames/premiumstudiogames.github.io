@@ -33,6 +33,18 @@ service cloud.firestore {
         'u100000': {'coins': 100000, 'price': 1000000}
       };
     }
+    // Premium Plus: the same tiers and prices as PlayStation Plus (must match PLUS_PRICES in app.js)
+    function plusPlans() {
+      return {
+        'essential_1': 10.99, 'essential_3': 27.99, 'essential_12': 79.99,
+        'extra_1': 16.99, 'extra_3': 43.99, 'extra_12': 134.99,
+        'premium_1': 19.99, 'premium_3': 54.99, 'premium_12': 159.99
+      };
+    }
+    function plusRankOf(t) { return t == 'premium' ? 3 : (t == 'extra' ? 2 : (t == 'essential' ? 1 : 0)); }
+    function plusDoc() { return /databases/$(database)/documents/users/$(request.auth.uid)/meta/plus; }
+    function plusActive() { return exists(plusDoc()) && get(plusDoc()).data.until > request.time; }
+    function plusCfg() { return get(/databases/$(database)/documents/config/plus).data; }
     function changed() { return request.resource.data.diff(resource.data).affectedKeys(); }
     function validPid(pid) { return pid is string && pid.matches('^[0-9]{10}$'); }
     // The pid is reserved for this player in the same write
@@ -254,6 +266,25 @@ service cloud.firestore {
         allow create, update: if isMe(uid) && request.resource.data.keys().hasOnly(['at']) && request.resource.data.at == request.time;
         allow delete: if isMe(uid);
       }
+      // Premium Plus subscription requests; the studio confirms the payment and turns the subscription on
+      match /plusOrders/{oid} {
+        allow read: if isMe(uid) || isAdmin();
+        allow create: if isMe(uid)
+          && request.resource.data.keys().hasOnly(['tier', 'months', 'price', 'status', 'at'])
+          && request.resource.data.months is int
+          && (request.resource.data.tier + '_' + string(request.resource.data.months)) in plusPlans()
+          && request.resource.data.price == plusPlans()[request.resource.data.tier + '_' + string(request.resource.data.months)]
+          && request.resource.data.status == 'pending'
+          && request.resource.data.at == request.time;
+        allow update: if isAdmin() && changed().hasOnly(['status', 'paidAt']) && request.resource.data.status in ['active', 'rejected'];
+        allow delete: if isAdmin();
+      }
+      // the subscription itself (tier + until): only the studio writes it
+      match /meta/plus {
+        allow read: if isMe(uid) || isAdmin();
+        allow write: if isAdmin() && request.resource.data.keys().hasOnly(['tier', 'until', 'since'])
+          && plusRankOf(request.resource.data.tier) > 0 && request.resource.data.until is timestamp;
+      }
       match /meta/{d} {
         allow read: if isMe(uid);
         allow write: if isMe(uid) && ((d == 'prefs' && request.resource.data.keys().hasOnly(['fav', 'hidden'])
@@ -310,6 +341,22 @@ service cloud.firestore {
               && saleOn(request.resource.data.game)
               && request.resource.data.price == prices()[itemId] * (100 - saleOf(request.resource.data.game).pct) / 100
               && request.resource.data.status == 'pending')
+            // Premium Plus member discount (set by the studio in config/plus)
+            || (request.resource.data.keys().hasOnly(['game', 'edition', 'price', 'status', 'at', 'plus'])
+              && request.resource.data.plus == true
+              && prices()[itemId] > 0
+              && plusActive() && plusCfg().discount > 0
+              && request.resource.data.price == prices()[itemId] * (100 - plusCfg().discount) / 100
+              && request.resource.data.status == 'pending')
+            // a Premium Plus game: monthly games for every tier, catalog games for their tier and up.
+            // It counts only while the subscription is on (the app and the download keys check that).
+            || (request.resource.data.keys().hasOnly(['game', 'edition', 'price', 'status', 'at', 'tier'])
+              && request.resource.data.status == 'plus' && request.resource.data.price == 0
+              && plusActive()
+              && ((request.resource.data.tier == 'essential' && itemId in plusCfg().monthly)
+                || (request.resource.data.tier in ['extra', 'premium'] && itemId in plusCfg().catalog
+                    && plusCfg().catalog[itemId] == request.resource.data.tier
+                    && plusRankOf(get(plusDoc()).data.tier) >= plusRankOf(request.resource.data.tier))))
           );
         // the studio can give any edition (also the Developer edition, which isn't sold)
         allow create: if isAdmin()
@@ -324,10 +371,23 @@ service cloud.firestore {
       }
     }
 
+    // Premium Plus: which games are monthly / in the catalog, and the members' discount
+    match /config/plus {
+      allow read: if true;
+      allow write: if isAdmin() && request.resource.data.keys().hasOnly(['monthly', 'catalog', 'discount', 'at'])
+        && request.resource.data.monthly is list && request.resource.data.monthly.size() <= 50
+        && request.resource.data.catalog is map && request.resource.data.catalog.size() <= 200
+        && request.resource.data.discount is int && request.resource.data.discount >= 0 && request.resource.data.discount <= 90;
+    }
+    match /{path=**}/plusOrders/{oid} {
+      allow read: if isAdmin();
+    }
+
     // Download codes for a game's official launcher: only players who own the game can read them
     function ownsEd(g, ed) {
       return exists(/databases/$(database)/documents/users/$(request.auth.uid)/library/$(g + '__' + ed))
-        && get(/databases/$(database)/documents/users/$(request.auth.uid)/library/$(g + '__' + ed)).data.status != 'pending';
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)/library/$(g + '__' + ed)).data.status != 'pending'
+        && (get(/databases/$(database)/documents/users/$(request.auth.uid)/library/$(g + '__' + ed)).data.status != 'plus' || plusActive());
     }
     match /keys/{game} {
       allow get: if signedIn() && (ownsEd(game, 'demo') || ownsEd(game, 'std') || ownsEd(game, 'gold') || isAdmin());

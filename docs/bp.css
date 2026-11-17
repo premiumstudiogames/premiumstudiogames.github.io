@@ -424,3 +424,30 @@
 .ps-mi.stat .dot{width:.8vw;height:.8vw;border-radius:50%;background:#3ddc6f;display:inline-block}
 .ps-set .who>span:last-child{display:flex;flex-direction:column;gap:.25vw;align-items:flex-start}
 #bp .ps-help.light{color:#3a404c}#bp .ps-help.light kbd.g{background:#1d2129;color:#fff}
+
+/* ---------- Premium Plus ---------- */
+.sbg.plus{background:radial-gradient(ellipse at 78% 30%,#ffd34d 0,#e3a400 22%,#7a5200 52%,#1f1500 88%)}
+.sbg.plus i{position:absolute;background:linear-gradient(135deg,rgba(255,255,255,.35),rgba(255,255,255,.04));border:.12vw solid rgba(255,255,255,.35);border-radius:1.6vw}
+.sbg.plus i:nth-child(1){width:10vw;height:30vw;right:16vw;top:12vw}
+.sbg.plus i:nth-child(2){width:30vw;height:10vw;right:6vw;top:22vw}
+.sbg.plus b{position:absolute;right:-8vw;bottom:-14vw;width:40vw;height:40vw;border-radius:50%;background:radial-gradient(circle,rgba(255,240,180,.35),transparent 65%)}
+.sbg.yt{background:radial-gradient(ellipse at 75% 35%,#5a0b14 0,#2a0509 45%,#0b0204 100%)}
+.sbg.yt i{position:absolute;right:12vw;top:16vw;width:26vw;height:18vw;border-radius:5vw;background:rgba(255,0,51,.18);box-shadow:0 0 12vw rgba(255,0,51,.25)}
+.ps-t.sys.plus .art{background:linear-gradient(145deg,#2b2003,#0f0b01);padding:20%}
+.ps-t.sys.youtube .art{background:#fff;padding:18%}
+.ps-pstat{font-size:1.35vw;margin:0;direction:rtl;text-align:left;text-shadow:0 .1vw .6vw rgba(0,0,0,.6)}
+.pbadge{position:absolute;right:.4vw;top:.4vw;z-index:2;width:1.7vw;height:1.7vw;font-style:normal;filter:drop-shadow(0 .1vw .3vw rgba(0,0,0,.6))}
+.ps-card .pbadge{width:1.5vw;height:1.5vw}
+.ps-sh .pic.plus{background:#1a1200;padding:.45vw}
+.ps-sh h1 .tn{color:#f6c343;font-weight:400}
+.ps-plushero{display:flex;flex-direction:column;gap:.6vw;align-items:flex-start;padding:2vw 2.2vw!important;border-radius:var(--r);background:linear-gradient(110deg,rgba(20,14,0,.85),rgba(20,14,0,.35));margin:.4vw 0 1vw;direction:rtl;max-width:56vw}
+.ps-plushero b{font-size:2.3vw;font-weight:800;color:#ffd257}.ps-plushero small{font-size:1.15vw;color:rgba(255,255,255,.8)}
+.ps-pmonths{display:flex;gap:1vw;margin:.4vw 0 1.4vw}
+.ps-ptiers{display:grid;grid-template-columns:repeat(3,1fr);gap:1.4vw;direction:rtl}
+.ps-ptier{background:rgba(18,14,4,.82);border-radius:var(--r);padding:1.6vw!important;display:flex;flex-direction:column;gap:.6vw;border:.12vw solid rgba(246,195,67,.18)}
+.ps-ptier.cur{border-color:#f6c343}
+.ps-ptier .tn{font-size:1.8vw;color:#f6c343}.ps-ptier .pr{font-size:2.4vw;font-weight:700;direction:ltr;text-align:right}.ps-ptier small{font-size:1vw;color:var(--dim)}
+.ps-ptier ul{margin:.4vw 0;padding-inline-start:1.4vw;display:flex;flex-direction:column;gap:.5vw;font-size:1.1vw;flex:1}
+.ps-ptier .ps-btn{align-self:flex-start}
+.ps-libplus{display:flex;flex-direction:column;align-items:flex-start;gap:.7vw;padding:2.4vw!important;border-radius:var(--r);background:linear-gradient(115deg,#3b2a00,#7a5600 55%,#c99100);direction:rtl;max-width:62vw;margin-bottom:1.4vw}
+.ps-libplus .ic{width:3vw;height:3vw}.ps-libplus b{font-size:2.2vw;font-weight:800}.ps-libplus small{font-size:1.15vw;color:rgba(255,255,255,.85)}

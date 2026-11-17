@@ -1,4 +1,4 @@
-import { makeBP } from "./bp.js?v=10";
+import { makeBP } from "./bp.js?v=11";
 import { makeRTC } from "./rtc.js?v=1";
 import { SOON, SOON_GENRES } from "./soon.js?v=1";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
@@ -30,7 +30,7 @@ const PACKS = [             // must match coinPacks() in firestore.rules (coins 
   {id:"u100000",coins:100000, price:1000000}
 ];
 const coins = n => ((n || 0) / COIN_UNIT).toLocaleString("en-US", {minimumFractionDigits:0, maximumFractionDigits:4});
-const SITE_VERSION = "00.00.33";
+const SITE_VERSION = "00.00.34";
 const APP_DL = "downloads/PremiumStudioSetup.exe";
 
 const fb = initializeApp(firebaseConfig);
@@ -316,8 +316,33 @@ const progText = p => p.phase === "extract" ? "جاري فك الملفات…" 
 const ED_TAG = {demo:"Demo", std:"Standard", gold:"Gold", dev:"المبرمج"};
 const sharedItems = () => Object.entries(SHARED).flatMap(([owner, o]) => Object.values(o.lib || {}).map(v => ({...libItem(v), owner, ownerName:o.name})));
 const ownedEds = gid => [...new Set(Object.values(LIB).filter(v => v.game === gid && v.status !== "pending").map(v => v.edition)
-  .concat(sharedItems().filter(v => v.game === gid && v.status !== "pending").map(v => v.edition)))].sort((a, b) => RANK[a] - RANK[b]);
-const sharedFrom = gid => { const own = Object.values(LIB).some(v => v.game === gid && v.status !== "pending"); if (own) return ""; const x = sharedItems().find(v => v.game === gid && v.status !== "pending"); return x ? x.ownerName : ""; };
+  .concat(sharedItems().filter(v => v.game === gid && v.status !== "pending" && v.status !== "plus").map(v => v.edition)))].sort((a, b) => RANK[a] - RANK[b]);
+const sharedFrom = gid => { const own = Object.values(LIB).some(v => v.game === gid && v.status !== "pending"); if (own) return ""; const x = sharedItems().find(v => v.game === gid && v.status !== "pending" && v.status !== "plus"); return x ? x.ownerName : ""; };
+
+/* ---------------- Premium Plus (like PlayStation Plus: the same three tiers and prices) ---------------- */
+const PLUS_TIERS = [
+  {id:"essential", n:"أساسي", rank:1, perks:["ألعاب شهرية تضيفها لمكتبتك وتلعبها طول ما أنت مشترك", "خصومات حصرية للمشتركين في المتجر"]},
+  {id:"extra", n:"إضافي", rank:2, perks:["كل مزايا «أساسي»", "كتالوج الألعاب: ألعاب كاملة تلعبها طول ما أنت مشترك"]},
+  {id:"premium", n:"فاخر", rank:3, perks:["كل مزايا «إضافي»", "كتالوج «فاخر»: ألعاب للمشتركين في فاخر فقط"]}];
+const PLUS_PRICES = {essential:{1:10.99, 3:27.99, 12:79.99}, extra:{1:16.99, 3:43.99, 12:134.99}, premium:{1:19.99, 3:54.99, 12:159.99}};   // must match plusPlans() in firestore.rules
+let PLUS = null, PLUSCFG = {monthly:[], catalog:{}, discount:0}, PLUSORD = [], LIBRAW = {}, PLUSALL = [], plusT = 0, PLUS_MONTHS = 12;
+const plusRank = t => (PLUS_TIERS.find(x => x.id === t) || {}).rank || 0;
+const plusName = t => (PLUS_TIERS.find(x => x.id === t) || {}).n || "";
+const plusTier = () => PLUS && PLUS.tier && tsMs(PLUS.until) > Date.now() ? PLUS.tier : "";
+const plusNeed = k => (PLUSCFG.monthly || []).includes(k) ? "essential" : (PLUSCFG.catalog || {})[k] || "";
+// a game you added from Premium Plus counts while your subscription covers it (monthly games: any tier; catalog: its tier or higher)
+function plusCovers(k, v){ const r = plusRank(plusTier()); if (!r) return false; if (v.tier === "essential") return true; const need = (PLUSCFG.catalog || {})[k]; return !!need && r >= plusRank(need); }
+function rebuildLib(){ LIB = {}; for (const [k, v] of Object.entries(LIBRAW)) if (v.status !== "plus" || plusCovers(k, v)) LIB[k] = v; }
+function plusChanged(){ rebuildLib(); clearTimeout(plusT); const left = PLUS && plusTier() ? tsMs(PLUS.until) - Date.now() : 0;
+  if (left > 0) plusT = setTimeout(plusChanged, Math.min(left + 1000, 2 ** 31 - 1));   // the moment it ends, its games stop counting
+  render(); sendOwned(); if (curView === "plus") renderPlus(); if (curView === "studio") renderPlusAdmin(); }
+async function plusClaim(k){ if (!user) throw new Error("سجّل دخولك أول"); const need = plusNeed(k), [game, edition] = k.split("__");
+  if (!need) throw new Error("هذي اللعبة مو في بريميوم بلس"); if (plusRank(plusTier()) < plusRank(need)) throw new Error("تحتاج اشتراك «" + plusName(need) + "» أو أعلى");
+  if (LIBRAW[k]) throw new Error(LIBRAW[k].status === "pending" ? "هذي النسخة بانتظار الدفع" : "موجودة في مكتبتك");
+  await setDoc(doc(fs, "users", user.uid, "library", k), {game, edition, price:0, status:"plus", tier:(PLUSCFG.monthly || []).includes(k) ? "essential" : need, at:serverTimestamp()}); }
+async function plusOrder(tier, months){ if (!user) throw new Error("سجّل دخولك أول"); const price = (PLUS_PRICES[tier] || {})[months]; if (!price) throw new Error("خطة غلط");
+  if (PLUSORD.some(o => o.status === "pending")) throw new Error("عندك طلب اشتراك بانتظار الدفع");
+  await setDoc(doc(collection(fs, "users", user.uid, "plusOrders")), {tier, months:+months, price, status:"pending", at:serverTimestamp()}); }
 const instOf = (gid, ed) => { if (oneInstall(gid)) return [gid, INSTALLED[gid] || null];
   for (const [k, v] of Object.entries(INSTALLED)) if (v.game === gid && v.edition === ed) return [k, v]; return [`${gid}--${ed}`, null]; };
 const anyInstalled = gid => Object.values(INSTALLED).some(v => v.game === gid);
@@ -436,7 +461,7 @@ function renderSoon(){
   sec.querySelectorAll("[data-sg]").forEach(b => b.onclick = () => { soonGenre = b.dataset.sg; soonShown = 24; renderSoon(); });
   const m = sec.querySelector("#soonMore"); if (m) m.onclick = () => { soonShown += 24; renderSoon(); };
 }
-const ST = {free:["free","ديمو مجاني"], pending:["pending","بانتظار الدفع"], paid:["paid","مدفوع"], granted:["granted","مجاني من الاستوديو"]};
+const ST = {free:["free","ديمو مجاني"], pending:["pending","بانتظار الدفع"], paid:["paid","مدفوع"], granted:["granted","مجاني من الاستوديو"], plus:["plus","بريميوم بلس"], active:["paid","شغّال"], rejected:["rejected","مرفوض"]};
 const stPill = s => { const [c, n] = ST[s] || ST.free; return `<span class="st ${c}">${n}</span>`; };
 function renderGame(g){
   const v = $("#gameView"), {best, pending} = ent(g.id), m = MANIFEST.games[g.id];
@@ -1176,6 +1201,7 @@ function renderFriendAct(){
 let USERS = {}, ORDERS = [], COINORDERS = [], MYCO = [], ALLREFUNDS = {};
 function startAdmin(){
   unsubs.push(onSnapshot(collection(fs, "users"), s => { USERS = {}; s.forEach(d => USERS[d.id] = d.data()); if (curView === "studio") renderStudio(); }, e => { $("#studioNote").textContent = "ما قدرت أقرأ قائمة اللاعبين: " + e.code; }));
+  unsubs.push(onSnapshot(collectionGroup(fs, "plusOrders"), s => { PLUSALL = s.docs.map(d => ({ref:d.ref, uid:d.ref.parent.parent.id, ...d.data()})); if (curView === "studio") renderPlusAdmin(); }, () => {}));
   unsubs.push(onSnapshot(collectionGroup(fs, "coinOrders"), s => { COINORDERS = s.docs.map(d => ({ref:d.ref, uid:d.ref.parent.parent.id, ...d.data()})); if (curView === "studio") renderStudio(); }, () => {}));
   unsubs.push(onSnapshot(collection(fs, "codes"), s => { CODES = {}; s.forEach(d => CODES[d.id] = d.data()); if (curView === "studio") renderCodes(); }, () => {}));
   unsubs.push(onSnapshot(collectionGroup(fs, "gifts"), s => { ALLGIFTS = s.docs.map(d => ({ref:d.ref, from:d.ref.parent.parent.id, ...d.data()})); if (curView === "studio") renderStudio(); }, () => {}));
@@ -1209,6 +1235,7 @@ function renderSales(){
 function renderStudio(){
   renderSales();
   renderGifts();
+  renderPlusAdmin();
   const byUser = {}; ORDERS.forEach(o => (byUser[o.uid] = byUser[o.uid] || []).push(o));
   const paid = ORDERS.filter(o => o.status === "paid").reduce((a, o) => a + (o.price || 0), 0), pend = ORDERS.filter(o => o.status === "pending").length;
   const coPaid = COINORDERS.filter(o => o.status === "paid").reduce((a, o) => a + (o.price || 0), 0), coPend = COINORDERS.filter(o => o.status === "pending").length;
@@ -1256,6 +1283,66 @@ function coinAdjust(p){
     $("#caOk").disabled = true;
     try { await updateDoc(doc(fs, "users", p.id), {coins:increment(n)}); closeModal(); toast(n > 0 ? `انضاف ${coins(n)} PG COIN ✓` : `انخصم ${coins(-n)} PG COIN`); }
     catch(e) { $("#caOk").disabled = false; $("#caErr").textContent = "ما تحدّث الرصيد: " + e.code; } };
+}
+
+/* ---------------- Premium Plus page ---------------- */
+const plusItems = () => { const out = []; for (const g of SHOP) for (const e of g.editions || []) { const k = g.id + "__" + e.id, need = plusNeed(k); if (need) out.push({k, g, e, need, monthly:(PLUSCFG.monthly || []).includes(k)}); } return out; };
+function renderPlus(){
+  const box = $("#plusView"); if (!box) return;
+  const t = plusTier(), pend = PLUSORD.filter(o => o.status === "pending").sort((a, b) => tsMs(b.at) - tsMs(a.at))[0], items = plusItems(), m = PLUS_MONTHS;
+  const card = x => { const own = LIBRAW[x.k], ok = plusRank(t) >= plusRank(x.need);
+    const btn = own && own.status !== "pending" && (own.status !== "plus" || plusCovers(x.k, own)) ? `<span class="st paid">في مكتبتك</span>` : own && own.status === "pending" ? stPill("pending")
+      : ok ? `<button class="btn buy mini" type="button" data-pclaim="${x.k}">أضف للمكتبة</button>` : `<span class="muted" style="font-size:12px">يحتاج «${plusName(x.need)}»</span>`;
+    return `<div class="pluscard"><a class="cv" href="#${x.g.id}" data-cover="${x.g.id}"></a><div class="pi"><b class="ltr">${esc(x.g.en || x.g.title)}</b><small class="muted">${esc(x.e.name)} · ${x.monthly ? "لعبة الشهر" : "كتالوج " + plusName(x.need)}</small>${btn}</div></div>`; };
+  const mon = items.filter(x => x.monthly), cat = items.filter(x => !x.monthly);
+  box.innerHTML = `<div class="plushero"><div class="pluslogo"><span class="plusmark">+</span><b>PREMIUM <span>PLUS</span></b></div>
+      <h1>استمتع بالمزيد من ألعابك المحبّبة</h1><p class="muted">ألعاب شهرية، كتالوج ألعاب، وخصومات حصرية للمشتركين${PLUSCFG.discount ? ` (<span class="num">${PLUSCFG.discount}%</span> على المتجر)` : ""}.</p>
+      ${t ? `<div class="row"><span class="st paid">مشترك · ${plusName(t)}</span><span class="muted">ينتهي ${fdate(PLUS.until)}</span></div>` : pend ? `<div class="row">${stPill("pending")}<span class="muted">طلب اشتراك «${plusName(pend.tier)}» لمدة <span class="num">${pend.months}</span> شهر · ${money(pend.price)}</span></div>` : ""}</div>
+    <div class="sec-h"><h2>اختر خطتك</h2><small>PLANS</small></div>
+    <div class="plusmonths">${[1, 3, 12].map(n => `<button class="btn${n === m ? " buy" : ""} mini" type="button" data-pm="${n}">${n === 1 ? "شهر" : n === 3 ? "3 شهور" : "12 شهر"}</button>`).join("")}</div>
+    <div class="plustiers">${PLUS_TIERS.map(x => { const p = PLUS_PRICES[x.id][m], cur = t === x.id;
+      return `<div class="plustier t-${x.id}${cur ? " cur" : ""}"><div class="tn">${x.n}</div><div class="price num">${money(p)}</div><small class="muted">${m === 1 ? "شهريًا" : `لمدة ${m} شهر · <span class="num">${money(Math.round(p / m * 100) / 100)}</span> بالشهر`}</small>
+        <ul>${x.perks.map(k => `<li>${esc(k)}</li>`).join("")}</ul>
+        <button class="btn ${cur ? "" : "buy"}" type="button" data-psub="${x.id}"${pend ? " disabled" : ""}>${cur ? "جدّد" : t && plusRank(x.id) > plusRank(t) ? "رقّ خطتك" : "اشترك"}</button></div>`; }).join("")}</div>
+    <div class="sec-h"><h2>الألعاب الشهرية</h2><small>MONTHLY GAMES</small></div>
+    <div class="pluslist">${mon.map(card).join("") || '<p class="muted">ما فيه ألعاب شهرية هالشهر.</p>'}</div>
+    <div class="sec-h"><h2>كتالوج الألعاب</h2><small>GAME CATALOG</small></div>
+    <div class="pluslist">${cat.map(card).join("") || '<p class="muted">الكتالوج فاضي للحين.</p>'}</div>`;
+  box.querySelectorAll("[data-cover]").forEach(x => cover(x, x.dataset.cover));
+  box.querySelectorAll("[data-pm]").forEach(b => b.onclick = () => { PLUS_MONTHS = +b.dataset.pm; renderPlus(); });
+  box.querySelectorAll("[data-psub]").forEach(b => b.onclick = () => plusSubscribe(b.dataset.psub, PLUS_MONTHS));
+  box.querySelectorAll("[data-pclaim]").forEach(b => b.onclick = async () => { b.disabled = true; try { await plusClaim(b.dataset.pclaim); toast("انضافت لمكتبتك ✓"); } catch(e) { b.disabled = false; toast(e.message || e.code); } });
+}
+function plusSubscribe(tier, months){
+  if (!user) return showAuth("login", "سجّل دخولك عشان تشترك في بريميوم بلس.");
+  const price = PLUS_PRICES[tier][months];
+  openModal(`<div class="eyebrow">PREMIUM PLUS</div><h1 class="mbox-t">بريميوم بلس «${plusName(tier)}»</h1><div class="row" style="justify-content:space-between"><span class="muted">${months === 1 ? "شهر واحد" : months + " شهر"}</span><span class="price">${money(price)}</span></div>
+    <p class="mbox-t">الدفع الإلكتروني ما تفعّل للحين. لما تأكد الطلب يوصل للاستوديو بحالة «بانتظار الدفع»، ويتفعّل اشتراكك أول ما يتأكد الدفع.</p><div class="err" id="psErr"></div>
+    <div class="row"><button class="btn buy" id="psOk" type="button">تأكيد الطلب</button><button class="btn ghost" data-close type="button">إلغاء</button></div>`);
+  $("#psOk").onclick = async () => { $("#psOk").disabled = true; try { await plusOrder(tier, months); closeModal(); toast("وصل طلب الاشتراك ✓"); } catch(e) { $("#psOk").disabled = false; $("#psErr").textContent = e.message || e.code; } };
+}
+/* studio: confirm subscriptions, and pick the monthly games / catalog / member discount */
+function renderPlusAdmin(){
+  const box = $("#plusAdmin"); if (!box) return;
+  const ae = document.activeElement; if (ae && box.contains(ae) && ae.matches("input, select")) return;   // don't wipe what the studio is editing
+  const pend = PLUSALL.filter(o => o.status === "pending"), uname = id => (USERS[id] || {}).username ? "@" + USERS[id].username : (USERS[id] || {}).name || id;
+  const rows = SHOP.flatMap(g => (g.editions || []).filter(e => e.price > 0).map(e => ({k:g.id + "__" + e.id, g, e})));
+  box.innerHTML = `<h3 style="margin:0 0 8px">طلبات الاشتراك</h3>${pend.length ? pend.map((o, i) => `<div class="prop"><b>${esc(uname(o.uid))} · «${plusName(o.tier)}» · <span class="num">${o.months}</span> شهر · <span class="num">${money(o.price)}</span></b><div class="row" style="gap:6px"><button class="btn mini buy" type="button" data-pok="${i}">تأكيد الدفع وتفعيل</button><button class="btn mini danger" type="button" data-pno="${i}">رفض</button></div></div>`).join("") : '<p class="muted">ما فيه طلبات اشتراك تنتظر.</p>'}
+    <h3 style="margin:18px 0 8px">الألعاب والخصم</h3>
+    <div class="tbl"><table><thead><tr><th>النسخة</th><th>لعبة الشهر (أساسي)</th><th>الكتالوج</th></tr></thead><tbody>${rows.map(r => `<tr><td>${esc(r.g.en || r.g.title)} · ${esc(r.e.name)}</td><td><input type="checkbox" data-pmon="${r.k}"${(PLUSCFG.monthly || []).includes(r.k) ? " checked" : ""}></td>
+      <td><select data-pcat="${r.k}"><option value="">—</option><option value="extra"${PLUSCFG.catalog[r.k] === "extra" ? " selected" : ""}>إضافي وفاخر</option><option value="premium"${PLUSCFG.catalog[r.k] === "premium" ? " selected" : ""}>فاخر فقط</option></select></td></tr>`).join("")}</tbody></table></div>
+    <div class="row" style="gap:8px;margin-top:10px"><label class="fld mini">خصم المشتركين %<input id="pDisc" type="number" min="0" max="90" step="1" value="${PLUSCFG.discount || 0}" dir="ltr"></label><button class="btn buy" type="button" id="pSave">حفظ</button></div>`;
+  box.querySelectorAll("[data-pok]").forEach(b => b.onclick = async () => { const o = pend[+b.dataset.pok]; b.disabled = true;
+    try { const cur = (await getDoc(doc(fs, "users", o.uid, "meta", "plus"))).data() || null, base = cur && tsMs(cur.until) > Date.now() ? tsMs(cur.until) : Date.now();
+      const until = new Date(base); until.setMonth(until.getMonth() + o.months);
+      const bt = writeBatch(fs); bt.update(o.ref, {status:"active", paidAt:serverTimestamp()});
+      bt.set(doc(fs, "users", o.uid, "meta", "plus"), {tier:o.tier, until:Timestamp.fromDate(until), since:cur && cur.since && tsMs(cur.until) > Date.now() ? cur.since : serverTimestamp()}); await bt.commit();
+      toast(`تفعّل اشتراك ${uname(o.uid)} حتى ${fdate(until.getTime())} ✓`); } catch(e) { b.disabled = false; toast("ما تم: " + e.code); } });
+  box.querySelectorAll("[data-pno]").forEach(b => b.onclick = () => { const o = pend[+b.dataset.pno]; confirmModal("رفض طلب الاشتراك؟", "الطلب ينرفض وما يتفعّل الاشتراك.", "رفض", async () => { try { await updateDoc(o.ref, {status:"rejected", paidAt:serverTimestamp()}); toast("انرفض الطلب"); } catch(e) { toast("ما تم: " + e.code); } }); });
+  $("#pSave").onclick = async () => { const monthly = [...box.querySelectorAll("[data-pmon]")].filter(x => x.checked).map(x => x.dataset.pmon), catalog = {};
+    box.querySelectorAll("[data-pcat]").forEach(x => { if (x.value) catalog[x.dataset.pcat] = x.value; });
+    const discount = Math.round(+$("#pDisc").value || 0); if (!(discount >= 0 && discount <= 90)) return toast("الخصم من 0 إلى 90%");
+    try { await setDoc(doc(fs, "config", "plus"), {monthly, catalog, discount, at:serverTimestamp()}); toast("انحفظت إعدادات بريميوم بلس ✓"); } catch(e) { toast("ما انحفظت: " + e.code); } };
 }
 
 /* ---------------- PG COIN wallet ---------------- */
@@ -1313,8 +1400,11 @@ function buy(g, e){
     <div class="err" id="bErr"></div>
     <div class="row"><button class="btn buy" id="bOk" type="button">${e.price ? "تأكيد الطلب" : "أضف للمكتبة"}</button><button class="btn ghost" data-close type="button">إلغاء</button></div>`);
   const onSale = () => !applied && e.price > 0 && !!saleOf(g.id);
-  const showPrice = () => { const fp = applied ? finalPrice(e.price, applied.pct) : salePrice(g.id, e.price);
-    $("#bPrice").innerHTML = applied || onSale() ? `<span class="strike">${money(e.price)}</span>${money(Math.round(fp * 100) / 100)}${onSale() ? ` <span class="salepct">-${saleOf(g.id).pct}%</span>` : ""}` : money(e.price);
+  // Premium Plus members get the studio's member discount (or the sale, whichever is bigger)
+  const plusPct = () => !applied && e.price > 0 && plusTier() ? (PLUSCFG.discount || 0) : 0;
+  const usePlus = () => plusPct() > 0 && plusPct() >= (onSale() ? saleOf(g.id).pct : 0);
+  const showPrice = () => { const fp = applied ? finalPrice(e.price, applied.pct) : usePlus() ? finalPrice(e.price, plusPct()) : salePrice(g.id, e.price);
+    $("#bPrice").innerHTML = applied || onSale() || usePlus() ? `<span class="strike">${money(e.price)}</span>${money(Math.round(fp * 100) / 100)}${usePlus() ? ` <span class="salepct plus">-${plusPct()}% بلس</span>` : onSale() ? ` <span class="salepct">-${saleOf(g.id).pct}%</span>` : ""}` : money(e.price);
     if (applied && fp === 0) { $("#bNote").textContent = "الكود يخلي اللعبة مجانية. تنضاف لمكتبتك وتقدر تلعبها على طول."; $("#bOk").textContent = "أضف للمكتبة"; } };
   const ap = $("#bApply"); if (ap) ap.onclick = async () => {
     const id = normCode($("#bCode").value), msg = $("#bCodeMsg"); msg.className = "okmsg"; msg.textContent = ""; applied = null; showPrice();
@@ -1328,10 +1418,10 @@ function buy(g, e){
     catch(x) { msg.className = "err"; msg.textContent = typeof x === "string" ? x : "ما قدرت أتحقق من الكود"; }
     ap.disabled = false; };
   $("#bOk").onclick = async () => { const btn = $("#bOk"); btn.disabled = true;
-    const sale = onSale();
-    const price = applied ? finalPrice(e.price, applied.pct) : sale ? finalPrice(e.price, saleOf(g.id).pct) : e.price;
+    const plus = usePlus(), sale = !plus && onSale();
+    const price = applied ? finalPrice(e.price, applied.pct) : plus ? finalPrice(e.price, plusPct()) : sale ? finalPrice(e.price, saleOf(g.id).pct) : e.price;
     const status = e.price === 0 ? "free" : price === 0 ? "granted" : "pending";
-    const data = {game:g.id, edition:e.id, price, status, at:serverTimestamp()}; if (applied) data.code = applied.id; else if (sale) data.sale = true;
+    const data = {game:g.id, edition:e.id, price, status, at:serverTimestamp()}; if (applied) data.code = applied.id; else if (plus) data.plus = true; else if (sale) data.sale = true;
     try { await setDoc(doc(fs, "users", user.uid, "library", g.id + "__" + e.id), data);
       closeModal(); toast(status === "pending" ? "وصل طلبك ✓ تلقاه في مكتبتك" : "انضافت لمكتبتك ✓"); }
     catch(err) { btn.disabled = false; $("#bErr").textContent = "ما انحفظ الطلب (" + (err.code || "خطأ") + "). جرّب مرة ثانية."; } };
@@ -1359,7 +1449,7 @@ function route(){
   const h0 = (location.hash || "#store").slice(1);
   if (h0 === "bigpicture") { bigPicture().open(); return; }
   const h = h0, g = byId(h);
-  let v = g ? "game" : (["store", "library", "downloads", "friends", "market", "workshop", "engine", "studio", "download", "account", "coins"].includes(h) ? h : "store");
+  let v = g ? "game" : (["store", "library", "downloads", "friends", "market", "workshop", "engine", "studio", "download", "account", "coins", "plus"].includes(h) ? h : "store");
   if (v === "studio" && !isAdmin) v = "store";
   curView = v; $$(".view").forEach(s => s.hidden = s.dataset.view !== v);
   $$("#tabs a").forEach(a => a.setAttribute("aria-current", a.dataset.v === (g ? "store" : v) ? "page" : "false"));
@@ -1378,6 +1468,9 @@ function bigPicture(){ if (!BP) BP = makeBP({$, esc, GAMES, ownedEds, instOf, ED
   byId, lastPlayed, SOON, soonArt, notes, pendingUpdates, achOf, sendMsg, lowPrice, saleOf,
   installed:() => INSTALLED, saleLeft:gid => { const s = saleOf(gid); return s ? "ينتهي بعد " + cdText(tsMs(s.ends) - Date.now()) : ""; },
   call:fid => rtc().start("voice", [fid], {[fid]:(FRIENDS[fid] || {}).username}).catch(() => {}),
+  plus:() => ({tier:plusTier(), until:PLUS ? tsMs(PLUS.until) : 0, cfg:PLUSCFG, pending:PLUSORD.find(o => o.status === "pending") || null, tiers:PLUS_TIERS, prices:PLUS_PRICES,
+    items:plusItems().map(x => ({k:x.k, g:x.g.id, ed:x.e.id, edName:x.e.name, need:x.need, monthly:x.monthly, have:!!LIBRAW[x.k] && LIBRAW[x.k].status !== "pending" && (LIBRAW[x.k].status !== "plus" || plusCovers(x.k, LIBRAW[x.k])), pendingBuy:!!LIBRAW[x.k] && LIBRAW[x.k].status === "pending"}))}),
+  plusClaim, plusOrder,
   accounts:() => accList().sort((a, b) => (b.at || 0) - (a.at || 0)).map(a => ({...a, cur:!!(user && user.uid === a.uid)})),
   switchUser:accSwitch, forgetUser:accForget, logout:() => signOut(auth), signUp:() => showAuth("signup"), authErr,
   signIn:(m, p) => signInWithEmailAndPassword(auth, String(m).trim().toLowerCase(), p),
@@ -1385,6 +1478,7 @@ function bigPicture(){ if (!BP) BP = makeBP({$, esc, GAMES, ownedEds, instOf, ED
   state:() => ({user, PROFILE, FRIENDS, PLAY, RUNNING, PROGRESS, WISH, PARENTAL, online:isOnline, playing:playingNow}),
   wish:async (gid, on) => { if (!user) throw new Error("سجّل دخولك أول"); const r = doc(fs, "users", user.uid, "wishlist", gid); if (on) await setDoc(r, {at:serverTimestamp()}); else await deleteDoc(r); }}); return BP; }
 if (PS) setTimeout(() => bigPicture(), 0);
+onSnapshot(doc(fs, "config", "plus"), s => { const d = s.exists() ? s.data() : {}; PLUSCFG = {monthly:Array.isArray(d.monthly) ? d.monthly : [], catalog:d.catalog && typeof d.catalog === "object" ? d.catalog : {}, discount:+d.discount || 0}; plusChanged(); }, () => {});
 onSnapshot(collection(fs, "sales"), s => { SALES = {}; s.forEach(d => SALES[d.id] = d.data()); render(); }, () => {});
 function render(){
   try { publishProfile(); } catch(e) {}
@@ -1404,6 +1498,7 @@ function render(){
   else if (curView === "market") renderMarket();
   else if (curView === "workshop") renderWorkshop();
   else if (curView === "engine") renderEngine();
+  else if (curView === "plus") renderPlus();
   else if (curView === "download") { $("#dlInApp").hidden = !PS; $("#dlBtn").hidden = !!PS; }
 }
 addEventListener("hashchange", route);
@@ -1523,7 +1618,7 @@ function applyChrome(){
   $("#coinChip").hidden = !user; if (user) $("#coinBal").textContent = coins(PROFILE && PROFILE.coins);
 }
 onAuthStateChanged(auth, async u => {
-  unsubs.forEach(f => { try { f(); } catch(e) {} }); unsubs = []; LIB = {}; PROFILE = null; FRIENDS = {}; watchPresence(); watchChats(); PLAY = {}; REFUNDS = {}; ACH = {}; WISH = {}; PREFS = {fav:[], hidden:[]}; lastPub = ""; frBadge();
+  unsubs.forEach(f => { try { f(); } catch(e) {} }); unsubs = []; LIB = {}; LIBRAW = {}; PLUS = null; PLUSORD = []; PLUSALL = []; clearTimeout(plusT); PROFILE = null; FRIENDS = {}; watchPresence(); watchChats(); PLAY = {}; REFUNDS = {}; ACH = {}; WISH = {}; PREFS = {fav:[], hidden:[]}; lastPub = ""; frBadge();
     SHARED = {}; for (const k of Object.keys(famUnsubs)) { famUnsubs[k](); delete famUnsubs[k]; } CARDS = {}; DROPS = {}; CBADGES = {}; LISTINGS = []; FAMILY = null; GIFTS = []; USERS = {}; ORDERS = []; CODES = {}; MYCO = []; COINORDERS = [];
   user = u; authReady = true; setAdmin();
   if (u) { accRemember(u);
@@ -1531,7 +1626,9 @@ onAuthStateChanged(auth, async u => {
     try { await ensureProfile(u, pendingName, pendingUname); } catch(e) { toast("ما قدرت أفتح حسابك في قاعدة البيانات: " + (e.code || e.message)); }
     unsubs.push(onSnapshot(doc(fs, "users", u.uid), s => { PROFILE = s.exists() ? s.data() : null; applyChrome(); sendUserToApp(); accTouch(u); if (BP && BP.on) BP.refresh();
       if (PROFILE && PROFILE.pid && !PROFILE.username && !$("#uf")) askUsername(u); if (curView === "account") renderAccount(); if (curView === "coins") renderCoins(); }));
-    unsubs.push(onSnapshot(collection(fs, "users", u.uid, "library"), s => { LIB = {}; s.forEach(d => LIB[d.id] = libItem(d.data())); render(); autoInstall(); sendOwned(); }, e => toast("ما قدرت أقرأ مكتبتك: " + e.code)));
+    unsubs.push(onSnapshot(collection(fs, "users", u.uid, "library"), s => { LIBRAW = {}; s.forEach(d => LIBRAW[d.id] = libItem(d.data())); rebuildLib(); render(); autoInstall(); sendOwned(); if (curView === "plus") renderPlus(); }, e => toast("ما قدرت أقرأ مكتبتك: " + e.code)));
+    unsubs.push(onSnapshot(doc(fs, "users", u.uid, "meta", "plus"), s => { PLUS = s.exists() ? s.data() : null; plusChanged(); }, () => {}));
+    unsubs.push(onSnapshot(collection(fs, "users", u.uid, "plusOrders"), s => { PLUSORD = s.docs.map(d => ({id:d.id, ...d.data()})); if (curView === "plus") renderPlus(); if (BP && BP.on) BP.refresh(); }, () => {}));
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "friends"), s => { FRIENDS = {}; s.forEach(d => FRIENDS[d.id] = d.data()); watchChats(); frBadge(); watchPresence(); if (curView === "friends") renderFriends(); }, () => {}));
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "achievements"), s => { ACH = {}; s.forEach(d => ACH[d.id] = d.data()); publishProfile(); if (curView === "account") renderProfile(); }, () => {}));
     unsubs.push(onSnapshot(collection(fs, "users", u.uid, "cards"), s => { CARDS = {}; s.forEach(d => CARDS[d.id] = d.data()); if (curView === "account") renderAccount(); if (curView === "market") renderMarket(); }, () => {}));

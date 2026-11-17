@@ -1156,6 +1156,40 @@ ipcMain.handle('ps:remoteInput', guard(async (id, ev) => {
   try { w.webContents.sendInputEvent(e); } catch (er) {} return true;
 }));
 ipcMain.handle('ps:fullscreen', guard(async on => { if (mainWin && !mainWin.isDestroyed()) { mainWin.setFullScreen(!!on); if (on) { mainWin.show(); mainWin.focus(); } } return true; }));
+/* ---- TV apps in console mode (YouTube, like on the PS5): the site's TV version in its own full-screen window,
+   driven by the controller. Its sign-in is kept in its own storage. Home / F1 / the controller's guide button closes it. ---- */
+const TV_UA = 'Mozilla/5.0 (PS4; Leanback Shell) Gecko/20100101 Firefox/65.0 LeanbackShell/01.00.01.75 Sony PS4/ (PS4, , no, CH)';
+const TV_APPS = { youtube: { url: 'https://www.youtube.com/tv', title: 'YouTube', partition: 'persist:tv-youtube', hosts: /(^|\.)(youtube\.com|google\.com|googlevideo\.com|ytimg\.com|gstatic\.com|youtube-nocookie\.com|youtu\.be)$/ } };
+let tvWin = null;
+function closeTv() { if (tvWin && !tvWin.isDestroyed()) tvWin.close(); }
+function openTv(app) {
+  const a = TV_APPS[app]; if (!a) throw new Error('bad app');
+  if (tvWin && !tvWin.isDestroyed()) { tvWin.show(); tvWin.focus(); return; }
+  const w = tvWin = new BrowserWindow({ fullscreen: true, backgroundColor: '#000000', title: a.title, autoHideMenuBar: true, show: false,
+    webPreferences: { partition: a.partition, preload: path.join(__dirname, 'tv-preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false, backgroundThrottling: false } });
+  w.tvApp = app; w.setMenu(null);
+  w.webContents.setUserAgent(TV_UA);
+  w.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  w.webContents.on('will-navigate', (e, url) => { try { if (!a.hosts.test(new URL(url).hostname)) e.preventDefault(); } catch (x) { e.preventDefault(); } });
+  w.webContents.on('before-input-event', (e, i) => { if (i.type === 'keyDown' && (i.key === 'Home' || i.key === 'F1')) { e.preventDefault(); closeTv(); } });
+  w.once('ready-to-show', () => { if (!w.isDestroyed()) { w.show(); w.focus(); } });
+  w.on('closed', () => { if (tvWin === w) tvWin = null;
+    if (mainWin && !mainWin.isDestroyed()) { mainWin.show(); mainWin.focus(); mainWin.webContents.send('tv:closed', app); } });
+  w.loadURL(a.url);
+}
+ipcMain.handle('tv:open', guard(async app => { openTv(String(app || '')); return true; }));
+ipcMain.handle('tv:close', guard(async () => { closeTv(); return true; }));
+ipcMain.handle('tv:state', guard(async () => tvWin && !tvWin.isDestroyed() ? { app: tvWin.tvApp, url: tvWin.webContents.getURL(), title: tvWin.webContents.getTitle(), ua: tvWin.webContents.getUserAgent(), visible: tvWin.isVisible() } : null));
+// controller buttons from the TV window become real key presses (the TV site is driven by the keyboard)
+const TV_KEYS = { up: 'Up', down: 'Down', left: 'Left', right: 'Right', a: 'Enter', b: 'Escape', x: 'MediaPlayPause', lb: 'MediaPreviousTrack', rb: 'MediaNextTrack' };
+ipcMain.on('tv:pad', (e, k) => {
+  if (!tvWin || tvWin.isDestroyed() || e.sender !== tvWin.webContents) return;
+  if (k === 'guide') return closeTv();
+  const code = TV_KEYS[k]; if (!code) return;
+  tvWin.webContents.sendInputEvent({ type: 'keyDown', keyCode: code });
+  if (code === 'Enter') tvWin.webContents.sendInputEvent({ type: 'char', keyCode: '\r' });
+  tvWin.webContents.sendInputEvent({ type: 'keyUp', keyCode: code });
+});
 ipcMain.handle('ps:retryOnline', guard(async () => { if (mainWin) mainWin.loadURL(SITE); return true; }));
 // Game achievements: a game calls PREMIUM_STUDIO.achieve('id'); it's kept on the player's account
 ipcMain.on('game:achieve', (e, aid) => {

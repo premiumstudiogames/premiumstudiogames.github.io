@@ -123,6 +123,28 @@ await ok('sale over 90% refused', assertFails(setDoc(doc(ADM, 'sales/blockfall')
 await ok('ask your PC to install a game', assertSucceeds(setDoc(doc(A, 'users/A/meta/remote'), { install: 'blockfall--gold', at: serverTimestamp() })));
 await ok('the request must name a real edition', assertFails(setDoc(doc(A, 'users/A/meta/remote'), { install: 'blockfall--free', at: serverTimestamp() })));
 await ok('nobody can ask your PC to install', assertFails(setDoc(doc(B, 'users/A/meta/remote'), { install: 'blockfall--gold', at: serverTimestamp() })));
+// Premium Plus
+const soon = d => new Date(Date.now() + d * 864e5);
+await ok('plus: ask for a subscription at its price', assertSucceeds(setDoc(doc(C, 'users/C/plusOrders/o1'), { tier: 'essential', months: 12, price: 79.99, status: 'pending', at: serverTimestamp() })));
+await ok('plus: not at a wrong price', assertFails(setDoc(doc(C, 'users/C/plusOrders/o2'), { tier: 'premium', months: 12, price: 1, status: 'pending', at: serverTimestamp() })));
+await ok('plus: no made-up plan', assertFails(setDoc(doc(C, 'users/C/plusOrders/o3'), { tier: 'gold', months: 2, price: 1, status: 'pending', at: serverTimestamp() })));
+await ok('plus: player cannot turn it on', assertFails(setDoc(doc(C, 'users/C/meta/plus'), { tier: 'premium', until: soon(365) })));
+await ok('plus: player cannot mark the order paid', assertFails(updateDoc(doc(C, 'users/C/plusOrders/o1'), { status: 'active' })));
+await ok('plus: studio sets the games', assertSucceeds(setDoc(doc(ADM, 'config/plus'), { monthly: ['last-recording__std'], catalog: { 'blockfall__std': 'extra', 'blockfall__gold': 'premium' }, discount: 10, at: serverTimestamp() })));
+await ok('plus: player cannot change the games', assertFails(setDoc(doc(C, 'config/plus'), { monthly: ['blockfall__gold'], catalog: {}, discount: 90, at: serverTimestamp() })));
+await ok('plus: no monthly game without a subscription', assertFails(setDoc(doc(C, 'users/C/library/last-recording__std'), { game: 'last-recording', edition: 'std', price: 0, status: 'plus', tier: 'essential', at: serverTimestamp() })));
+await ok('plus: studio confirms and turns it on', assertSucceeds((async () => { const b = writeBatch(ADM); b.update(doc(ADM, 'users/C/plusOrders/o1'), { status: 'active', paidAt: serverTimestamp() }); b.set(doc(ADM, 'users/C/meta/plus'), { tier: 'essential', until: soon(365), since: serverTimestamp() }); await b.commit(); })()));
+await ok('plus: member adds the monthly game', assertSucceeds(setDoc(doc(C, 'users/C/library/last-recording__std'), { game: 'last-recording', edition: 'std', price: 0, status: 'plus', tier: 'essential', at: serverTimestamp() })));
+await ok('plus: essential cannot take catalog games', assertFails(setDoc(doc(C, 'users/C/library/blockfall__std'), { game: 'blockfall', edition: 'std', price: 0, status: 'plus', tier: 'extra', at: serverTimestamp() })));
+await ok('plus: cannot pass a non-monthly game as monthly', assertFails(setDoc(doc(C, 'users/C/library/blockfall__std'), { game: 'blockfall', edition: 'std', price: 0, status: 'plus', tier: 'essential', at: serverTimestamp() })));
+await ok('plus: member discount on a purchase', assertSucceeds(setDoc(doc(C, 'users/C/library/blockfall__gold'), { game: 'blockfall', edition: 'gold', price: 99.99 * (100 - 10) / 100, status: 'pending', plus: true, at: serverTimestamp() })));
+await ok('plus: no member discount for non-members', assertFails(setDoc(doc(B, 'users/B/library/blockfall__gold'), { game: 'blockfall', edition: 'gold', price: 99.99 * (100 - 10) / 100, status: 'pending', plus: true, at: serverTimestamp() })));
+await ok('plus: extra member takes a catalog game', assertSucceeds((async () => { await env.withSecurityRulesDisabled(c => setDoc(doc(c.firestore(), 'users/B/meta/plus'), { tier: 'extra', until: soon(30) }));
+  await setDoc(doc(B, 'users/B/library/blockfall__std'), { game: 'blockfall', edition: 'std', price: 0, status: 'plus', tier: 'extra', at: serverTimestamp() }); })()));
+await ok('plus: extra cannot take premium-only games', assertFails(setDoc(doc(B, 'users/B/library/blockfall__gold'), { game: 'blockfall', edition: 'gold', price: 0, status: 'plus', tier: 'premium', at: serverTimestamp() })));
+await ok('plus: ended subscription takes nothing', assertFails((async () => { await env.withSecurityRulesDisabled(c => setDoc(doc(c.firestore(), 'users/A/meta/plus'), { tier: 'premium', until: new Date(Date.now() - 1000) }));
+  await setDoc(doc(A, 'users/A/library/last-recording__std'), { game: 'last-recording', edition: 'std', price: 0, status: 'plus', tier: 'essential', at: serverTimestamp() }); })()));
+await ok('plus: anyone can see the plus games', assertSucceeds(getDoc(doc(env.unauthenticatedContext().firestore(), 'config/plus'))));
 // existing features still work
 await ok('player still adds a demo', assertSucceeds(setDoc(doc(B, 'users/B/library/last-recording__demo'), { game: 'last-recording', edition: 'demo', price: 0, status: 'free', at: serverTimestamp() })));
 await ok('player still renames', assertSucceeds(updateDoc(doc(B, 'users/B'), { name: 'Bobby' })));

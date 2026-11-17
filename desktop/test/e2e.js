@@ -181,6 +181,26 @@ app.whenReady().then(async () => {
     es = await call('eng:status');
     ok('engine: removed (files + icon), project kept', es.installed.length === 0 && !fs.existsSync(engLnk) && fs.existsSync(path.join(projDir, 'E2E_Game.pge.json')), `installed=${es.installed.length} icon=${fs.existsSync(engLnk)} project=${fs.existsSync(path.join(projDir, 'E2E_Game.pge.json'))}`);
     fs.rmSync(projDir, { recursive: true, force: true });
+    // ---- YouTube in console mode: the TV version, full screen, controller-driven, closes back to the console
+    const tvShots = path.join(__dirname, 'shots'); fs.mkdirSync(tvShots, { recursive: true });
+    await call('tv:open', 'youtube');
+    const tvOk = await waitFor(async () => { const t = await call('tv:state'); return t && /youtube\.com\/tv/.test(t.url) && t.visible && /youtube/i.test(t.title); }, 45000);
+    let tv = await call('tv:state');
+    ok('youtube: TV version opens full screen', tvOk && /Leanback/.test(tv.ua), tv && (tv.url + ' · ' + tv.title));
+    const tvw = BrowserWindow.getAllWindows().find(w => w.tvApp === 'youtube');
+    await new Promise(r => setTimeout(r, 8000));
+    tv = await call('tv:state');
+    ok('youtube: stays on the TV site (not sent to the desktop site)', tv && /youtube\.com\/tv/.test(tv.url), tv && tv.url);
+    let leanback = false; try { leanback = await tvw.webContents.executeJavaScript('!!document.querySelector("ytlr-app, ytlr-guide-response-renderer, #container ytlr-surface-page, ytlr-browse-page, [class*=ytLr], [class*=ytlr]")'); } catch (e) {}
+    try { fs.writeFileSync(path.join(tvShots, 'youtube.png'), (await tvw.webContents.capturePage()).toPNG()); } catch (e) {}
+    ok('youtube: TV interface loaded', leanback);
+    ipcMain.emit('tv:pad', { sender: tvw.webContents }, 'down'); ipcMain.emit('tv:pad', { sender: tvw.webContents }, 'right');
+    await new Promise(r => setTimeout(r, 1500));
+    try { fs.writeFileSync(path.join(tvShots, 'youtube-moved.png'), (await tvw.webContents.capturePage()).toPNG()); } catch (e) {}
+    const fake = await (async () => { ipcMain.emit('tv:pad', { sender: { id: -1 } }, 'guide'); await new Promise(r => setTimeout(r, 500)); return !!(await call('tv:state')); })();
+    ok('youtube: other pages can\'t drive it', fake);
+    ipcMain.emit('tv:pad', { sender: tvw.webContents }, 'guide');
+    ok('youtube: guide button closes it, back to the console', await waitFor(async () => !(await call('tv:state')), 10000));
   } catch (e) { ok('no crash', false, e && e.stack || String(e)); }
   fs.writeFileSync(path.join(__dirname, 'e2e-result.txt'), results.join('\n') + '\n');
   console.log('\n' + results.join('\n') + `\n${failed ? failed + ' FAILED' : 'ALL PASSED'}`);
