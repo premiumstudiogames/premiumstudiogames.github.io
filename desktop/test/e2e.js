@@ -84,7 +84,7 @@ app.whenReady().then(async () => {
     // F9 records a clip, F9 again saves it
     const recLog = []; for (const ch of ['rec:started', 'rec:error', 'rec:done']) ipcMain.on(ch, (e, a) => recLog.push(ch + (ch === 'rec:done' ? ' ' + (a && a.length) : a ? ' ' + a : '') + ' @' + Date.now() % 100000));
     if (gw) { gw.focus(); gw.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F9' }); }
-    await sleep(4000);
+    await waitFor(() => recLog.some(l => l.startsWith('rec:started')), 15000); await sleep(4000);   // record 4 s once the recorder runs
     if (gw) gw.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F9' });
     const clipDir = path.join(app.getPath('videos'), 'Premium Games');
     ok('F9 records a clip', await waitFor(() => { try { return fs.readdirSync(clipDir).some(d => fs.readdirSync(path.join(clipDir, d)).some(f => f.endsWith('.webm') && fs.statSync(path.join(clipDir, d, f)).size > 1000)); } catch (e) { return false; } }, 15000), recLog.join(' | ') + ' · gw=' + !!gw);

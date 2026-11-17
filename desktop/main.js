@@ -421,6 +421,7 @@ ipcMain.on('rec:started', () => { recLive = true; flash('⏺ يسجّل… اض�
 ipcMain.on('rec:error', (e, m) => { console.log('recording failed:', m); recKey = ''; recLive = false; flash('ما قدرت أسجّل'); });
 ipcMain.on('rec:done', async (e, bytes) => {
   const key = recKey; recKey = ''; recLive = false; clearTimeout(recT);
+  if (!bytes || !bytes.length) { flash('ما انحفظ المقطع: ما وصلت صورة من اللعبة'); return; }   // never save an empty video
   try { const dir = path.join(CLIPS(), gameFolder(key)); await fsp.mkdir(dir, { recursive: true });
     const t = new Date(), pad = n => String(n).padStart(2, '0');
     await fsp.writeFile(path.join(dir, `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())} ${pad(t.getHours())}.${pad(t.getMinutes())}.${pad(t.getSeconds())}.webm`), Buffer.from(bytes));
