@@ -32,9 +32,12 @@ int main(int argc, char** argv) {
   int frame = 0; glm::vec3 startPos(0); bool finishSelftest = false;
   while (running) {
     if (!selftest.empty()) {   // walk forward for a second, then check the player moved and save a screenshot
-      frame++; auto key = [&](Uint32 t) { SDL_Event k{}; k.type = t; k.key.keysym.scancode = SDL_SCANCODE_W; G.event(k); };
-      if (frame == 30) { startPos = G.playerPos(); key(SDL_KEYDOWN); } if (frame == 90) key(SDL_KEYUP);
-      if (frame == 120) finishSelftest = true;
+      auto key = [&](Uint32 t) { SDL_Event k{}; k.type = t; k.key.keysym.scancode = SDL_SCANCODE_W; G.event(k); };
+      if (!G.loading() || SDL_GetTicks() > 120000) {   // a block world is built first
+        frame++;
+        if (frame == 30) { startPos = G.playerPos(); key(SDL_KEYDOWN); } if (frame == 90) key(SDL_KEYUP);
+        if (frame == 120) finishSelftest = true;
+      }
     }
     SDL_Event e;
     while (SDL_PollEvent(&e)) {

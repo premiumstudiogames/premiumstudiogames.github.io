@@ -12,6 +12,11 @@ enum class Motion { Static, Kinematic, Dynamic };
 constexpr uint32_t NO_BODY = 0xffffffffu;
 constexpr uint64_t PLAYER_TAG = 1ull << 40;
 
+// a collision shape built from triangles (any thread), for chunks of the block world
+struct ShapeHandle;
+using ShapePtr = std::shared_ptr<ShapeHandle>;
+ShapePtr buildTriangleShape(const std::vector<glm::vec3>& verts, const std::vector<uint32_t>& idx);
+
 class Physics {
 public:
   Physics();
@@ -21,6 +26,8 @@ public:
   // a body for one of the primitive meshes (Cube, Sphere, ...), scaled; userData is reported in contacts
   uint32_t addMesh(const std::string& mesh, const glm::vec3& scale, const glm::vec3& pos, const glm::quat& rot, Motion m, float mass, uint64_t userData);
   uint32_t addPlayer(const glm::vec3& center);           // upright capsule (1.8 m), rotation locked
+  uint32_t addStatic(const ShapePtr& shape, const glm::vec3& pos, uint64_t userData);
+  void setStaticShape(uint32_t id, const ShapePtr& shape);
   void remove(uint32_t id);
   void setShape(uint32_t id, const std::string& mesh, const glm::vec3& scale);
   void step(float dt);                                   // fixed 60 Hz sub-steps (max 4)

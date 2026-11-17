@@ -21,9 +21,9 @@ static const char* LIT_VS = R"(#version 330 core
 layout(location=0) in vec3 aPos; layout(location=1) in vec3 aNor;
 uniform mat4 uModel, uVP, uLightVP; out vec3 vPos; out vec3 vNor; out vec4 vLight;
 void main(){ vec4 w = uModel * vec4(aPos,1.0); vPos = w.xyz; vNor = mat3(transpose(inverse(uModel))) * aNor; vLight = uLightVP * w; gl_Position = uVP * w; })";
-static const char* LIT_FS = R"(#version 330 core
-in vec3 vPos; in vec3 vNor; in vec4 vLight; out vec4 frag;
-uniform vec3 uColor, uEmissive, uCam, uSky, uGround, uFogColor; uniform float uMetal, uRough, uOpacity, uAmbient, uExposure, uFogDensity; uniform int uFog, uMode, uHasShadow, uUnlit;
+// lighting shared by meshes and the block world (sun with shadow, point / spot lights, sky light, reflections, ACES + sRGB, fog)
+static const char* LIGHT_LIB = R"(
+uniform vec3 uCam, uSky, uGround, uFogColor; uniform float uAmbient, uExposure, uFogDensity; uniform int uFog, uMode, uHasShadow;
 uniform int uNumLights; uniform int uLType[8]; uniform vec3 uLPos[8], uLDir[8], uLColor[8]; uniform float uLInt[8], uLRange[8], uLCos[8];
 uniform int uHasSun; uniform vec3 uSunDir, uSunColor; uniform float uSunInt; uniform sampler2D uShadow;
 const float PI = 3.14159265;
@@ -34,7 +34,7 @@ vec3 brdf(vec3 N, vec3 V, vec3 L, vec3 base, float metal, float rough){
   vec3 H = normalize(V+L); float NoL=max(dot(N,L),0.0), NoV=max(dot(N,V),1e-3), NoH=max(dot(N,H),0.0), VoH=max(dot(V,H),0.0);
   float a = max(rough*rough, 0.002); vec3 f0 = mix(vec3(0.04), base, metal); vec3 F = F_Schlick(f0, VoH);
   vec3 spec = D_GGX(NoH,a)*V_Smith(NoV,NoL,a)*F; vec3 diff = (1.0-F)*(1.0-metal)*base/PI; return (diff+spec)*NoL; }
-float shadow(){ if(uHasShadow==0) return 1.0; vec3 p = vLight.xyz/vLight.w*0.5+0.5; if(p.z>1.0||p.x<0.0||p.x>1.0||p.y<0.0||p.y>1.0) return 1.0;
+float shadowAt(vec4 lp){ if(uHasShadow==0) return 1.0; vec3 p = lp.xyz/lp.w*0.5+0.5; if(p.z>1.0||p.x<0.0||p.x>1.0||p.y<0.0||p.y>1.0) return 1.0;
   float s=0.0; vec2 ts = 1.0/vec2(textureSize(uShadow,0)); for(int x=-1;x<=1;x++) for(int y=-1;y<=1;y++){ float d=texture(uShadow,p.xy+vec2(x,y)*ts).r; s += (p.z-0.0015>d)?0.0:1.0; } return s/9.0; }
 // three.js ACESFilmicToneMapping + sRGB output, so games look the same as in Premium Engine 0.1
 vec3 rrt(vec3 v){ vec3 a = v*(v+0.0245786)-0.000090537; vec3 b = v*(0.983729*v+0.4329510)+0.238081; return a/b; }
@@ -42,29 +42,64 @@ vec3 aces(vec3 c){ const mat3 I = mat3(vec3(0.59719,0.07600,0.02840), vec3(0.354
   const mat3 O = mat3(vec3(1.60475,-0.10208,-0.00327), vec3(-0.53108,1.10813,-0.07276), vec3(-0.07367,-0.00605,1.07602));
   c /= 0.6; c = I*c; c = rrt(c); c = O*c; return clamp(c,0.0,1.0); }
 vec3 srgb(vec3 c){ return mix(c*12.92, 1.055*pow(c, vec3(1.0/2.4))-0.055, step(vec3(0.0031308), c)); }
+vec3 lighting(vec3 N, vec3 P, vec3 base, float metal, float rough, float sh){
+  vec3 V = normalize(uCam - P); vec3 col = vec3(0.0);
+  if(uHasSun==1){ col += brdf(N,V,normalize(-uSunDir),base,metal,rough) * uSunColor * uSunInt * sh; }
+  for(int i=0;i<uNumLights;i++){ vec3 Lv = uLPos[i]-P; float d = length(Lv); vec3 L = Lv/max(d,1e-4);
+    float att = 1.0/max(d*d,0.01); if(uLRange[i]>0.0){ float r = clamp(1.0-pow(d/uLRange[i],4.0),0.0,1.0); att *= r*r; }
+    if(uLType[i]==2){ float c = dot(-L, normalize(uLDir[i])); att *= smoothstep(uLCos[i], mix(uLCos[i],1.0,0.3), c); }
+    col += brdf(N,V,L,base,metal,rough) * uLColor[i] * uLInt[i] * att; }
+  vec3 hemi = mix(uGround, uSky, 0.5*N.y+0.5) * uAmbient;
+  col += hemi * base * (1.0-metal) / PI;
+  // sky reflection, so metals and glossy surfaces are not black without an environment map
+  vec3 Rv = reflect(-V, N); vec3 env = mix(uGround, uSky, smoothstep(-0.3, 0.3, Rv.y)) * uAmbient;
+  vec3 f0 = mix(vec3(0.04), base, metal); float NoV = max(dot(N,V), 0.0);
+  col += env * (f0 + (max(vec3(1.0-rough), f0)-f0)*pow(1.0-NoV,5.0)) * (1.0 - rough*0.85) * 0.6;
+  return col; }
+vec3 finish(vec3 col, vec3 P){
+  if(uMode!=1) col = aces(col * uExposure); col = srgb(col);
+  if(uFog==1){ float d = length(uCam - P); float f = 1.0 - exp(-pow(uFogDensity*d,2.0)); col = mix(col, uFogColor, clamp(f,0.0,1.0)); }   // in display space, fades into the sky
+  return col; }
+)";
+static const char* LIT_FS_HEAD = R"(#version 330 core
+in vec3 vPos; in vec3 vNor; in vec4 vLight; out vec4 frag;
+uniform vec3 uColor, uEmissive; uniform float uMetal, uRough, uOpacity; uniform int uUnlit;
+)";
+static const char* LIT_FS_MAIN = R"(
 void main(){
   vec3 N = normalize(vNor); if(!gl_FrontFacing) N = -N;
   if(uMode==3){ frag = vec4(N*0.5+0.5,1.0); return; }
   vec3 base = uColor; vec3 col;
   if(uUnlit==1 || uMode==1){ col = base + uEmissive; if(uUnlit==1){ frag = vec4(srgb(col), uOpacity); return; } }
-  else {
-    vec3 V = normalize(uCam - vPos); col = vec3(0.0);
-    if(uHasSun==1){ col += brdf(N,V,normalize(-uSunDir),base,uMetal,uRough) * uSunColor * uSunInt * shadow(); }
-    for(int i=0;i<uNumLights;i++){ vec3 Lv = uLPos[i]-vPos; float d = length(Lv); vec3 L = Lv/max(d,1e-4);
-      float att = 1.0/max(d*d,0.01); if(uLRange[i]>0.0){ float r = clamp(1.0-pow(d/uLRange[i],4.0),0.0,1.0); att *= r*r; }
-      if(uLType[i]==2){ float c = dot(-L, normalize(uLDir[i])); att *= smoothstep(uLCos[i], mix(uLCos[i],1.0,0.3), c); }
-      col += brdf(N,V,L,base,uMetal,uRough) * uLColor[i] * uLInt[i] * att; }
-    vec3 hemi = mix(uGround, uSky, 0.5*N.y+0.5) * uAmbient;
-    col += hemi * base * (1.0-uMetal) / PI;
-    // sky reflection, so metals and glossy surfaces are not black without an environment map
-    vec3 Rv = reflect(-V, N); vec3 env = mix(uGround, uSky, smoothstep(-0.3, 0.3, Rv.y)) * uAmbient;
-    vec3 f0 = mix(vec3(0.04), base, uMetal); float NoV = max(dot(N,V), 0.0);
-    col += env * (f0 + (max(vec3(1.0-uRough), f0)-f0)*pow(1.0-NoV,5.0)) * (1.0 - uRough*0.85) * 0.6;
-    col += uEmissive;
-  }
-  if(uMode!=1) col = aces(col * uExposure); col = srgb(col);
-  if(uFog==1){ float d = length(uCam - vPos); float f = 1.0 - exp(-pow(uFogDensity*d,2.0)); col = mix(col, uFogColor, clamp(f,0.0,1.0)); }   // in display space, fades into the sky
-  frag = vec4(col, uOpacity); })";
+  else col = lighting(N, vPos, base, uMetal, uRough, shadowAt(vLight)) + uEmissive;
+  frag = vec4(finish(col, vPos), uOpacity); })";
+// the block world: chunk meshes with per-vertex colour, corner shadow (AO) and an optional texture atlas
+static const char* VOX_VS = R"(#version 330 core
+layout(location=0) in vec3 aPos; layout(location=1) in vec2 aUv; layout(location=2) in vec4 aCol; layout(location=3) in uvec4 aInfo;
+uniform mat4 uVP, uLightVP; uniform vec3 uOffset;
+out vec3 vPos; out vec3 vNor; out vec4 vLight; out vec2 vUv; out vec4 vCol; flat out int vTile;
+const vec3 NRM[6] = vec3[6](vec3(1,0,0), vec3(-1,0,0), vec3(0,1,0), vec3(0,-1,0), vec3(0,0,1), vec3(0,0,-1));
+void main(){ vec3 w = aPos + uOffset; vPos = w; vNor = NRM[int(aInfo.x)]; vLight = uLightVP * vec4(w,1.0); vUv = aUv; vCol = aCol;
+  vTile = int(aInfo.y) + int(aInfo.z) * 256; gl_Position = uVP * vec4(w,1.0); })";
+static const char* VOX_FS_HEAD = R"(#version 330 core
+in vec3 vPos; in vec3 vNor; in vec4 vLight; in vec2 vUv; in vec4 vCol; flat in int vTile; out vec4 frag;
+uniform sampler2D uAtlas; uniform int uTiles;
+)";
+static const char* VOX_FS_MAIN = R"(
+vec3 toLin(vec3 c){ return mix(c/12.92, pow((c+0.055)/1.055, vec3(2.4)), step(vec3(0.04045), c)); }
+void main(){
+  vec3 N = normalize(vNor);
+  if(uMode==3){ frag = vec4(N*0.5+0.5,1.0); return; }
+  vec3 base = toLin(vCol.rgb);
+  if(uTiles > 0 && vTile != 65535){
+    vec2 ts = vec2(textureSize(uAtlas, 0)); float tw = ts.x / float(uTiles); vec2 cell = vec2(tw) / ts;
+    vec2 t = vec2(float(vTile % uTiles), float(vTile / uTiles)); vec2 f = fract(vUv); f.y = 1.0 - f.y;
+    vec4 tx = texture(uAtlas, (t + f) * cell); base *= toLin(tx.rgb); }
+  float ao = mix(0.42, 1.0, vCol.a);
+  // faces of each axis get their own shade so terraces and walls that face away from the sun stay readable
+  ao *= N.y > 0.5 ? 1.0 : N.y < -0.5 ? 0.55 : abs(N.x) > 0.5 ? 0.86 : 0.72;
+  vec3 col = uMode==1 ? base * ao : lighting(N, vPos, base * ao, 0.0, 0.92, shadowAt(vLight));
+  frag = vec4(finish(col, vPos), 1.0); })";
 static const char* FLAT_VS = R"(#version 330 core
 layout(location=0) in vec3 aPos; uniform mat4 uModel, uVP; out float vDist; uniform vec3 uCam;
 void main(){ vec4 w = uModel*vec4(aPos,1.0); vDist = length(w.xyz - uCam); gl_Position = uVP*w; })";
@@ -98,7 +133,8 @@ static void M4(unsigned p, const char* n, const glm::mat4& m) { glUniformMatrix4
 static void V3(unsigned p, const char* n, const glm::vec3& v) { glUniform3f(U(p, n), v.x, v.y, v.z); }
 
 bool Renderer::init() {
-  lit_ = compile(LIT_VS, LIT_FS, "lit"); flat_ = compile(FLAT_VS, FLAT_FS, "flat"); depth_ = compile(DEPTH_VS, DEPTH_FS, "depth"); idp_ = compile(DEPTH_VS, ID_FS, "id"); text_ = compile(TEXT_VS, TEXT_FS, "text");
+  std::string litFs = std::string(LIT_FS_HEAD) + LIGHT_LIB + LIT_FS_MAIN, voxFs = std::string(VOX_FS_HEAD) + LIGHT_LIB + VOX_FS_MAIN;
+  lit_ = compile(LIT_VS, litFs.c_str(), "lit"); vox_ = compile(VOX_VS, voxFs.c_str(), "voxels"); flat_ = compile(FLAT_VS, FLAT_FS, "flat"); depth_ = compile(DEPTH_VS, DEPTH_FS, "depth"); idp_ = compile(DEPTH_VS, ID_FS, "id"); text_ = compile(TEXT_VS, TEXT_FS, "text");
   glGenVertexArrays(1, &textVao_); glBindVertexArray(textVao_); glGenBuffers(1, &textVbo_); glBindBuffer(GL_ARRAY_BUFFER, textVbo_);
   glEnableVertexAttribArray(0); glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 20, (void*)0); glEnableVertexAttribArray(1); glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 20, (void*)12); glBindVertexArray(0);
   // shadow map
@@ -126,7 +162,7 @@ bool Renderer::init() {
   { for (int i = -50; i <= 50; i++) { L.push_back({(float)i, 0, -50}); L.push_back({(float)i, 0, 50}); L.push_back({-50, 0, (float)i}); L.push_back({50, 0, (float)i}); } grid_ = uploadLines(L); L.clear(); }
   return true;
 }
-void Renderer::shutdown() { glDeleteProgram(text_); glDeleteVertexArrays(1, &textVao_); glDeleteBuffers(1, &textVbo_); glDeleteProgram(lit_); glDeleteProgram(flat_); glDeleteProgram(depth_); glDeleteProgram(idp_); glDeleteFramebuffers(1, &shadowFbo_); glDeleteTextures(1, &shadowTex_);
+void Renderer::shutdown() { glDeleteProgram(vox_); glDeleteProgram(text_); glDeleteVertexArrays(1, &textVao_); glDeleteBuffers(1, &textVbo_); glDeleteProgram(lit_); glDeleteProgram(flat_); glDeleteProgram(depth_); glDeleteProgram(idp_); glDeleteFramebuffers(1, &shadowFbo_); glDeleteTextures(1, &shadowTex_);
   for (GpuMesh* m : {&wireBox_, &wireCapsule_, &arrow_, &axes_, &wireCam_, &grid_}) destroy(*m); releasePrimitives(); }
 
 // quads for each glyph of the ImGui font atlas (the big font, index 1 when loaded), centred on the origin, 1 unit = text size
@@ -171,12 +207,21 @@ void Renderer::freeTarget(RenderTarget& rt) {
 void Renderer::shadowPass(const Frame& f, glm::mat4& lightVP, bool& has) {
   has = false; const LightItem* sun = nullptr; for (auto& l : f.lights) if (l.type == 0) { sun = &l; break; }
   if (!sun || !sun->shadows || f.viewMode != VM_Lit) return;
+  if (f.voxels.empty() && f.draws.empty()) return;
   glm::vec3 d = glm::normalize(sun->dir), c = f.shadowCenter; glm::vec3 up = std::abs(d.y) > 0.99f ? glm::vec3(0, 0, 1) : glm::vec3(0, 1, 0);
-  glm::mat4 view = glm::lookAt(c - d * 80.f, c, up), proj = glm::ortho(-45.f, 45.f, -45.f, 45.f, 1.f, 200.f); lightVP = proj * view;
+  glm::mat4 view = glm::lookAt(c - d * 80.f, c, up);
+  // depth range: everything inside the 90 x 90 m light box that can cast a shadow, so tall terrain toward the sun is not clipped away
+  float zNear = 1.f, zFar = 200.f;
+  for (auto& v : f.voxels) { glm::vec3 lo(1e9f), hi(-1e9f);
+    for (int i = 0; i < 8; i++) { glm::vec3 q = glm::vec3(view * glm::vec4((i & 1) ? v.mx.x : v.mn.x, (i & 2) ? v.mx.y : v.mn.y, (i & 4) ? v.mx.z : v.mn.z, 1)); lo = glm::min(lo, q); hi = glm::max(hi, q); }
+    if (hi.x < -45.f || lo.x > 45.f || hi.y < -45.f || lo.y > 45.f) continue;
+    zNear = std::min(zNear, -hi.z - 1.f); zFar = std::max(zFar, -lo.z + 1.f); }
+  glm::mat4 proj = glm::ortho(-45.f, 45.f, -45.f, 45.f, zNear, zFar); lightVP = proj * view;
   glBindFramebuffer(GL_FRAMEBUFFER, shadowFbo_); glViewport(0, 0, 2048, 2048); glClear(GL_DEPTH_BUFFER_BIT); glEnable(GL_DEPTH_TEST); glDisable(GL_CULL_FACE);
   glEnable(GL_POLYGON_OFFSET_FILL); glPolygonOffset(1.5f, 2.f);
   glUseProgram(depth_); M4(depth_, "uVP", lightVP);
   for (auto& it : f.draws) { if (!it.castShadow || !it.mesh || it.opacity < 0.5f || it.pickOnly || it.unlit) continue; M4(depth_, "uModel", it.model); glBindVertexArray(it.mesh->vao); glDrawElements(GL_TRIANGLES, it.mesh->count, GL_UNSIGNED_INT, nullptr); }
+  for (auto& v : f.voxels) { M4(depth_, "uModel", glm::translate(glm::mat4(1), v.offset)); glBindVertexArray(v.vao); glDrawElements(GL_TRIANGLES, v.count, GL_UNSIGNED_INT, nullptr); }
   glDisable(GL_POLYGON_OFFSET_FILL); has = true;
 }
 
@@ -189,21 +234,28 @@ void Renderer::render(const Frame& f, const Camera& cam, int w, int h, const Ren
   glEnable(GL_DEPTH_TEST); glDepthFunc(GL_LEQUAL); glDisable(GL_CULL_FACE); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
   glm::mat4 vp = cam.proj * cam.view;
   if (f.viewMode != VM_Wire) {
-    unsigned p = lit_; glUseProgram(p); M4(p, "uVP", vp); M4(p, "uLightVP", lightVP); V3(p, "uCam", cam.pos);
-    // linear-ish sky light colours from the display colours
-    V3(p, "uSky", lin(f.world.skyLight)); V3(p, "uGround", lin(f.world.groundLight));
-    glUniform1f(U(p, "uAmbient"), f.viewMode == VM_Unlit ? 1.f : f.world.ambient); glUniform1f(U(p, "uExposure"), f.world.exposure);
-    glUniform1i(U(p, "uFog"), f.fog ? 1 : 0); V3(p, "uFogColor", f.world.fogColor); glUniform1f(U(p, "uFogDensity"), f.world.fogDensity);
-    glUniform1i(U(p, "uMode"), f.viewMode); glUniform1i(U(p, "uHasShadow"), hasShadow ? 1 : 0);
-    glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, shadowTex_); glUniform1i(U(p, "uShadow"), 0);
-    int n = 0, sun = 0; int types[8] = {0}; glm::vec3 pos[8], dir[8], col[8]; float in[8], rg[8], cs[8];
-    for (auto& l : f.lights) {
-      if (l.type == 0 && !sun) { sun = 1; V3(p, "uSunDir", glm::normalize(l.dir)); V3(p, "uSunColor", lin(l.color)); glUniform1f(U(p, "uSunInt"), l.intensity); continue; }
-      if (l.type == 0 || n >= 8) continue; types[n] = l.type; pos[n] = l.pos; dir[n] = l.dir; col[n] = lin(l.color); in[n] = l.intensity; rg[n] = l.range; cs[n] = l.cosOuter; n++;
-    }
-    glUniform1i(U(p, "uHasSun"), sun); glUniform1i(U(p, "uNumLights"), n);
-    if (n) { glUniform1iv(U(p, "uLType"), n, types); glUniform3fv(U(p, "uLPos"), n, &pos[0].x); glUniform3fv(U(p, "uLDir"), n, &dir[0].x); glUniform3fv(U(p, "uLColor"), n, &col[0].x);
-      glUniform1fv(U(p, "uLInt"), n, in); glUniform1fv(U(p, "uLRange"), n, rg); glUniform1fv(U(p, "uLCos"), n, cs); }
+    auto common = [&](unsigned p) {
+      glUseProgram(p); M4(p, "uVP", vp); M4(p, "uLightVP", lightVP); V3(p, "uCam", cam.pos);
+      // linear-ish sky light colours from the display colours
+      V3(p, "uSky", lin(f.world.skyLight)); V3(p, "uGround", lin(f.world.groundLight));
+      glUniform1f(U(p, "uAmbient"), f.viewMode == VM_Unlit ? 1.f : f.world.ambient); glUniform1f(U(p, "uExposure"), f.world.exposure);
+      glUniform1i(U(p, "uFog"), f.fog ? 1 : 0); V3(p, "uFogColor", f.world.fogColor); glUniform1f(U(p, "uFogDensity"), f.world.fogDensity);
+      glUniform1i(U(p, "uMode"), f.viewMode); glUniform1i(U(p, "uHasShadow"), hasShadow ? 1 : 0);
+      glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, shadowTex_); glUniform1i(U(p, "uShadow"), 0);
+      int n = 0, sun = 0; int types[8] = {0}; glm::vec3 pos[8], dir[8], col[8]; float in[8], rg[8], cs[8];
+      for (auto& l : f.lights) {
+        if (l.type == 0 && !sun) { sun = 1; V3(p, "uSunDir", glm::normalize(l.dir)); V3(p, "uSunColor", lin(l.color)); glUniform1f(U(p, "uSunInt"), l.intensity); continue; }
+        if (l.type == 0 || n >= 8) continue; types[n] = l.type; pos[n] = l.pos; dir[n] = l.dir; col[n] = lin(l.color); in[n] = l.intensity; rg[n] = l.range; cs[n] = l.cosOuter; n++;
+      }
+      glUniform1i(U(p, "uHasSun"), sun); glUniform1i(U(p, "uNumLights"), n);
+      if (n) { glUniform1iv(U(p, "uLType"), n, types); glUniform3fv(U(p, "uLPos"), n, &pos[0].x); glUniform3fv(U(p, "uLDir"), n, &dir[0].x); glUniform3fv(U(p, "uLColor"), n, &col[0].x);
+        glUniform1fv(U(p, "uLInt"), n, in); glUniform1fv(U(p, "uLRange"), n, rg); glUniform1fv(U(p, "uLCos"), n, cs); }
+    };
+    // the block world first (opaque, large), then meshes
+    if (!f.voxels.empty()) { unsigned p = vox_; common(p);
+      glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, f.voxelAtlas); glUniform1i(U(p, "uAtlas"), 1); glUniform1i(U(p, "uTiles"), f.voxelAtlas ? f.voxelTiles : 0); glActiveTexture(GL_TEXTURE0);
+      for (auto& v : f.voxels) { if (!v.visible) continue; V3(p, "uOffset", v.offset); glBindVertexArray(v.vao); glDrawElements(GL_TRIANGLES, v.count, GL_UNSIGNED_INT, nullptr); drawCalls++; triangles += v.count / 3; } }
+    unsigned p = lit_; common(p);
     for (int pass = 0; pass < 2; pass++) for (auto& it : f.draws) {   // opaque first, then transparent
       if (!it.mesh || it.pickOnly || (pass == 0) != (it.opacity >= 0.999f)) continue;
       M4(p, "uModel", it.model); V3(p, "uColor", lin(it.color)); V3(p, "uEmissive", lin(it.emissive));

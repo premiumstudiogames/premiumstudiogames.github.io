@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(PremiumEngine VERSION 0.2.1 LANGUAGES C CXX)
+project(PremiumEngine VERSION 0.3.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -49,9 +49,11 @@ FetchContent_Declare(json GIT_REPOSITORY https://github.com/nlohmann/json GIT_TA
 FetchContent_Declare(glm GIT_REPOSITORY https://github.com/g-truc/glm GIT_TAG 1.0.1 GIT_SHALLOW TRUE)
 # ---- Boost.Regex, header-only standalone (for the script editor's syntax colours) — Boost Software License
 FetchContent_Declare(boostregex GIT_REPOSITORY https://github.com/boostorg/regex GIT_TAG boost-1.86.0 GIT_SHALLOW TRUE)
+# ---- stb_image (PNG texture atlases for the block world) — public domain / MIT
+FetchContent_Declare(stb GIT_REPOSITORY https://github.com/nothings/stb GIT_TAG 9600522de53973336fa033a289858a4354cbb04c)
 
 FetchContent_MakeAvailable(sdl2 jolt quickjs json glm)
-foreach(dep imgui boostregex)   # sources only, no CMake project
+foreach(dep imgui boostregex stb)   # sources only, no CMake project
   FetchContent_GetProperties(${dep})
   if(NOT ${dep}_POPULATED)
     FetchContent_Populate(${dep})
@@ -69,8 +71,8 @@ target_link_libraries(imgui PUBLIC SDL2::SDL2-static)
 
 # ---- the engine (shared by the editor and the game player)
 add_library(pgcore STATIC
-  src/gl.cpp src/project.cpp src/mesh.cpp src/renderer.cpp src/physics.cpp src/script.cpp src/game.cpp src/log.cpp src/ui_style.cpp src/app.cpp)
-target_include_directories(pgcore PUBLIC src third_party/gl)
+  src/gl.cpp src/project.cpp src/mesh.cpp src/renderer.cpp src/physics.cpp src/script.cpp src/game.cpp src/log.cpp src/ui_style.cpp src/app.cpp src/voxel.cpp)
+target_include_directories(pgcore PUBLIC src third_party/gl ${stb_SOURCE_DIR})
 target_link_libraries(pgcore PUBLIC imgui Jolt qjs nlohmann_json::nlohmann_json glm::glm)
 if(WIN32)
   target_link_libraries(pgcore PUBLIC opengl32 shell32 ole32)

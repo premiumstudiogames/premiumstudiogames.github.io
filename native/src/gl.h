@@ -76,6 +76,9 @@
   X(PFNGLSCISSORPROC, glScissor) \
   X(PFNGLCOLORMASKPROC, glColorMask) \
   X(PFNGLGETERRORPROC, glGetError) \
+  X(PFNGLVERTEXATTRIBIPOINTERPROC, glVertexAttribIPointer) \
+  X(PFNGLGENERATEMIPMAPPROC, glGenerateMipmap) \
+  X(PFNGLUNIFORM2FVPROC, glUniform2fv) \
 
 #define PGE_GL_DECL(T, n) extern T pge_##n;
 PGE_GL_FUNCS(PGE_GL_DECL)
@@ -153,5 +156,8 @@ PGE_GL_FUNCS(PGE_GL_DECL)
 #define glScissor pge_glScissor
 #define glColorMask pge_glColorMask
 #define glGetError pge_glGetError
+#define glVertexAttribIPointer pge_glVertexAttribIPointer
+#define glGenerateMipmap pge_glGenerateMipmap
+#define glUniform2fv pge_glUniform2fv
 
 bool pgeLoadGL();  // call after the GL context is created; false if a function is missing

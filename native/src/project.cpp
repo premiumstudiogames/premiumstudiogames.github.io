@@ -116,6 +116,60 @@ function onOverlap(other) {
 }
 )";
 
+static const char* SC_BLOCKS = R"(// A BLOCKFALL-style block world. The ground is made in 16 m chunks on background threads:
+// 20 cm blocks near the surface (the near layer), 1 m blocks deeper down and in the mountains.
+// Left click: break.  Right click: place.  1 - 5: block size 20 cm - 1 m.  Q / E: change block.
+const BLOCKS = [
+  [1, 'Grass', ['#62a544', '#6f8f3e', '#7a5a3a']],
+  [2, 'Dirt', '#7a5a3a'],
+  [3, 'Stone', '#8b9097'],
+  [4, 'Sand', '#dcca92'],
+  [5, 'Planks', '#b88a55'],
+  [6, 'Brick', '#a8513f'],
+  [7, 'Snow', '#f2f5f8'],
+];
+let size = 0.2, pick = 5, spawned = false;
+
+function onStart() {
+  voxels.create({ bottom: -32, top: 64, nearLayer: [-6, 14], viewDistance: 6, seed: 2026 });
+  for (const [id, name, color] of BLOCKS) voxels.defineBlock(id, { name, color });
+  // runs on background threads, once per chunk: (chunk, noise, params)
+  voxels.setGenerator(function (chunk, noise) {
+    for (let x = 0; x < 16; x++) for (let z = 0; z < 16; z++) {
+      const wx = chunk.x + x, wz = chunk.z + z;
+      const mountain = Math.max(0, noise.fbm(wx * 0.004, wz * 0.004, 3)) * 40;
+      const h = noise.fbm(wx * 0.02, wz * 0.02, 4) * 6 + 3 + mountain;
+      const top = Math.floor(h);
+      chunk.column(x, z, -32, top - 3, 3);
+      chunk.column(x, z, top - 3, top - 1, mountain > 12 ? 3 : 2);
+      chunk.column(x, z, top - 1, top, h > 26 ? 7 : h < 0.5 ? 4 : 1);
+      // the rest of the metre in 20 cm steps: smooth hills
+      const rest = Math.floor((h - top) * 5);
+      for (let k = 0; k < rest; k++) for (let a = 0; a < 5; a++) for (let c = 0; c < 5; c++)
+        chunk.set(x + a / 5, top + k / 5, z + c / 5, h > 26 ? 7 : h < 0.5 ? 4 : 1, 0.2);
+      if (noise.hash(wx, 7, wz) < 0.012) chunk.set(x, top + rest / 5, z, 3, 0.6);   // rocks
+    }
+  });
+  world.hud('help', 'Left click: break   Right click: place   1-5: size   Q / E: block');
+}
+
+function onUpdate(dt) {
+  if (!spawned && voxels.ready(0, 0, 0)) {   // put the player on the ground once it is built
+    world.player.teleport(0.5, voxels.topY(0.5, 0.5) + 1.2, 0.5); spawned = true;
+  }
+  for (let i = 1; i <= 5; i++) if (input.pressed(String(i))) size = i / 5;
+  if (input.pressed('e')) pick = pick % BLOCKS.length + 1;
+  if (input.pressed('q')) pick = (pick + BLOCKS.length - 2) % BLOCKS.length + 1;
+  const cam = world.camera, hit = voxels.raycast(cam.position, cam.forward, 7);
+  if (hit && input.pressed('MouseLeft')) voxels.removeBlock(hit.point.clone().addScaledVector(hit.normal, -0.05));
+  if (hit && input.pressed('MouseRight')) {
+    const p = hit.placePosition(size);
+    if (!voxels.setBlock(p, pick, size)) world.message(voxels.lastError, 1.5);
+  }
+  world.hud('block', BLOCKS[pick - 1][1] + '  ' + Math.round(size * 100) + ' cm' + (hit ? '   looking at: ' + BLOCKS[hit.id - 1][1] : ''));
+}
+)";
+
 static Material mat(const char* n, const char* c, float m, float r, const char* e = "#000000", float op = 1) { Material x; x.name = n; x.color = hexColor(c); x.metalness = m; x.roughness = r; x.emissive = hexColor(e, glm::vec3(0)); x.opacity = op; return x; }
 static Actor mesh(const char* name, const char* m, glm::vec3 p, glm::vec3 s, const char* material, glm::vec3 r = glm::vec3(0)) { Actor a = newActor("StaticMesh", name); a.mesh = m; a.p = p; a.s = s; a.material = material; a.r = r; return a; }
 
@@ -130,6 +184,14 @@ Project makeTemplate(const std::string& kind, const std::string& name) {
   { Actor s = newActor("DirectionalLight", "Sun"); s.p = {0, 12, 0}; s.r = {-50, 35, 0}; A.push_back(s); }
   L.world.gameMode = "Spectator";
   if (kind == "Blank") { Actor ps = newActor("PlayerStart", "PlayerStart"); ps.p = {0, 1, 8}; A.push_back(ps); }
+  if (kind == "Blocks") {
+    A.erase(A.begin());   // no floor: the ground is blocks
+    L.world.gameMode = "FirstPerson"; L.world.fog = true; L.world.fogDensity = 0.011f; L.world.killZ = -60;
+    for (auto& a : A) if (a.type == "DirectionalLight") { a.r = {-55, 40, 0}; a.light.intensity = 2.4f; }
+    { Actor ps = newActor("PlayerStart", "PlayerStart"); ps.p = {0.5f, 40, 0.5f}; A.push_back(ps); }
+    { Actor w = newActor("Empty", "BlockWorld"); w.script = "SC_BlockWorld"; A.push_back(w); }
+    P.scripts["SC_BlockWorld"] = {"SC_BlockWorld", SC_BLOCKS};
+  }
   if (kind == "FirstPerson" || kind == "ThirdPerson") {
     L.world.gameMode = kind;
     { Actor ps = newActor("PlayerStart", "PlayerStart"); ps.p = {0, 1, 10}; A.push_back(ps); }

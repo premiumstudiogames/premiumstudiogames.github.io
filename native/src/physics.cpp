@@ -63,12 +63,21 @@ struct Physics::Impl {
   BodyInterface& bi() { return sys->GetBodyInterface(); }
 };
 
-static bool g_joltReady = false;
+static std::once_flag g_joltOnce;
+static void ensureJolt() { std::call_once(g_joltOnce, [] { RegisterDefaultAllocator(); Factory::sInstance = new Factory(); RegisterTypes(); }); }
+struct ShapeHandle { RefConst<Shape> s; };
+ShapePtr buildTriangleShape(const std::vector<glm::vec3>& v, const std::vector<uint32_t>& idx) {
+  ensureJolt(); if (v.empty() || idx.size() < 3) return nullptr;
+  VertexList vl; vl.reserve(v.size()); for (auto& p : v) vl.push_back(Float3(p.x, p.y, p.z));
+  IndexedTriangleList tl; tl.reserve(idx.size() / 3); for (size_t i = 0; i + 2 < idx.size(); i += 3) tl.push_back(IndexedTriangle(idx[i], idx[i + 1], idx[i + 2], 0));
+  MeshShapeSettings ms(std::move(vl), std::move(tl)); auto r = ms.Create(); if (!r.IsValid()) return nullptr;
+  auto h = std::make_shared<ShapeHandle>(); h->s = r.Get(); return h;
+}
 Physics::Physics() : d(new Impl) {}
 Physics::~Physics() { shutdown(); }
 
 bool Physics::init(float gravityY) {
-  if (!g_joltReady) { RegisterDefaultAllocator(); Factory::sInstance = new Factory(); RegisterTypes(); g_joltReady = true; }
+  ensureJolt();
   d->temp.reset(new TempAllocatorImpl(16 * 1024 * 1024));
   int threads = std::max(1, (int)std::thread::hardware_concurrency() - 1);
   d->jobs.reset(new JobSystemThreadPool(cMaxPhysicsJobs, cMaxPhysicsBarriers, threads));
@@ -119,6 +128,14 @@ uint32_t Physics::addMesh(const std::string& mesh, const glm::vec3& scale, const
   d->bi().AddBody(b->GetID(), m == Motion::Static ? EActivation::DontActivate : EActivation::Activate);
   return b->GetID().GetIndexAndSequenceNumber();
 }
+uint32_t Physics::addStatic(const ShapePtr& shape, const glm::vec3& pos, uint64_t userData) {
+  if (!shape || !d->sys) return NO_BODY;
+  BodyCreationSettings bs(shape->s, RVec3(pos.x, pos.y, pos.z), Quat::sIdentity(), EMotionType::Static, Layers::STATIC);
+  bs.mFriction = 0.5f; bs.mRestitution = 0.f; bs.mUserData = userData;
+  Body* b = d->bi().CreateBody(bs); if (!b) { logMsg("error: physics: too many bodies", LogKind::Error); return NO_BODY; }
+  d->bi().AddBody(b->GetID(), EActivation::DontActivate); return b->GetID().GetIndexAndSequenceNumber();
+}
+void Physics::setStaticShape(uint32_t id, const ShapePtr& shape) { if (id != NO_BODY && shape && d->sys) d->bi().SetShape(BodyID(id), shape->s, false, EActivation::DontActivate); }
 uint32_t Physics::addPlayer(const glm::vec3& c) {
   BodyCreationSettings bs(new CapsuleShape(0.55f, 0.35f), RVec3(c.x, c.y, c.z), Quat::sIdentity(), EMotionType::Dynamic, Layers::MOVING);
   bs.mAllowedDOFs = EAllowedDOFs::TranslationX | EAllowedDOFs::TranslationY | EAllowedDOFs::TranslationZ;

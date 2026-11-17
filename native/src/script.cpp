@@ -4,6 +4,10 @@
 #include <chrono>
 #include <cctype>
 #include <map>
+#include <cmath>
+#include "voxel.h"
+#include "project.h"
+#include <nlohmann/json.hpp>
 
 namespace pge {
 
@@ -83,7 +87,8 @@ function __api(id) {
     destroy() { __n.destroy(id); } };
   __apis.set(id, a); return a;
 }
-const world = { vars: {},
+const world = { vars: {}, get voxels() { return voxels; },
+  get camera() { const c = __n.camera(); return { position: new Vec3(c[0], c[1], c[2]), forward: new Vec3(c[3], c[4], c[5]) }; },
   get time() { return __n.time(); }, get player() { return __player; },
   find(name) { const id = __n.find(String(name)); return id ? __api(id) : null; },
   findAll(tag) { return __n.findAll(String(tag)).map(__api); },
@@ -93,6 +98,25 @@ const world = { vars: {},
   hud(id, t) { __n.hud(String(id), String(t)); },
   restart() { __n.restart(); },
   setGravity(y) { __n.setGravity(+y); } };
+// the block world (BLOCKFALL style): 16 m chunks, 20 cm blocks in the near layer, 1 m blocks above and below
+const voxels = { lastError: '',
+  create(o = {}) { const e = __n.voxCreate(JSON.stringify(o || {})); this.lastError = e; if (e) __n.log('[voxels] ' + e); return !e; },
+  get enabled() { return __n.voxOn(); },
+  defineBlock(id, o = {}) { __n.voxDefine(+id, JSON.stringify(o || {})); },
+  setGenerator(g, params = {}) { if (typeof g === 'function') __n.voxGenScript(g.toString(), JSON.stringify(params || {})); else __n.voxGenBuiltin(String(g), JSON.stringify(params || {})); },
+  setAtlas(file, tilesPerRow = 16) { return __n.voxAtlas(String(file), +tilesPerRow || 16); },
+  getBlock(x, y, z) { const r = __n.voxGet(...__xyz(x, y, z)); return r ? { id: r[0], x: r[1], y: r[2], z: r[3], size: r[4] } : null; },
+  setBlock(x, y, z, id, size) {
+    if (x !== null && typeof x === 'object') { size = z; id = y; [x, y, z] = __xyz(x); }
+    const r = __n.voxSet(+x, +y, +z, +id, size === undefined ? 0.2 : +size); this.lastError = r === true ? '' : String(r); return r === true; },
+  canPlace(x, y, z, size) { if (x !== null && typeof x === 'object') { size = y; [x, y, z] = __xyz(x); } return __n.voxCanPlace(+x, +y, +z, size === undefined ? 0.2 : +size); },
+  removeBlock(x, y, z) { return __n.voxRemove(...__xyz(x, y, z)); },
+  raycast(from, dir, max = 8) { const a = __xyz(from), b = __xyz(dir); const r = __n.voxRay(a[0], a[1], a[2], b[0], b[1], b[2], +max || 8); if (!r) return null;
+    return { id: r[0], x: r[1], y: r[2], z: r[3], size: r[4], normal: new Vec3(r[5], r[6], r[7]), point: new Vec3(r[8], r[9], r[10]), distance: r[11],
+      placePosition(size = 0.2) { const p = __n.voxPlace(...r, +size); return new Vec3(p[0], p[1], p[2]); } }; },
+  ready(x, y, z) { return __n.voxReady(...__xyz(x, y, z)); },
+  topY(x, z) { return __n.voxTop(+x, +z); },
+  get stats() { return JSON.parse(__n.voxStats()); } };
 const input = { key(k) { return __n.key(String(k)); }, pressed(k) { return __n.pressed(String(k)); },
   get mouse() { const m = __n.mouse(); return { dx: m[0], dy: m[1], left: !!m[2], right: !!m[3] }; } };
 const math = { clamp: (v, a, b) => Math.max(a, Math.min(b, v)), lerp: (a, b, t) => a + (b - a) * t, random: (a = 0, b = 1) => a + Math.random() * (b - a), vec3: (x, y, z) => new Vec3(x, y, z) };
@@ -126,7 +150,7 @@ static std::string errorText(JSContext* c) {
   return msg;
 }
 
-#define FN(name, argc, body) JS_SetPropertyStr(c, n, name, JS_NewCFunction(c, +[](JSContext* c, JSValueConst, int, JSValueConst* a) -> JSValue { (void)a; body }, name, argc))
+#define FN(name, argc, ...) JS_SetPropertyStr(c, n, name, JS_NewCFunction(c, +[](JSContext* c, JSValueConst, int, JSValueConst* a) -> JSValue { (void)a; __VA_ARGS__ }, name, argc))
 static void bindNatives(JSContext* c) {
   JSValue g = JS_GetGlobalObject(c), n = JS_NewObject(c);
   FN("exists", 1, return JS_NewBool(c, W(c)->exists(S(c, a[0])));) ;
@@ -158,6 +182,46 @@ static void bindNatives(JSContext* c) {
   FN("pressed", 1, return JS_NewBool(c, W(c)->pressed(keyAlias(S(c, a[0]))));) ;
   FN("mouse", 0, { glm::vec4 m = W(c)->mouse(); JSValue r = JS_NewArray(c); for (int i = 0; i < 4; i++) JS_SetPropertyUint32(c, r, i, JS_NewFloat64(c, m[i])); return r; });
   FN("log", 1, W(c)->log(S(c, a[0])); return JS_UNDEFINED;);
+  FN("camera", 0, { glm::vec3 p = W(c)->cameraPos(), f = W(c)->cameraDir(); JSValue r = JS_NewArray(c); float v[6] = {p.x, p.y, p.z, f.x, f.y, f.z}; for (int i = 0; i < 6; i++) JS_SetPropertyUint32(c, r, i, JS_NewFloat64(c, v[i])); return r; });
+  // block world
+  FN("voxCreate", 1, { std::string e = W(c)->createVoxels(S(c, a[0])); return JS_NewStringLen(c, e.data(), e.size()); });
+  FN("voxOn", 0, return JS_NewBool(c, W(c)->voxels() != nullptr););
+  FN("voxDefine", 2, { VoxelWorld* v = W(c)->voxels(); if (!v) { W(c)->log("warning: voxels.defineBlock: call voxels.create() first"); return JS_UNDEFINED; }
+    BlockType t; nlohmann::json o = nlohmann::json::object(); try { o = nlohmann::json::parse(S(c, a[1])); } catch (...) {}
+    t.name = o.value("name", std::string());
+    auto colors = o.contains("color") ? o["color"] : nlohmann::json("#ffffff");
+    if (colors.is_string()) { glm::vec3 x = hexColor(colors.get<std::string>()); t.color[0] = t.color[1] = t.color[2] = x; }
+    else if (colors.is_array()) for (int i = 0; i < 3; i++) { const auto& e = colors.size() > (size_t)i ? colors[i] : colors.back(); if (e.is_string()) t.color[i] = hexColor(e.get<std::string>()); }
+    else if (colors.is_object()) { t.color[0] = hexColor(colors.value("top", std::string("#ffffff"))); t.color[1] = hexColor(colors.value("side", colors.value("top", std::string("#ffffff")))); t.color[2] = hexColor(colors.value("bottom", colors.value("side", std::string("#ffffff")))); }
+    if (o.contains("tile")) { auto& tl = o["tile"]; if (tl.is_number()) t.tile[0] = t.tile[1] = t.tile[2] = tl.get<int>();
+      else if (tl.is_array()) for (int i = 0; i < 3; i++) { const auto& e = tl.size() > (size_t)i ? tl[i] : tl.back(); if (e.is_number()) t.tile[i] = e.get<int>(); }
+      else if (tl.is_object()) { t.tile[0] = tl.value("top", -1); t.tile[1] = tl.value("side", t.tile[0]); t.tile[2] = tl.value("bottom", t.tile[1]); } }
+    t.solid = o.value("solid", true); t.opaque = !o.value("transparent", false);
+    v->defineBlock((int)D(c, a[0]), t); return JS_UNDEFINED; });
+  FN("voxGenBuiltin", 2, { if (VoxelWorld* v = W(c)->voxels()) v->setBuiltinGenerator(S(c, a[0]), S(c, a[1])); return JS_UNDEFINED; });
+  FN("voxGenScript", 2, { if (VoxelWorld* v = W(c)->voxels()) v->setScriptGenerator(S(c, a[0]), S(c, a[1])); return JS_UNDEFINED; });
+  FN("voxAtlas", 2, { VoxelWorld* v = W(c)->voxels(); return JS_NewBool(c, v && v->setAtlas(W(c)->assetPath(S(c, a[0])), (int)D(c, a[1]))); });
+  FN("voxGet", 3, { VoxelWorld* v = W(c)->voxels(); if (!v) return JS_NULL; BlockInfo b = v->getBlock({(float)D(c, a[0]), (float)D(c, a[1]), (float)D(c, a[2])}); if (!b.id) return JS_NULL;
+    JSValue r = JS_NewArray(c); double x[5] = {(double)b.id, b.origin.x / (double)VC, b.origin.y / (double)VC, b.origin.z / (double)VC, b.size / (double)VC}; for (int i = 0; i < 5; i++) JS_SetPropertyUint32(c, r, i, JS_NewFloat64(c, x[i])); return r; });
+  FN("voxSet", 5, { VoxelWorld* v = W(c)->voxels(); if (!v) return JS_NewString(c, "call voxels.create() first"); std::string why;
+    bool ok = v->setBlock({(float)D(c, a[0]), (float)D(c, a[1]), (float)D(c, a[2])}, (int)D(c, a[3]), (float)D(c, a[4]), &why); return ok ? JS_TRUE : JS_NewStringLen(c, why.data(), why.size()); });
+  FN("voxCanPlace", 4, { VoxelWorld* v = W(c)->voxels(); return JS_NewBool(c, v && v->canPlace({(float)D(c, a[0]), (float)D(c, a[1]), (float)D(c, a[2])}, (float)D(c, a[3]))); });
+  FN("voxRemove", 3, { VoxelWorld* v = W(c)->voxels(); return JS_NewInt32(c, v ? v->removeBlock({(float)D(c, a[0]), (float)D(c, a[1]), (float)D(c, a[2])}) : 0); });
+  FN("voxRay", 7, { VoxelWorld* v = W(c)->voxels(); if (!v) return JS_NULL;
+    VoxelHit h = v->raycast({(float)D(c, a[0]), (float)D(c, a[1]), (float)D(c, a[2])}, {(float)D(c, a[3]), (float)D(c, a[4]), (float)D(c, a[5])}, (float)D(c, a[6])); if (!h.hit) return JS_NULL;
+    double x[15] = {(double)h.id, h.origin.x / (double)VC, h.origin.y / (double)VC, h.origin.z / (double)VC, h.size / (double)VC, (double)h.normal.x, (double)h.normal.y, (double)h.normal.z,
+      h.point.x, h.point.y, h.point.z, h.distance, (double)h.cell.x, (double)h.cell.y, (double)h.cell.z};
+    JSValue r = JS_NewArray(c); for (int i = 0; i < 15; i++) JS_SetPropertyUint32(c, r, i, JS_NewFloat64(c, x[i])); return r; });
+  FN("voxPlace", 16, { VoxelWorld* v = W(c)->voxels(); VoxelHit h; h.hit = true; h.id = (int)D(c, a[0]);
+    h.origin = glm::ivec3((int)std::lround(D(c, a[1]) * VC), (int)std::lround(D(c, a[2]) * VC), (int)std::lround(D(c, a[3]) * VC)); h.size = (int)std::lround(D(c, a[4]) * VC);
+    h.normal = glm::ivec3((int)D(c, a[5]), (int)D(c, a[6]), (int)D(c, a[7])); h.point = {(float)D(c, a[8]), (float)D(c, a[9]), (float)D(c, a[10])}; h.distance = (float)D(c, a[11]);
+    h.cell = glm::ivec3((int)D(c, a[12]), (int)D(c, a[13]), (int)D(c, a[14]));
+    glm::vec3 p = v ? v->placeCorner(h, (float)D(c, a[15])) : glm::vec3(0); return A3(c, p); });
+  FN("voxReady", 3, { VoxelWorld* v = W(c)->voxels(); return JS_NewBool(c, v && v->ready({(float)D(c, a[0]), (float)D(c, a[1]), (float)D(c, a[2])})); });
+  FN("voxTop", 2, { VoxelWorld* v = W(c)->voxels(); return JS_NewFloat64(c, v ? v->topY((float)D(c, a[0]), (float)D(c, a[1])) : NAN); });
+  FN("voxStats", 0, { VoxelWorld* v = W(c)->voxels(); std::string s = "{}";
+    if (v) { auto st = v->stats(); s = nlohmann::json{{"chunks", st.chunks}, {"meshed", st.meshed}, {"generating", st.pendingGen}, {"meshing", st.pendingMesh}, {"triangles", st.triangles}, {"bricks", st.bricks}, {"generateMs", st.genMs}, {"meshMs", st.meshMs}}.dump(); }
+    return JS_NewStringLen(c, s.data(), s.size()); });
   JS_SetPropertyStr(c, g, "__n", n); JS_FreeValue(c, g);
 }
 #undef FN

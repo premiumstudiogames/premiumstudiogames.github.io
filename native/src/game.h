@@ -11,6 +11,7 @@
 #include "renderer.h"
 #include "physics.h"
 #include "script.h"
+#include "voxel.h"
 
 struct ImDrawList;
 namespace pge {
@@ -37,6 +38,7 @@ public:
   const std::string& mode() const { return mode_; }
   double gameTime() const { return time_; }
   int actorCount() const;
+  bool loading() const { return vox_ && !vox_->ready(const_cast<Game*>(this)->playerPos(), 1.5f); }   // the block world around the player is still being built
   int physicsBodies() const { return phys_ ? phys_->bodyCount() : 0; }
   std::string levelName;
 
@@ -68,6 +70,11 @@ public:
   bool pressed(const std::string& k) override { return pressed_.count(k) > 0; }
   glm::vec4 mouse() override { return mouseState_; }
   void log(const std::string& t) override;
+  VoxelWorld* voxels() override { return vox_.get(); }
+  std::string createVoxels(const std::string& optsJson) override;
+  std::string assetPath(const std::string& p) override;
+  glm::vec3 cameraPos() override;
+  glm::vec3 cameraDir() override;
 
 private:
   struct Obj {
@@ -77,7 +84,7 @@ private:
   };
   Project project_; Level level_;
   std::vector<std::unique_ptr<Obj>> objs_; std::unordered_map<std::string, Obj*> byId_;
-  std::unique_ptr<Physics> phys_; std::unique_ptr<ScriptHost> scripts_;
+  std::unique_ptr<Physics> phys_; std::unique_ptr<ScriptHost> scripts_; std::unique_ptr<VoxelWorld> vox_; bool voxHold_ = false; glm::vec3 voxHoldPos_{0};
   std::string mode_; uint32_t player_ = NO_BODY; float yaw_ = 0, pitch_ = 0; glm::vec3 specPos_{0, 2, 5}, moveDir_{0};
   double time_ = 0; bool restartRequested_ = false, started_ = false;
   std::set<std::string> keys_, pressed_; glm::vec4 mouseState_{0}; float lookDx_ = 0, lookDy_ = 0;

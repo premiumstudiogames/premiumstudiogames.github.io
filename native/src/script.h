@@ -7,6 +7,7 @@
 #include <glm/glm.hpp>
 
 namespace pge {
+class VoxelWorld;
 // what scripts can do to the game (implemented by Game)
 class ScriptWorld {
 public:
@@ -38,6 +39,12 @@ public:
   virtual bool pressed(const std::string& k) = 0;
   virtual glm::vec4 mouse() = 0;                                               // dx, dy, left, right
   virtual void log(const std::string& t) = 0;
+  // block world (BLOCKFALL style); nullptr until a script calls voxels.create()
+  virtual VoxelWorld* voxels() { return nullptr; }
+  virtual std::string createVoxels(const std::string& optsJson) { (void)optsJson; return "no block world in this game"; }   // "" = ok
+  virtual std::string assetPath(const std::string& p) { return p; }
+  virtual glm::vec3 cameraPos() { return glm::vec3(0); }
+  virtual glm::vec3 cameraDir() { return glm::vec3(0, 0, -1); }
 };
 
 enum ScriptEvent { EV_Start = 0, EV_Update, EV_Overlap, EV_Hit, EV_Key, EV_COUNT };

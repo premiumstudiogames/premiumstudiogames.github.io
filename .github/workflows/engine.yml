@@ -70,6 +70,18 @@ jobs:
           "$GAME/$NAME.exe" --selftest "$PWD/selftest" || { cat selftest/player-result.txt; exit 1; }
           cat selftest/player-result.txt
 
+      - name: Block world self-test (Block World template, walks forward)
+        timeout-minutes: 10
+        shell: bash
+        env:
+          GALLIUM_DRIVER: llvmpipe
+        run: |
+          export SDL_OPENGL_LIBRARY="$MESA_DIR\\opengl32.dll"
+          mkdir -p selftest/blocks
+          ./build/Release/PremiumEngineTests.exe --write-template Blocks "$PWD/selftest/blocks/game.pge.json"
+          ./run/PremiumEnginePlayer.exe --game "$PWD/selftest/blocks/game.pge.json" --selftest "$PWD/selftest/blocks" || { cat selftest/blocks/player-result.txt; exit 1; }
+          cat selftest/blocks/player-result.txt
+
       - name: Screenshots
         if: always()
         uses: actions/upload-artifact@v4

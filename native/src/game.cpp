@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <filesystem>
 
 using json = nlohmann::json;
 namespace pge {
@@ -82,6 +83,7 @@ Game::~Game() { clear(); }
 void Game::clear() {
   if (scripts_) scripts_->shutdown();
   scripts_.reset();
+  vox_.reset();   // before the physics world: chunk bodies live there
   if (phys_) phys_->shutdown();
   phys_.reset(); objs_.clear(); byId_.clear(); hud_.clear(); msg_.clear(); player_ = NO_BODY; started_ = false;
 }
@@ -141,8 +143,11 @@ void Game::event(const SDL_Event& e) {
       break; }
     case SDL_KEYUP: keys_.erase(keyCode(e.key.keysym.scancode)); break;
     case SDL_MOUSEMOTION: if (SDL_GetRelativeMouseMode() || mouseState_.w > 0) { lookDx_ += e.motion.xrel; lookDy_ += e.motion.yrel; } break;
-    case SDL_MOUSEBUTTONDOWN: if (e.button.button == SDL_BUTTON_LEFT) mouseState_.z = 1; if (e.button.button == SDL_BUTTON_RIGHT) mouseState_.w = 1; break;
-    case SDL_MOUSEBUTTONUP: if (e.button.button == SDL_BUTTON_LEFT) mouseState_.z = 0; if (e.button.button == SDL_BUTTON_RIGHT) mouseState_.w = 0; break;
+    case SDL_MOUSEBUTTONDOWN: case SDL_MOUSEBUTTONUP: {
+      bool down = e.type == SDL_MOUSEBUTTONDOWN; const char* k = e.button.button == SDL_BUTTON_LEFT ? "MouseLeft" : e.button.button == SDL_BUTTON_RIGHT ? "MouseRight" : e.button.button == SDL_BUTTON_MIDDLE ? "MouseMiddle" : nullptr;
+      if (e.button.button == SDL_BUTTON_LEFT) mouseState_.z = down; if (e.button.button == SDL_BUTTON_RIGHT) mouseState_.w = down;
+      if (k) { if (down) { if (!keys_.count(k)) pressed_.insert(k); keys_.insert(k); } else keys_.erase(k); }
+      break; }
     default: break;
   }
 }
@@ -151,6 +156,7 @@ void Game::releaseInput() { keys_.clear(); pressed_.clear(); mouseState_ = glm::
 void Game::update(float dt) {
   if (!started_) return;
   dt = std::min(dt, 0.05f); time_ += dt;
+  if (vox_) { vox_->update(playerPos()); for (auto& l : vox_->takeLogs()) logMsg(l, l.rfind("error", 0) == 0 ? LogKind::Error : l.rfind("warning", 0) == 0 ? LogKind::Warn : LogKind::Info); }
   // look
   const float sens = 0.0022f; mouseState_.x = lookDx_; mouseState_.y = lookDy_;
   yaw_ -= lookDx_ * sens; pitch_ = glm::clamp(pitch_ - lookDy_ * sens, -1.45f, 1.45f); lookDx_ = lookDy_ = 0;
@@ -166,6 +172,15 @@ void Game::update(float dt) {
     const glm::vec2 offs[5] = {{0, 0}, {0.25f, 0}, {-0.25f, 0}, {0, 0.25f}, {0, -0.25f}};
     for (auto& o : offs) if (phys_->rayHit(feet + glm::vec3(o.x, 0.1f, o.y), feet + glm::vec3(o.x, -0.15f, o.y), player_)) { grounded = true; break; }
     if (grounded && pressed_.count("Space")) v.y = 5.2f;
+    // block world: walk up 20 - 40 cm steps without jumping
+    if (vox_ && grounded && glm::dot(mv, mv) > 0 && v.y <= 0.5f) {
+      glm::vec3 ahead = feet + mv * 0.5f; auto solid = [&](float h) { return vox_->solidAt(ahead + glm::vec3(0, h, 0)); };
+      if (solid(0.1f) && !solid(0.5f) && !solid(1.1f) && !solid(1.7f)) v.y = solid(0.3f) ? 3.6f : 2.6f;
+    }
+    // block world: hold the player until the ground under them is built
+    if (vox_) { bool ok = vox_->ready(c, 1.5f);
+      if (!ok) { if (!voxHold_) { voxHold_ = true; voxHoldPos_ = c; } phys_->teleport(player_, voxHoldPos_, glm::quat(1, 0, 0, 0)); v = glm::vec3(0); }
+      else voxHold_ = false; }
     phys_->setVelocity(player_, v);
   }
   // physics
@@ -224,7 +239,8 @@ void Game::buildFrame(Frame& f, Camera& cam, float aspect) const {
     cam.view = glm::lookAt(cp, eye, AY); cam.pos = cp;
   } else { camW = glm::translate(glm::mat4(1), eye) * glm::mat4_cast(quatYXZ({pitch_, yaw_, 0})); cam.view = glm::inverse(camW); cam.pos = eye; }
   cam.proj = glm::perspective(glm::radians(glm::clamp(level_.world.fov, 20.f, 150.f)), std::max(aspect, 0.01f), 0.05f, 2000.f);
-  f.shadowCenter = eye;
+  { glm::vec3 fw = -glm::vec3(glm::inverse(cam.view)[2]); fw.y = 0; f.shadowCenter = eye + (glm::length(fw) > 1e-3f ? glm::normalize(fw) * 25.f : glm::vec3(0)); }   // the shadow box covers what is in front of the camera
+  if (vox_) vox_->draw(f, cam);
 }
 
 void Game::drawHud(ImDrawList* dl, float x, float y, float w, float h) const {
@@ -238,6 +254,8 @@ void Game::drawHud(ImDrawList* dl, float x, float y, float w, float h) const {
     dl->AddRectFilled({p.x - 22, p.y - 12}, {p.x + s.x + 22, p.y + s.y + 12}, IM_COL32(0, 0, 0, (int)(150 * a)), 12);
     dl->AddText(big, 34, p, IM_COL32(255, 255, 255, (int)(255 * a)), msg_.c_str(), nullptr, w * 0.9f);
   }
+  if (loading()) { const char* t = "Loading world..."; ImVec2 s = big->CalcTextSizeA(30, 1e9f, 0, t); ImVec2 p(x + (w - s.x) / 2, y + h * 0.45f);
+    dl->AddRectFilled({p.x - 24, p.y - 14}, {p.x + s.x + 24, p.y + s.y + 14}, IM_COL32(0, 0, 0, 150), 12); dl->AddText(big, 30, p, IM_COL32_WHITE, t); }
   if (mode_ == "FirstPerson") { ImVec2 c(x + w / 2, y + h / 2); dl->AddCircleFilled(c, 3.5f, IM_COL32(0, 0, 0, 120)); dl->AddCircleFilled(c, 2.2f, IM_COL32(255, 255, 255, 230)); }
 }
 
@@ -316,4 +334,19 @@ glm::vec3 Game::playerPos() { return player_ != NO_BODY ? phys_->position(player
 void Game::playerTeleport(const glm::vec3& p) { if (player_ != NO_BODY) { phys_->teleport(player_, p, glm::quat(1, 0, 0, 0)); phys_->setVelocity(player_, glm::vec3(0)); } else specPos_ = p; }
 void Game::playerLaunch(const glm::vec3& v) { if (player_ != NO_BODY) phys_->setVelocity(player_, v); }
 void Game::log(const std::string& t) { logMsg(t); }
+std::string Game::createVoxels(const std::string& opts) {
+  if (vox_) return "the block world already exists";
+  json o = json::object(); try { o = json::parse(opts); if (!o.is_object()) o = json::object(); } catch (...) { return "voxels.create: options are not valid"; }
+  VoxelConfig c; c.minY = o.value("bottom", c.minY); c.maxY = o.value("top", c.maxY); c.viewDistance = o.value("viewDistance", c.viewDistance); c.seed = o.value("seed", c.seed); c.threads = o.value("threads", 0);
+  if (o.contains("nearLayer") && o["nearLayer"].is_array() && o["nearLayer"].size() == 2) { c.fineLo = o["nearLayer"][0].get<int>(); c.fineHi = o["nearLayer"][1].get<int>(); }
+  vox_.reset(new VoxelWorld(c, phys_.get())); return "";
+}
+std::string Game::assetPath(const std::string& p) {
+  namespace fs = std::filesystem; fs::path f = fs::u8path(p); if (f.is_absolute()) return p;
+  std::vector<fs::path> roots; if (!project_.path.empty()) roots.push_back(fs::u8path(project_.path).parent_path()); roots.push_back(fs::u8path(exeDir()));
+  for (auto& r : roots) { std::error_code ec; if (fs::exists(r / f, ec)) return (r / f).u8string(); if (fs::exists(r / "assets" / f, ec)) return (r / "assets" / f).u8string(); }
+  return p;
+}
+glm::vec3 Game::cameraPos() { if (mode_ == "Spectator") return specPos_; return player_ != NO_BODY ? phys_->position(player_) + glm::vec3(0, 0.7f, 0) : specPos_; }
+glm::vec3 Game::cameraDir() { return quatYXZ({pitch_, yaw_, 0}) * glm::vec3(0, 0, -1); }
 }

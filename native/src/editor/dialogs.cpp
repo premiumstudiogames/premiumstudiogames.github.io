@@ -53,6 +53,48 @@ input
   input.key('w')                 held down?  ('space', 'shift', 'up', 'a'..'z', '0'..'9')
   input.pressed('space')         pressed this frame?
   input.mouse                    .dx, .dy, .left, .right
+  input.pressed('MouseLeft')     mouse buttons work like keys: 'MouseLeft', 'MouseRight', 'MouseMiddle'
+
+world.camera                     .position, .forward (the direction the player looks)
+
+BLOCK WORLD (voxels)
+The ground is split into 16 x 16 m chunks. Near the ground (the near layer) blocks can be 20, 40, 60, 80 or 100 cm;
+above and below it everything is 1 m blocks. Chunks are generated and built on background threads, hidden faces
+are removed, corners get ambient occlusion, and the player and physics bodies collide with the blocks directly.
+Positions are metres. A block of size s sits on the 20 cm grid; (x, y, z) is its lowest corner.
+
+  voxels.create({ bottom: -32, top: 64, nearLayer: [-6, 14], viewDistance: 6, seed: 2026, threads: 0 })
+                                 start a block world (removes the old one). false + voxels.lastError on a mistake
+  voxels.enabled                 is there a block world?
+  voxels.defineBlock(1, { name: 'Grass', color: '#5a9c3c', solid: true, transparent: false, tile: 0 })
+      color: '#rrggbb', [r, g, b] (0..1) or { top, side, bottom }     tile: number or { top, side, bottom } (atlas)
+  voxels.setAtlas('textures/blocks.png', 16)   block textures: a PNG of square tiles, 16 per row
+  voxels.setGenerator('flat' | 'hills', { ground: 0, top: 1, dirt: 2, stone: 3, amplitude: 9, scale: 0.012, octaves: 4, smooth: true })
+                                 built-in ground made of block ids top / dirt / stone
+  voxels.setGenerator(function (chunk, noise, params) { ... }, { ... })  your own ground (runs on background threads,
+                                 cannot use world / self; only chunk, noise and params)
+      chunk.cx, chunk.cz         chunk number;  chunk.x, chunk.z = its corner in metres
+      chunk.column(x, z, yBottom, yTop, id)   1 m blocks from yBottom up to yTop (x, z = 0..15 inside the chunk)
+      chunk.fill(x0, y0, z0, x1, y1, z1, id)  1 m blocks in a box (max not included)
+      chunk.set(x, y, z, id, size)            one block (size 0.2 .. 1, near layer only for small sizes)
+      chunk.get(x, y, z)                      block id there (0 = air)
+      noise.simplex2(x, z)  noise.simplex3(x, y, z)  noise.fbm(x, z, octaves, lacunarity, gain)  noise.hash(x, y, z)
+      (all noise uses the seed from voxels.create, so every thread and every run makes the same world)
+  voxels.getBlock(x, y, z)       { id, x, y, z, size } of the block at a point, or null for air
+  voxels.setBlock(x, y, z, id, size)   place (replaces blocks it overlaps). false + voxels.lastError if not allowed
+  voxels.canPlace(x, y, z, size)
+  voxels.removeBlock(x, y, z)    removes the block at a point, returns its id (0 = nothing)
+  voxels.raycast(from, dir, max) the first block along a ray, or null:
+      { id, x, y, z, size, normal, point, distance, placePosition(size) }   placePosition = corner for a new block on that face
+  voxels.ready(x, y, z)          the chunks around a point are built and collide
+  voxels.topY(x, z)              top of the highest block (NaN while not loaded)
+  voxels.stats                   { chunks, meshed, pendingGen, pendingMesh, triangles, bricks, genMs, meshMs }
+  world.voxels                   the same object
+
+  Example - break and build:
+    const hit = voxels.raycast(world.camera.position, world.camera.forward, 8);
+    if (hit && input.pressed('MouseLeft')) voxels.removeBlock(hit.point.clone().addScaledVector(hit.normal, -0.05));
+    if (hit && input.pressed('MouseRight')) voxels.setBlock(hit.placePosition(0.2), 2, 0.2);
 
 log('text', value)               writes to the Output Log
 math.clamp(v, a, b)  math.lerp(a, b, t)  math.random(a, b)  math.vec3(x, y, z)
@@ -210,14 +252,15 @@ void Editor::drawProjectBrowser() {
   ImGui::EndChild(); ImGui::SameLine();
   ImGui::BeginChild("new", {0, 0}, ImGuiChildFlags_Border);
   ImGui::SeparatorText("NEW PROJECT - GAMES");
-  const char* names[] = {"Blank", "First Person", "Third Person"}; const char* ids[] = {"Blank", "FirstPerson", "ThirdPerson"};
+  const char* names[] = {"Blank", "First Person", "Third Person", "Block World"}; const char* ids[] = {"Blank", "FirstPerson", "ThirdPerson", "Blocks"};
   const char* desc[] = {"An empty level with a floor, a sun and a Player Start. Spectator camera.",
     "Walk and jump in first person: ramp, stairs, physics boxes, coins to collect with a score, a jump pad and a goal. Scripts included.",
-    "The same playground with a third person camera behind the player character."};
-  for (int i = 0; i < 3; i++) { ImGui::PushID(i); ImVec2 p = ImGui::GetCursorScreenPos(); float w = ImGui::GetContentRegionAvail().x, h = 64 * s;
+    "The same playground with a third person camera behind the player character.",
+    "A BLOCKFALL-style world made of blocks: 20 cm blocks near the surface, 1 m blocks below and in the mountains, built in chunks on background threads. Break and place blocks."};
+  for (int i = 0; i < 4; i++) { ImGui::PushID(i); ImVec2 p = ImGui::GetCursorScreenPos(); float w = ImGui::GetContentRegionAvail().x, h = 64 * s;
     if (ImGui::Selectable("##t", browserTemplate_ == i, ImGuiSelectableFlags_AllowDoubleClick, {w, h})) browserTemplate_ = i;
     ImDrawList* dl = ImGui::GetWindowDrawList(); dl->AddRectFilled({p.x + 4, p.y + 4}, {p.x + h - 4, p.y + h - 4}, IM_COL32(20, 50, 90, 255), 4);
-    dl->AddText(big, 26, {p.x + 14, p.y + h / 2 - 14}, IM_COL32(120, 190, 255, 255), i == 0 ? "B" : i == 1 ? "1P" : "3P");
+    dl->AddText(big, 26, {p.x + 14, p.y + h / 2 - 14}, IM_COL32(120, 190, 255, 255), i == 0 ? "B" : i == 1 ? "1P" : i == 2 ? "3P" : "BW");
     dl->AddText({p.x + h + 6, p.y + 8}, IM_COL32_WHITE, names[i]);
     ImGui::PushClipRect({p.x + h, p.y}, {p.x + w, p.y + h}, true); dl->AddText(nullptr, 0, {p.x + h + 6, p.y + 28}, ImGui::GetColorU32(ImGuiCol_TextDisabled), desc[i], nullptr, w - h - 12); ImGui::PopClipRect();
     ImGui::PopID(); }
