@@ -20,6 +20,10 @@ Projects are saved in `Documents\PremiumEngine\Projects` as `.pge.json` files
 - Physics: Jolt Physics (the engine used by Horizon Forbidden West), simulated bodies, collisions, character.
 - Scripts: JavaScript (QuickJS) with `onStart`, `onUpdate`, `onOverlap`, `onHit`, `onKey`.
   Block world (voxels.*): BLOCKFALL-style chunks with 20 cm - 1 m blocks, built on background threads; template "Block World".
+    Water you swim in, generator writes across chunk borders (trees, buildings), biome colours and per-block shades,
+    textures from the game's own pixels, shapes (stairs, half, slope ...), turned / lower / carved blocks, model blocks,
+    worlds 400 m tall, BLOCKFALL's own noise in C++, saving the player's changes.
+  Arabic text: HUD, messages and 3D text join Arabic letters and show them right to left.
   Help > Script API Reference lists everything. Endless loops are stopped after 2 seconds instead of freezing.
 - Editor: move / rotate / scale gizmo with snapping, undo / redo, copy / paste, attach (drag in the Outliner),
   drag and drop from the Content Browser, material editor with preview, code editor with colours and error lines,

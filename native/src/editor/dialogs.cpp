@@ -58,17 +58,29 @@ input
 world.camera                     .position, .forward (the direction the player looks)
 
 BLOCK WORLD (voxels)
-The ground is split into 16 x 16 m chunks. Near the ground (the near layer) blocks can be 20, 40, 60, 80 or 100 cm;
-above and below it everything is 1 m blocks. Chunks are generated and built on background threads, hidden faces
-are removed, corners get ambient occlusion, and the player and physics bodies collide with the blocks directly.
-Positions are metres. A block of size s sits on the 20 cm grid; (x, y, z) is its lowest corner.
+The ground is split into 16 x 16 m chunks. Near the ground (the near layer) blocks can be 20, 40, 60, 80 or 100 cm
+wide and 20 - 100 cm tall; above and below it everything is 1 m blocks. Chunks are generated and built on background
+threads, hidden faces are removed, corners get ambient occlusion, and the player and physics bodies collide with the
+blocks directly. Positions are metres. A block sits on the 20 cm grid; (x, y, z) is its lowest corner.
+BLOCKFALL's world fits: voxels.create({ bottom: -98, top: 302, nearLayer: [-2, 20] }).
 
   voxels.create({ bottom: -32, top: 64, nearLayer: [-6, 14], viewDistance: 6, seed: 2026, threads: 0 })
                                  start a block world (removes the old one). false + voxels.lastError on a mistake
   voxels.enabled                 is there a block world?
-  voxels.defineBlock(1, { name: 'Grass', color: '#5a9c3c', solid: true, transparent: false, tile: 0 })
-      color: '#rrggbb', [r, g, b] (0..1) or { top, side, bottom }     tile: number or { top, side, bottom } (atlas)
+  voxels.defineBlock(1, { name: 'Grass', color: '#5a9c3c', tile: 0, ... })    options:
+      color: '#rrggbb', 'rgb(r,g,b)', [r, g, b] (0..1) or { top, side, bottom }     tile: number or { top, side, bottom } (atlas)
+      solid: false            no collision (plants)          transparent: true    see-through (glass): does not hide faces
+      liquid: true            water: moving see-through surface, no collision, the player swims; opacity: 0.75
+      biome: 'top' | 'side' | 'bottom' | ['top', 'side'] | true    those faces take the chunk's biome colour (chunk.tint)
+      vary: 0.08              every block its own shade (0 .. 0.5), like BLOCKFALL
+      glow: 1                 light of its own (0 .. 2, or true)
+      shape: 'stairs'         the block's own shape: cube, slope, half, hex, arch, wedge, cylinder, pyramid, roof, stairs, cross
+                              (cross = two crossed planes for flowers and grass; BLOCKFALL's sh numbers 0-8 work too)
+      model: [ { box: [x0, y0, z0, x1, y1, z1], color, tile }, { cylinder: [x, y, z, radius, length], axis: 'x', sides: 16, color } ]
+                              a model block (wheels, chairs, engines); coordinates inside the block 0..1
   voxels.setAtlas('textures/blocks.png', 16)   block textures: a PNG of square tiles, 16 per row
+  voxels.setAtlas({ tileSize: 16, tiles: [Uint8Array, ...] })   textures made by your code: RGBA bytes of each tile
+  voxels.setAtlas({ width, height, pixels: Uint8Array, tilesPerRow })   or the whole atlas at once
   voxels.setGenerator('flat' | 'hills', { ground: 0, top: 1, dirt: 2, stone: 3, amplitude: 9, scale: 0.012, octaves: 4, smooth: true })
                                  built-in ground made of block ids top / dirt / stone
   voxels.setGenerator(function (chunk, noise, params) { ... }, { ... })  your own ground (runs on background threads,
@@ -76,25 +88,50 @@ Positions are metres. A block of size s sits on the 20 cm grid; (x, y, z) is its
       chunk.cx, chunk.cz         chunk number;  chunk.x, chunk.z = its corner in metres
       chunk.column(x, z, yBottom, yTop, id)   1 m blocks from yBottom up to yTop (x, z = 0..15 inside the chunk)
       chunk.fill(x0, y0, z0, x1, y1, z1, id)  1 m blocks in a box (max not included)
-      chunk.set(x, y, z, id, size)            one block (size 0.2 .. 1, near layer only for small sizes)
-      chunk.get(x, y, z)                      block id there (0 = air)
+      chunk.set(x, y, z, id, size, opts)      one block (size 0.2 .. 1); opts like voxels.setBlock (height, rotation, shape, carve)
+      chunk.place(x, y, z, id, size, opts)    the same, only where there is air or water (trees don't cut into the ground)
+          Writes may reach up to 16 m outside the chunk (trees, buildings, dungeons): that part is added to the chunk
+          next to it when it is made, every time it is made again, and never over the player's own changes there.
+      chunk.cells(x, y, z, w, h, d, ids)      many 20 cm blocks at once from a Uint16Array: ids[i + w * (k + d * j)] is the
+                                              block at (x + i / 5, y + j / 5, z + k / 5); 0 leaves the cell as it is (fast)
+      chunk.stack(x, z, y, [ids])             20 cm blocks stacked up one 20 cm column from y
+      chunk.get(x, y, z)                      block id there (0 = air), inside this chunk
+      chunk.tint(x, z, [r, g, b])             biome colour of a 1 m column (multiplies the colour of biome faces; 1 = none)
       noise.simplex2(x, z)  noise.simplex3(x, y, z)  noise.fbm(x, z, octaves, lacunarity, gain)  noise.hash(x, y, z)
+      noise.bf.h2(x, y, s)  noise.bf.vn(x, y, s)  noise.bf.fbm(x, y, s)  noise.bf.h3(x, y, z, s)  noise.bf.vn3(x, y, z, s)
+      noise.bf.hashf(x, y, z)                 BLOCKFALL's own noise in C++: exactly the game's numbers, much faster
+      noise.bf.fbmGrid(out, nx, nz, x0, z0, step, scale, seed)   a whole grid in one call (out = Float64Array(nx * nz)):
+      noise.bf.vnGrid(...)                    out[i + nx * j] = fbm((x0 + i * step) * scale, (z0 + j * step) * scale, seed)
       (all noise uses the seed from voxels.create, so every thread and every run makes the same world)
-  voxels.getBlock(x, y, z)       { id, x, y, z, size } of the block at a point, or null for air
-  voxels.setBlock(x, y, z, id, size)   place (replaces blocks it overlaps). false + voxels.lastError if not allowed
-  voxels.canPlace(x, y, z, size)
+  voxels.getBlock(x, y, z)       { id, x, y, z, size, height, rotation, shape, carve } of the block at a point, or null for air
+  voxels.setBlock(x, y, z, id, size, opts)   place (replaces blocks it overlaps). false + voxels.lastError if not allowed
+      opts: { height: 0.4 }          a block lower than it is wide (20 cm steps)
+            { rotation: 0..11 }      0-3 quarter turns, + 4 upside down, + 8 on its side (BLOCKFALL's r)
+            { shape: 'stairs' }      this block's shape (see defineBlock)
+            { carve: [125 x 0 / 1] } a carved 5 x 5 x 5 form: index i + 5 * (j + 5 * k), 1 = solid
+            { onlyEmpty: true }      only if the space is free (air or water)
+  voxels.carve(x, y, z, i, j, k, solid)   cut out (false) or fill (true) one 1/5 piece of the block at x, y, z
+  voxels.canPlace(x, y, z, size, height)
   voxels.removeBlock(x, y, z)    removes the block at a point, returns its id (0 = nothing)
-  voxels.raycast(from, dir, max) the first block along a ray, or null:
-      { id, x, y, z, size, normal, point, distance, placePosition(size) }   placePosition = corner for a new block on that face
+  voxels.liquidAt(x, y, z)       id of the liquid there (0 = none)
+  voxels.raycast(from, dir, max, { liquids: true })   the first block along a ray, or null (water is looked through
+      unless liquids: true):  { id, x, y, z, size, height, normal, point, distance, placePosition(size, height) }
   voxels.ready(x, y, z)          the chunks around a point are built and collide
   voxels.topY(x, z)              top of the highest block (NaN while not loaded)
-  voxels.stats                   { chunks, meshed, pendingGen, pendingMesh, triangles, bricks, genMs, meshMs }
+  voxels.save(name)              the player's changes (only changed chunks) -> Documents\PremiumEngine\Saves\<game>\<name>.pgworld
+  voxels.load(name)              puts them back over the generated world (after voxels.create and defineBlock). false + lastError
+  voxels.stats                   { chunks, meshed, generating, meshing, triangles, bricks, generateMs, meshMs, memoryMB, changedChunks }
   world.voxels                   the same object
+  world.player.swimming          true while the player is in a liquid (Space swims up)
 
   Example - break and build:
     const hit = voxels.raycast(world.camera.position, world.camera.forward, 8);
     if (hit && input.pressed('MouseLeft')) voxels.removeBlock(hit.point.clone().addScaledVector(hit.normal, -0.05));
-    if (hit && input.pressed('MouseRight')) voxels.setBlock(hit.placePosition(0.2), 2, 0.2);
+    if (hit && input.pressed('MouseRight')) voxels.setBlock(hit.placePosition(0.2), 2, 0.2, { shape: 'stairs', rotation: 1 });
+
+ARABIC TEXT
+  world.hud, world.message and TextRender actors join Arabic letters and show them right to left, also mixed with English
+  and numbers. HUD lines with Arabic sit on the right of the screen.
 
 log('text', value)               writes to the Output Log
 math.clamp(v, a, b)  math.lerp(a, b, t)  math.random(a, b)  math.vec3(x, y, z)

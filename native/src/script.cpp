@@ -67,7 +67,8 @@ const __apis = new Map();
 const __player = { name: 'Player', isPlayer: true, tags: [],
   get position() { const a = __n.playerPos(); return new Vec3(a[0], a[1], a[2]); },
   teleport(x, y, z) { __n.teleport(...__xyz(x, y, z)); },
-  launch(x, y, z) { __n.launch(...__xyz(x, y, z)); } };
+  launch(x, y, z) { __n.launch(...__xyz(x, y, z)); },
+  get swimming() { return __n.swimming(); } };
 function __api(id) {
   if (!id) return null; if (id === '@player') return __player;
   let a = __apis.get(id); if (a) return a;
@@ -104,18 +105,32 @@ const voxels = { lastError: '',
   get enabled() { return __n.voxOn(); },
   defineBlock(id, o = {}) { __n.voxDefine(+id, JSON.stringify(o || {})); },
   setGenerator(g, params = {}) { if (typeof g === 'function') __n.voxGenScript(g.toString(), JSON.stringify(params || {})); else __n.voxGenBuiltin(String(g), JSON.stringify(params || {})); },
-  setAtlas(file, tilesPerRow = 16) { return __n.voxAtlas(String(file), +tilesPerRow || 16); },
-  getBlock(x, y, z) { const r = __n.voxGet(...__xyz(x, y, z)); return r ? { id: r[0], x: r[1], y: r[2], z: r[3], size: r[4] } : null; },
-  setBlock(x, y, z, id, size) {
-    if (x !== null && typeof x === 'object') { size = z; id = y; [x, y, z] = __xyz(x); }
-    const r = __n.voxSet(+x, +y, +z, +id, size === undefined ? 0.2 : +size); this.lastError = r === true ? '' : String(r); return r === true; },
-  canPlace(x, y, z, size) { if (x !== null && typeof x === 'object') { size = y; [x, y, z] = __xyz(x); } return __n.voxCanPlace(+x, +y, +z, size === undefined ? 0.2 : +size); },
+  // a PNG file, or pixels made by the game: { width, height, pixels (RGBA bytes), tilesPerRow } or { tileSize, tiles: [RGBA bytes of each tile] }
+  setAtlas(a, tilesPerRow = 16) { let r;
+    if (typeof a === 'string') r = __n.voxAtlas(a, +tilesPerRow || 16);
+    else if (a && a.tiles) r = __n.voxAtlasTiles(a.tiles, +a.tileSize || 16, +a.tilesPerRow || 0);
+    else if (a && a.pixels) r = __n.voxAtlasPx(a.pixels, +a.width, +a.height, +a.tilesPerRow || +tilesPerRow || 16);
+    else r = 'setAtlas wants a file name or { pixels } / { tiles }';
+    this.lastError = r === true ? '' : String(r); if (r !== true) __n.log('[voxels] setAtlas: ' + r); return r === true; },
+  getBlock(x, y, z) { const r = __n.voxGet(...__xyz(x, y, z)); if (!r) return null;
+    const b = { id: r[0], x: r[1], y: r[2], z: r[3], size: r[4], height: r[5], rotation: r[6], shape: r[7] };
+    if (r[8]) b.carve = r[8].split('').map(Number); return b; },
+  // options: { height: 0.2 .. 1, rotation: 0..11, shape: 'stairs' | 'half' | ..., carve: [125 x 0/1], onlyEmpty: true }
+  setBlock(x, y, z, id, size, opts) {
+    if (x !== null && typeof x === 'object') { opts = id; size = z; id = y; [x, y, z] = __xyz(x); }
+    const r = __n.voxSet(+x, +y, +z, +id, size === undefined ? 0.2 : +size, opts ? JSON.stringify(opts) : ''); this.lastError = r === true ? '' : String(r); return r === true; },
+  canPlace(x, y, z, size, height) { if (x !== null && typeof x === 'object') { height = z; size = y; [x, y, z] = __xyz(x); } return __n.voxCanPlace(+x, +y, +z, size === undefined ? 0.2 : +size, +height || 0); },
   removeBlock(x, y, z) { return __n.voxRemove(...__xyz(x, y, z)); },
-  raycast(from, dir, max = 8) { const a = __xyz(from), b = __xyz(dir); const r = __n.voxRay(a[0], a[1], a[2], b[0], b[1], b[2], +max || 8); if (!r) return null;
-    return { id: r[0], x: r[1], y: r[2], z: r[3], size: r[4], normal: new Vec3(r[5], r[6], r[7]), point: new Vec3(r[8], r[9], r[10]), distance: r[11],
-      placePosition(size = 0.2) { const p = __n.voxPlace(...r, +size); return new Vec3(p[0], p[1], p[2]); } }; },
+  carve(x, y, z, i, j, k, solid) { if (x !== null && typeof x === 'object') { solid = k; k = j; j = i; i = z; [x, y, z] = __xyz(x); } return __n.voxCarve(+x, +y, +z, i | 0, j | 0, k | 0, !!solid); },
+  liquidAt(x, y, z) { return __n.voxLiquid(...__xyz(x, y, z)); },
+  raycast(from, dir, max = 8, o = {}) { const a = __xyz(from), b = __xyz(dir); const r = __n.voxRay(a[0], a[1], a[2], b[0], b[1], b[2], +max || 8, !!(o && o.liquids)); if (!r) return null;
+    return { id: r[0], x: r[1], y: r[2], z: r[3], size: r[4], normal: new Vec3(r[5], r[6], r[7]), point: new Vec3(r[8], r[9], r[10]), distance: r[11], height: r[15],
+      placePosition(size = 0.2, height = 0) { const p = __n.voxPlace(...r, +size, +height || 0); return new Vec3(p[0], p[1], p[2]); } }; },
   ready(x, y, z) { return __n.voxReady(...__xyz(x, y, z)); },
   topY(x, z) { return __n.voxTop(+x, +z); },
+  // the player's changes, in Documents/PremiumEngine/Saves/<game>/<name>.pgworld
+  save(name = 'world') { const r = __n.voxSave(String(name)); this.lastError = r === true ? '' : String(r); return r === true; },
+  load(name = 'world') { const r = __n.voxLoad(String(name)); this.lastError = r === true ? '' : String(r); return r === true; },
   get stats() { return JSON.parse(__n.voxStats()); } };
 const input = { key(k) { return __n.key(String(k)); }, pressed(k) { return __n.pressed(String(k)); },
   get mouse() { const m = __n.mouse(); return { dx: m[0], dy: m[1], left: !!m[2], right: !!m[3] }; } };
@@ -188,39 +203,84 @@ static void bindNatives(JSContext* c) {
   FN("voxOn", 0, return JS_NewBool(c, W(c)->voxels() != nullptr););
   FN("voxDefine", 2, { VoxelWorld* v = W(c)->voxels(); if (!v) { W(c)->log("warning: voxels.defineBlock: call voxels.create() first"); return JS_UNDEFINED; }
     BlockType t; nlohmann::json o = nlohmann::json::object(); try { o = nlohmann::json::parse(S(c, a[1])); } catch (...) {}
+    auto col = [](const nlohmann::json& e, glm::vec3 d) -> glm::vec3 {   // '#rrggbb', 'rgb(r,g,b)' or [r, g, b] (0..1)
+      if (e.is_string()) { std::string s = e; if (s.rfind("rgb", 0) == 0) { int r = 0, g = 0, b = 0; if (std::sscanf(s.c_str(), "rgb(%d,%d,%d)", &r, &g, &b) == 3 || std::sscanf(s.c_str(), "rgb( %d , %d , %d )", &r, &g, &b) == 3) return glm::vec3(r, g, b) / 255.f; return d; } return hexColor(s, d); }
+      if (e.is_array() && e.size() >= 3 && e[0].is_number()) return {e[0].get<float>(), e[1].get<float>(), e[2].get<float>()};
+      return d; };
     t.name = o.value("name", std::string());
     auto colors = o.contains("color") ? o["color"] : nlohmann::json("#ffffff");
-    if (colors.is_string()) { glm::vec3 x = hexColor(colors.get<std::string>()); t.color[0] = t.color[1] = t.color[2] = x; }
-    else if (colors.is_array()) for (int i = 0; i < 3; i++) { const auto& e = colors.size() > (size_t)i ? colors[i] : colors.back(); if (e.is_string()) t.color[i] = hexColor(e.get<std::string>()); }
-    else if (colors.is_object()) { t.color[0] = hexColor(colors.value("top", std::string("#ffffff"))); t.color[1] = hexColor(colors.value("side", colors.value("top", std::string("#ffffff")))); t.color[2] = hexColor(colors.value("bottom", colors.value("side", std::string("#ffffff")))); }
+    if (colors.is_string() || (colors.is_array() && colors.size() == 3 && colors[0].is_number())) t.color[0] = t.color[1] = t.color[2] = col(colors, glm::vec3(1));
+    else if (colors.is_array() && !colors.empty()) for (int i = 0; i < 3; i++) t.color[i] = col(colors.size() > (size_t)i ? colors[i] : colors.back(), glm::vec3(1));
+    else if (colors.is_object()) { t.color[0] = col(colors.value("top", nlohmann::json("#ffffff")), glm::vec3(1)); t.color[1] = col(colors.value("side", colors.value("top", nlohmann::json("#ffffff"))), t.color[0]); t.color[2] = col(colors.value("bottom", colors.value("side", nlohmann::json("#ffffff"))), t.color[1]); }
     if (o.contains("tile")) { auto& tl = o["tile"]; if (tl.is_number()) t.tile[0] = t.tile[1] = t.tile[2] = tl.get<int>();
       else if (tl.is_array()) for (int i = 0; i < 3; i++) { const auto& e = tl.size() > (size_t)i ? tl[i] : tl.back(); if (e.is_number()) t.tile[i] = e.get<int>(); }
       else if (tl.is_object()) { t.tile[0] = tl.value("top", -1); t.tile[1] = tl.value("side", t.tile[0]); t.tile[2] = tl.value("bottom", t.tile[1]); } }
-    t.solid = o.value("solid", true); t.opaque = !o.value("transparent", false);
+    t.solid = o.value("solid", true); t.opaque = !o.value("transparent", false); t.liquid = o.value("liquid", false);
+    t.vary = glm::clamp(o.value("vary", 0.f), 0.f, 0.5f); t.opacity = glm::clamp(o.value("opacity", 0.75f), 0.05f, 1.f);
+    if (o.contains("glow")) { auto& gl = o["glow"]; t.glow = gl.is_boolean() ? (gl.get<bool>() ? 1.f : 0.f) : gl.is_number() ? glm::clamp(gl.get<float>(), 0.f, 2.f) : 0.f; }
+    if (o.contains("biome")) { auto& bi = o["biome"]; auto bit = [](const std::string& s) -> uint8_t { return s == "top" ? 1 : s == "side" || s == "sides" ? 2 : s == "bottom" ? 4 : s == "all" ? 7 : 0; };
+      if (bi.is_boolean()) t.biome = bi.get<bool>() ? 7 : 0; else if (bi.is_string()) t.biome = bit(bi.get<std::string>()); else if (bi.is_array()) for (auto& e : bi) if (e.is_string()) t.biome |= bit(e.get<std::string>()); }
+    if (o.contains("shape")) { auto& sh = o["shape"]; int x = sh.is_number() ? sh.get<int>() : sh.is_string() ? shapeFromName(sh.get<std::string>()) : -1;
+      if (x < 0 || x >= SH_Count) W(c)->log("warning: voxels.defineBlock: unknown shape (cube, slope, half, hex, arch, wedge, cylinder, pyramid, roof, stairs, cross)"); else t.shape = x;
+      if (t.shape == SH_Cross && !o.contains("solid")) t.solid = false; }
+    if (o.contains("model") && o["model"].is_array()) for (auto& p : o["model"]) { if (!p.is_object()) continue; ModelPart m;
+      if (p.contains("box") && p["box"].is_array() && p["box"].size() == 6) { m.kind = 0; m.a = {p["box"][0].get<float>(), p["box"][1].get<float>(), p["box"][2].get<float>()}; m.b = {p["box"][3].get<float>(), p["box"][4].get<float>(), p["box"][5].get<float>()}; }
+      else if (p.contains("cylinder") && p["cylinder"].is_array() && p["cylinder"].size() == 5) { m.kind = 1; auto& q = p["cylinder"]; m.a = {q[0].get<float>(), q[1].get<float>(), q[2].get<float>()}; m.b = {q[3].get<float>(), q[4].get<float>(), 0};
+        std::string ax = p.value("axis", std::string("y")); m.axis = ax == "x" ? 0 : ax == "z" ? 2 : 1; m.sides = p.value("sides", 16); }
+      else { W(c)->log("warning: voxels.defineBlock: a model part needs box: [x0, y0, z0, x1, y1, z1] or cylinder: [x, y, z, radius, length]"); continue; }
+      if (p.contains("color")) { m.color = col(p["color"], glm::vec3(1)); m.hasColor = true; } m.tile = p.value("tile", -1); t.model.push_back(m); }
     v->defineBlock((int)D(c, a[0]), t); return JS_UNDEFINED; });
   FN("voxGenBuiltin", 2, { if (VoxelWorld* v = W(c)->voxels()) v->setBuiltinGenerator(S(c, a[0]), S(c, a[1])); return JS_UNDEFINED; });
   FN("voxGenScript", 2, { if (VoxelWorld* v = W(c)->voxels()) v->setScriptGenerator(S(c, a[0]), S(c, a[1])); return JS_UNDEFINED; });
-  FN("voxAtlas", 2, { VoxelWorld* v = W(c)->voxels(); return JS_NewBool(c, v && v->setAtlas(W(c)->assetPath(S(c, a[0])), (int)D(c, a[1]))); });
+  FN("voxAtlas", 2, { VoxelWorld* v = W(c)->voxels(); if (!v) return JS_NewString(c, "call voxels.create() first"); std::string f = W(c)->assetPath(S(c, a[0]));
+    return v->setAtlas(f, (int)D(c, a[1])) ? JS_TRUE : JS_NewString(c, ("can't read " + f).c_str()); });
+  FN("voxAtlasPx", 4, { VoxelWorld* v = W(c)->voxels(); if (!v) return JS_NewString(c, "call voxels.create() first");
+    size_t n = 0; uint8_t* px = JS_GetUint8Array(c, &n, a[0]); if (!px) { JS_FreeValue(c, JS_GetException(c)); size_t off = 0, bpe = 0; JSValue buf = JS_GetTypedArrayBuffer(c, a[0], &off, &n, &bpe);
+      if (JS_IsException(buf)) { JS_FreeValue(c, JS_GetException(c)); return JS_NewString(c, "pixels must be a Uint8Array / Uint8ClampedArray"); } size_t bl = 0; uint8_t* base = JS_GetArrayBuffer(c, &bl, buf); JS_FreeValue(c, buf); px = base ? base + off : nullptr; }
+    int w = (int)D(c, a[1]), h = (int)D(c, a[2]); if (!px || (size_t)w * h * 4 > n) return JS_NewString(c, "pixels must hold width x height x 4 bytes (RGBA)");
+    std::string why; return v->setAtlasPixels(px, w, h, (int)D(c, a[3]), &why) ? JS_TRUE : JS_NewStringLen(c, why.data(), why.size()); });
+  FN("voxAtlasTiles", 3, { VoxelWorld* v = W(c)->voxels(); if (!v) return JS_NewString(c, "call voxels.create() first");
+    int ts = (int)D(c, a[1]); JSValue len = JS_GetPropertyStr(c, a[0], "length"); int n = (int)D(c, len); JS_FreeValue(c, len);
+    if (ts < 1 || ts > 512 || n < 1) return JS_NewString(c, "tiles wants a list of tiles and tileSize 1..512");
+    int per = (int)D(c, a[2]); if (per <= 0) { per = 1; while (per * per < n) per++; } int rows = (n + per - 1) / per;
+    std::vector<uint8_t> img((size_t)per * ts * rows * ts * 4, 0);
+    for (int i = 0; i < n; i++) { JSValue e = JS_GetPropertyUint32(c, a[0], (uint32_t)i); size_t off = 0, bl = 0, bpe = 0; JSValue buf = JS_GetTypedArrayBuffer(c, e, &off, &bl, &bpe); JS_FreeValue(c, e);
+      if (JS_IsException(buf)) { JS_FreeValue(c, JS_GetException(c)); return JS_NewString(c, ("tile " + std::to_string(i) + " is not a Uint8Array").c_str()); }
+      size_t sz = 0; uint8_t* base = JS_GetArrayBuffer(c, &sz, buf); JS_FreeValue(c, buf); if (!base || bl < (size_t)ts * ts * 4) return JS_NewString(c, ("tile " + std::to_string(i) + " needs tileSize x tileSize x 4 bytes").c_str());
+      int tx = i % per, ty = i / per; for (int y = 0; y < ts; y++) std::memcpy(&img[(((size_t)ty * ts + y) * per * ts + (size_t)tx * ts) * 4], base + off + (size_t)y * ts * 4, (size_t)ts * 4); }
+    std::string why; return v->setAtlasPixels(img.data(), per * ts, rows * ts, per, &why) ? JS_TRUE : JS_NewStringLen(c, why.data(), why.size()); });
   FN("voxGet", 3, { VoxelWorld* v = W(c)->voxels(); if (!v) return JS_NULL; BlockInfo b = v->getBlock({(float)D(c, a[0]), (float)D(c, a[1]), (float)D(c, a[2])}); if (!b.id) return JS_NULL;
-    JSValue r = JS_NewArray(c); double x[5] = {(double)b.id, b.origin.x / (double)VC, b.origin.y / (double)VC, b.origin.z / (double)VC, b.size / (double)VC}; for (int i = 0; i < 5; i++) JS_SetPropertyUint32(c, r, i, JS_NewFloat64(c, x[i])); return r; });
-  FN("voxSet", 5, { VoxelWorld* v = W(c)->voxels(); if (!v) return JS_NewString(c, "call voxels.create() first"); std::string why;
-    bool ok = v->setBlock({(float)D(c, a[0]), (float)D(c, a[1]), (float)D(c, a[2])}, (int)D(c, a[3]), (float)D(c, a[4]), &why); return ok ? JS_TRUE : JS_NewStringLen(c, why.data(), why.size()); });
-  FN("voxCanPlace", 4, { VoxelWorld* v = W(c)->voxels(); return JS_NewBool(c, v && v->canPlace({(float)D(c, a[0]), (float)D(c, a[1]), (float)D(c, a[2])}, (float)D(c, a[3]))); });
+    JSValue r = JS_NewArray(c); int sh = b.extra.shape ? b.extra.shape - 1 : v->block(b.id).shape;
+    double x[7] = {(double)b.id, b.origin.x / (double)VC, b.origin.y / (double)VC, b.origin.z / (double)VC, b.size / (double)VC, b.sizeY / (double)VC, (double)b.extra.rot}; for (int i = 0; i < 7; i++) JS_SetPropertyUint32(c, r, i, JS_NewFloat64(c, x[i]));
+    JS_SetPropertyUint32(c, r, 7, JS_NewString(c, shapeName(sh)));
+    if (b.extra.carved) { std::string m(125, '0'); for (int k = 0; k < 125; k++) if (b.extra.carve[k >> 6] >> (k & 63) & 1) m[k] = '1'; JS_SetPropertyUint32(c, r, 8, JS_NewStringLen(c, m.data(), m.size())); }
+    return r; });
+  FN("voxSet", 6, { VoxelWorld* v = W(c)->voxels(); if (!v) return JS_NewString(c, "call voxels.create() first"); std::string why; BlockOpts o; std::string oj = S(c, a[5]);
+    if (!oj.empty() && !blockOptsFromJson(oj, o, &why)) return JS_NewStringLen(c, why.data(), why.size());
+    bool ok = v->setBlock({(float)D(c, a[0]), (float)D(c, a[1]), (float)D(c, a[2])}, (int)D(c, a[3]), (float)D(c, a[4]), o, &why); return ok ? JS_TRUE : JS_NewStringLen(c, why.data(), why.size()); });
+  FN("voxCanPlace", 5, { VoxelWorld* v = W(c)->voxels(); return JS_NewBool(c, v && v->canPlace({(float)D(c, a[0]), (float)D(c, a[1]), (float)D(c, a[2])}, (float)D(c, a[3]), (float)D(c, a[4]))); });
   FN("voxRemove", 3, { VoxelWorld* v = W(c)->voxels(); return JS_NewInt32(c, v ? v->removeBlock({(float)D(c, a[0]), (float)D(c, a[1]), (float)D(c, a[2])}) : 0); });
-  FN("voxRay", 7, { VoxelWorld* v = W(c)->voxels(); if (!v) return JS_NULL;
-    VoxelHit h = v->raycast({(float)D(c, a[0]), (float)D(c, a[1]), (float)D(c, a[2])}, {(float)D(c, a[3]), (float)D(c, a[4]), (float)D(c, a[5])}, (float)D(c, a[6])); if (!h.hit) return JS_NULL;
-    double x[15] = {(double)h.id, h.origin.x / (double)VC, h.origin.y / (double)VC, h.origin.z / (double)VC, h.size / (double)VC, (double)h.normal.x, (double)h.normal.y, (double)h.normal.z,
-      h.point.x, h.point.y, h.point.z, h.distance, (double)h.cell.x, (double)h.cell.y, (double)h.cell.z};
-    JSValue r = JS_NewArray(c); for (int i = 0; i < 15; i++) JS_SetPropertyUint32(c, r, i, JS_NewFloat64(c, x[i])); return r; });
-  FN("voxPlace", 16, { VoxelWorld* v = W(c)->voxels(); VoxelHit h; h.hit = true; h.id = (int)D(c, a[0]);
+  FN("voxCarve", 7, { VoxelWorld* v = W(c)->voxels(); return JS_NewBool(c, v && v->carve({(float)D(c, a[0]), (float)D(c, a[1]), (float)D(c, a[2])}, (int)D(c, a[3]), (int)D(c, a[4]), (int)D(c, a[5]), JS_ToBool(c, a[6]))); });
+  FN("voxLiquid", 3, { VoxelWorld* v = W(c)->voxels(); return JS_NewInt32(c, v ? v->liquidAt({(float)D(c, a[0]), (float)D(c, a[1]), (float)D(c, a[2])}) : 0); });
+  FN("voxRay", 8, { VoxelWorld* v = W(c)->voxels(); if (!v) return JS_NULL;
+    VoxelHit h = v->raycast({(float)D(c, a[0]), (float)D(c, a[1]), (float)D(c, a[2])}, {(float)D(c, a[3]), (float)D(c, a[4]), (float)D(c, a[5])}, (float)D(c, a[6]), JS_ToBool(c, a[7])); if (!h.hit) return JS_NULL;
+    double x[16] = {(double)h.id, h.origin.x / (double)VC, h.origin.y / (double)VC, h.origin.z / (double)VC, h.size / (double)VC, (double)h.normal.x, (double)h.normal.y, (double)h.normal.z,
+      h.point.x, h.point.y, h.point.z, h.distance, (double)h.cell.x, (double)h.cell.y, (double)h.cell.z, h.sizeY / (double)VC};
+    JSValue r = JS_NewArray(c); for (int i = 0; i < 16; i++) JS_SetPropertyUint32(c, r, i, JS_NewFloat64(c, x[i])); return r; });
+  FN("voxPlace", 18, { VoxelWorld* v = W(c)->voxels(); VoxelHit h; h.hit = true; h.id = (int)D(c, a[0]);
     h.origin = glm::ivec3((int)std::lround(D(c, a[1]) * VC), (int)std::lround(D(c, a[2]) * VC), (int)std::lround(D(c, a[3]) * VC)); h.size = (int)std::lround(D(c, a[4]) * VC);
     h.normal = glm::ivec3((int)D(c, a[5]), (int)D(c, a[6]), (int)D(c, a[7])); h.point = {(float)D(c, a[8]), (float)D(c, a[9]), (float)D(c, a[10])}; h.distance = (float)D(c, a[11]);
-    h.cell = glm::ivec3((int)D(c, a[12]), (int)D(c, a[13]), (int)D(c, a[14]));
-    glm::vec3 p = v ? v->placeCorner(h, (float)D(c, a[15])) : glm::vec3(0); return A3(c, p); });
+    h.cell = glm::ivec3((int)D(c, a[12]), (int)D(c, a[13]), (int)D(c, a[14])); h.sizeY = (int)std::lround(D(c, a[15]) * VC);
+    glm::vec3 p = v ? v->placeCorner(h, (float)D(c, a[16]), (float)D(c, a[17])) : glm::vec3(0); return A3(c, p); });
+  FN("voxSave", 1, { VoxelWorld* v = W(c)->voxels(); if (!v) return JS_NewString(c, "call voxels.create() first"); std::string why;
+    return v->save(W(c)->savePath(S(c, a[0])), &why) ? JS_TRUE : JS_NewStringLen(c, why.data(), why.size()); });
+  FN("voxLoad", 1, { VoxelWorld* v = W(c)->voxels(); if (!v) return JS_NewString(c, "call voxels.create() first"); std::string why;
+    return v->load(W(c)->savePath(S(c, a[0])), &why) ? JS_TRUE : JS_NewStringLen(c, why.data(), why.size()); });
+  FN("swimming", 0, return JS_NewBool(c, W(c)->playerSwimming()););
   FN("voxReady", 3, { VoxelWorld* v = W(c)->voxels(); return JS_NewBool(c, v && v->ready({(float)D(c, a[0]), (float)D(c, a[1]), (float)D(c, a[2])})); });
   FN("voxTop", 2, { VoxelWorld* v = W(c)->voxels(); return JS_NewFloat64(c, v ? v->topY((float)D(c, a[0]), (float)D(c, a[1])) : NAN); });
   FN("voxStats", 0, { VoxelWorld* v = W(c)->voxels(); std::string s = "{}";
-    if (v) { auto st = v->stats(); s = nlohmann::json{{"chunks", st.chunks}, {"meshed", st.meshed}, {"generating", st.pendingGen}, {"meshing", st.pendingMesh}, {"triangles", st.triangles}, {"bricks", st.bricks}, {"generateMs", st.genMs}, {"meshMs", st.meshMs}}.dump(); }
+    if (v) { auto st = v->stats(); s = nlohmann::json{{"chunks", st.chunks}, {"meshed", st.meshed}, {"generating", st.pendingGen}, {"meshing", st.pendingMesh}, {"triangles", st.triangles}, {"bricks", st.bricks}, {"generateMs", st.genMs}, {"meshMs", st.meshMs}, {"memoryMB", st.memory / 1048576.0}, {"changedChunks", v->changedChunks()}}.dump(); }
     return JS_NewStringLen(c, s.data(), s.size()); });
   JS_SetPropertyStr(c, g, "__n", n); JS_FreeValue(c, g);
 }

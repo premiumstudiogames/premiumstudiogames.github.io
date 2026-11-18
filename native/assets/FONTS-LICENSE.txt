@@ -1,3 +1,4 @@
 Roboto-Medium.ttf  - Apache License 2.0 (Google)
 Cousine-Regular.ttf - Apache License 2.0 (Google, Steve Matteson)
 Both come with Dear ImGui (misc/fonts).
+NotoSansArabic-Medium.ttf - SIL Open Font License 1.1 (The Noto Project Authors), see OFL-NotoSansArabic.txt

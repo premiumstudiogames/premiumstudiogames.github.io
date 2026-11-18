@@ -1,5 +1,6 @@
 #include "game.h"
 #include "log.h"
+#include "arabic.h"
 #include <imgui.h>
 #include <nlohmann/json.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -99,7 +100,7 @@ bool Game::start() {
   const Level* L = project_.level(levelName); if (!L) { logMsg("error: level \"" + levelName + "\" not found", LogKind::Error); return false; }
   level_ = *L; time_ = 0; restartRequested_ = false;
   for (auto& a : level_.actors) { auto o = std::make_unique<Obj>(); o->a = a; o->p = a.p; o->r = glm::radians(a.r); o->s = a.s; o->visible = a.visible; byId_[a.id] = o.get(); objs_.push_back(std::move(o)); }
-  phys_.reset(new Physics()); phys_->init(level_.world.gravity);
+  phys_.reset(new Physics()); phys_->init(level_.world.gravity); gravity_ = level_.world.gravity; swimming_ = false;
   for (size_t i = 0; i < objs_.size(); i++) { Obj& o = *objs_[i]; if (o.a.type == "StaticMesh" && (o.a.physics.collision || o.a.physics.simulate)) addBody(o); }
   // player
   mode_ = level_.world.gameMode; if (mode_ != "ThirdPerson" && mode_ != "Spectator") mode_ = "FirstPerson";
@@ -171,7 +172,13 @@ void Game::update(float dt) {
     glm::vec3 feet = c - glm::vec3(0, 0.9f, 0); bool grounded = false;
     const glm::vec2 offs[5] = {{0, 0}, {0.25f, 0}, {-0.25f, 0}, {0, 0.25f}, {0, -0.25f}};
     for (auto& o : offs) if (phys_->rayHit(feet + glm::vec3(o.x, 0.1f, o.y), feet + glm::vec3(o.x, -0.15f, o.y), player_)) { grounded = true; break; }
-    if (grounded && pressed_.count("Space")) v.y = 5.2f;
+    // block world liquids: swim (slower, Space goes up, otherwise sink slowly; climb out at the edge)
+    swimming_ = false;
+    if (vox_) { bool body = vox_->liquidAt(feet + glm::vec3(0, 0.45f, 0)) || vox_->liquidAt(c), head = vox_->liquidAt(c + glm::vec3(0, 0.7f, 0));
+      if (body) { swimming_ = true; v.x *= 0.55f; v.z *= 0.55f;
+        float target = k("Space") ? (head ? 2.4f : 3.4f) : head ? -0.7f : -0.25f;
+        v.y = v.y + (target - v.y) * std::min(1.f, dt * 5.f) - gravity_ * dt; } }
+    if (grounded && !swimming_ && pressed_.count("Space")) v.y = 5.2f;
     // block world: walk up 20 - 40 cm steps without jumping
     if (vox_ && grounded && glm::dot(mv, mv) > 0 && v.y <= 0.5f) {
       glm::vec3 ahead = feet + mv * 0.5f; auto solid = [&](float h) { return vox_->solidAt(ahead + glm::vec3(0, h, 0)); };
@@ -240,19 +247,28 @@ void Game::buildFrame(Frame& f, Camera& cam, float aspect) const {
   } else { camW = glm::translate(glm::mat4(1), eye) * glm::mat4_cast(quatYXZ({pitch_, yaw_, 0})); cam.view = glm::inverse(camW); cam.pos = eye; }
   cam.proj = glm::perspective(glm::radians(glm::clamp(level_.world.fov, 20.f, 150.f)), std::max(aspect, 0.01f), 0.05f, 2000.f);
   { glm::vec3 fw = -glm::vec3(glm::inverse(cam.view)[2]); fw.y = 0; f.shadowCenter = eye + (glm::length(fw) > 1e-3f ? glm::normalize(fw) * 25.f : glm::vec3(0)); }   // the shadow box covers what is in front of the camera
-  if (vox_) vox_->draw(f, cam);
+  if (vox_) { vox_->draw(f, cam);
+    if (int lq = vox_->liquidAt(cam.pos)) { const BlockType& bt = vox_->block(lq); f.fog = true; f.world.fogColor = bt.color[0] * 0.5f; f.world.fogDensity = 0.09f; f.world.sky = f.world.fogColor; } }   // under water
+  f.time = (float)time_;
 }
 
 void Game::drawHud(ImDrawList* dl, float x, float y, float w, float h) const {
   ImGuiIO& io = ImGui::GetIO(); ImFont* big = io.Fonts->Fonts.Size > 1 ? io.Fonts->Fonts[1] : io.Fonts->Fonts[0]; ImFont* ui = io.Fonts->Fonts[0];
   float yy = y + 14;
-  for (auto& [id, t] : hud_) { ImVec2 s = ui->CalcTextSizeA(20, 1e9f, 0, t.c_str());
-    dl->AddRectFilled({x + 14, yy}, {x + 14 + s.x + 20, yy + s.y + 12}, IM_COL32(0, 0, 0, 130), 8); dl->AddText(ui, 20, {x + 24, yy + 6}, IM_COL32_WHITE, t.c_str()); yy += s.y + 18; }
+  // Arabic is joined and drawn right to left (visualText); HUD lines with Arabic sit on the right
+  for (auto& [id, t0] : hud_) { std::string t = visualText(t0); ImVec2 s = ui->CalcTextSizeA(20, 1e9f, 0, t.c_str()); float bx = hasRtl(t0) ? x + w - 14 - s.x - 20 : x + 14;
+    dl->AddRectFilled({bx, yy}, {bx + s.x + 20, yy + s.y + 12}, IM_COL32(0, 0, 0, 130), 8); dl->AddText(ui, 20, {bx + 10, yy + 6}, IM_COL32_WHITE, t.c_str()); yy += s.y + 18; }
   if (!msg_.empty() && time_ < msgUntil_) {
-    float a = (float)std::min(1.0, (msgUntil_ - time_) / 0.3); ImVec2 s = big->CalcTextSizeA(34, w * 0.9f, w * 0.9f, msg_.c_str());
-    ImVec2 p(x + (w - s.x) / 2, y + h * 0.16f);
-    dl->AddRectFilled({p.x - 22, p.y - 12}, {p.x + s.x + 22, p.y + s.y + 12}, IM_COL32(0, 0, 0, (int)(150 * a)), 12);
-    dl->AddText(big, 34, p, IM_COL32(255, 255, 255, (int)(255 * a)), msg_.c_str(), nullptr, w * 0.9f);
+    float a = (float)std::min(1.0, (msgUntil_ - time_) / 0.3), maxW = w * 0.9f;
+    // wrap in reading order, then turn each line for drawing
+    std::vector<std::string> lines; { std::string cur, word; auto width = [&](const std::string& s) { std::string v = visualText(s); return big->CalcTextSizeA(34, 1e9f, 0, v.c_str()).x; };
+      auto flushWord = [&] { if (word.empty()) return; std::string t = cur.empty() ? word : cur + " " + word; if (!cur.empty() && width(t) > maxW) { lines.push_back(cur); cur = word; } else cur = t; word.clear(); };
+      for (char ch : msg_) { if (ch == '\n') { flushWord(); lines.push_back(cur); cur.clear(); } else if (ch == ' ') flushWord(); else word += ch; }
+      flushWord(); lines.push_back(cur); }
+    float lh = big->FontSize * 34.f / big->FontSize * 1.15f, tw = 0; std::vector<std::string> vis; for (auto& l : lines) { vis.push_back(visualText(l)); tw = std::max(tw, big->CalcTextSizeA(34, 1e9f, 0, vis.back().c_str()).x); }
+    float th = lh * vis.size(); ImVec2 p(x + (w - tw) / 2, y + h * 0.16f);
+    dl->AddRectFilled({p.x - 22, p.y - 12}, {p.x + tw + 22, p.y + th + 12}, IM_COL32(0, 0, 0, (int)(150 * a)), 12);
+    for (size_t i = 0; i < vis.size(); i++) { float lw = big->CalcTextSizeA(34, 1e9f, 0, vis[i].c_str()).x; dl->AddText(big, 34, {x + (w - lw) / 2, p.y + lh * i}, IM_COL32(255, 255, 255, (int)(255 * a)), vis[i].c_str()); }
   }
   if (loading()) { const char* t = "Loading world..."; ImVec2 s = big->CalcTextSizeA(30, 1e9f, 0, t); ImVec2 p(x + (w - s.x) / 2, y + h * 0.45f);
     dl->AddRectFilled({p.x - 24, p.y - 14}, {p.x + s.x + 24, p.y + s.y + 14}, IM_COL32(0, 0, 0, 150), 12); dl->AddText(big, 30, p, IM_COL32_WHITE, t); }
@@ -329,7 +345,7 @@ void Game::hud(const std::string& id, const std::string& t) {
   for (auto it = hud_.begin(); it != hud_.end(); ++it) if (it->first == id) { if (t.empty()) hud_.erase(it); else it->second = t; return; }
   if (!t.empty()) hud_.push_back({id, t});
 }
-void Game::setGravity(float y) { phys_->setGravity(y); }
+void Game::setGravity(float y) { phys_->setGravity(y); gravity_ = y; }
 glm::vec3 Game::playerPos() { return player_ != NO_BODY ? phys_->position(player_) : specPos_; }
 void Game::playerTeleport(const glm::vec3& p) { if (player_ != NO_BODY) { phys_->teleport(player_, p, glm::quat(1, 0, 0, 0)); phys_->setVelocity(player_, glm::vec3(0)); } else specPos_ = p; }
 void Game::playerLaunch(const glm::vec3& v) { if (player_ != NO_BODY) phys_->setVelocity(player_, v); }
@@ -348,5 +364,10 @@ std::string Game::assetPath(const std::string& p) {
   return p;
 }
 glm::vec3 Game::cameraPos() { if (mode_ == "Spectator") return specPos_; return player_ != NO_BODY ? phys_->position(player_) + glm::vec3(0, 0.7f, 0) : specPos_; }
+std::string Game::savePath(const std::string& name) {
+  std::string game = project_.name.empty() ? "Game" : project_.name, n = name.empty() ? "world" : name;
+  for (auto* s : {&game, &n}) for (char& ch : *s) if (ch == '/' || ch == '\\' || ch == ':' || ch == '*' || ch == '?' || ch == '"' || ch == '<' || ch == '>' || ch == '|') ch = '_';
+  return (std::filesystem::u8path(documentsDir()) / "Saves" / std::filesystem::u8path(game) / std::filesystem::u8path(n + ".pgworld")).u8string();
+}
 glm::vec3 Game::cameraDir() { return quatYXZ({pitch_, yaw_, 0}) * glm::vec3(0, 0, -1); }
 }

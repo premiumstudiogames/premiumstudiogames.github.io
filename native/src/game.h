@@ -75,6 +75,8 @@ public:
   std::string assetPath(const std::string& p) override;
   glm::vec3 cameraPos() override;
   glm::vec3 cameraDir() override;
+  bool playerSwimming() override { return swimming_; }
+  std::string savePath(const std::string& name) override;
 
 private:
   struct Obj {
@@ -84,7 +86,7 @@ private:
   };
   Project project_; Level level_;
   std::vector<std::unique_ptr<Obj>> objs_; std::unordered_map<std::string, Obj*> byId_;
-  std::unique_ptr<Physics> phys_; std::unique_ptr<ScriptHost> scripts_; std::unique_ptr<VoxelWorld> vox_; bool voxHold_ = false; glm::vec3 voxHoldPos_{0};
+  std::unique_ptr<Physics> phys_; std::unique_ptr<ScriptHost> scripts_; std::unique_ptr<VoxelWorld> vox_; bool voxHold_ = false, swimming_ = false; glm::vec3 voxHoldPos_{0}; float gravity_ = -9.81f;
   std::string mode_; uint32_t player_ = NO_BODY; float yaw_ = 0, pitch_ = 0; glm::vec3 specPos_{0, 2, 5}, moveDir_{0};
   double time_ = 0; bool restartRequested_ = false, started_ = false;
   std::set<std::string> keys_, pressed_; glm::vec4 mouseState_{0}; float lookDx_ = 0, lookDy_ = 0;

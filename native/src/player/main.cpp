@@ -75,7 +75,8 @@ int main(int argc, char** argv) {
       saveScreenshotBMP(selftest + "/player.bmp", w, h);
       float moved = glm::length(G.playerPos() - startPos); int errors = 0; for (auto& l : logLines()) errors += l.kind == LogKind::Error;
       bool ok = moved > 1.0f && errors == 0 && glGetError() == GL_NO_ERROR;
-      if (FILE* f = std::fopen((selftest + "/player-result.txt").c_str(), "w")) { std::fprintf(f, "%s\nmoved %.2f m, %d errors\n", ok ? "PASS" : "FAIL", moved, errors); std::fclose(f); }
+      if (FILE* f = std::fopen((selftest + "/player-result.txt").c_str(), "w")) { std::fprintf(f, "%s\nmoved %.2f m, %d errors\n", ok ? "PASS" : "FAIL", moved, errors);
+        for (auto& l : logLines()) std::fprintf(f, "%s\n", l.text.c_str()); std::fclose(f); }   // the Output Log, for finding what went wrong
       R.shutdown(); closeWindow(W); return ok ? 0 : 2;
     }
     endFrame(W);

@@ -45,6 +45,8 @@ public:
   virtual std::string assetPath(const std::string& p) { return p; }
   virtual glm::vec3 cameraPos() { return glm::vec3(0); }
   virtual glm::vec3 cameraDir() { return glm::vec3(0, 0, -1); }
+  virtual bool playerSwimming() { return false; }
+  virtual std::string savePath(const std::string& name) { return name; }   // Documents/PremiumEngine/Saves/<game>/<name>
 };
 
 enum ScriptEvent { EV_Start = 0, EV_Update, EV_Overlap, EV_Hit, EV_Key, EV_COUNT };

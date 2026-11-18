@@ -14,7 +14,8 @@ struct TextItem { std::string text; glm::mat4 model{1}; glm::vec3 color{1}; floa
 enum ViewMode { VM_Lit = 0, VM_Unlit, VM_Wire, VM_Normals };
 struct VoxelDraw { unsigned vao = 0; int count = 0; glm::vec3 offset{0}, mn{0}, mx{0}; bool visible = true; };   // one chunk of the block world (world bounds; not visible = only casts shadows)
 struct Frame {
-  std::vector<VoxelDraw> voxels; unsigned voxelAtlas = 0; int voxelTiles = 0;
+  std::vector<VoxelDraw> voxels, voxelWater; unsigned voxelAtlas = 0; int voxelTiles = 0;   // block world: solid chunks, liquid surfaces
+  float time = 0;   // seconds (moving water)
   std::vector<DrawItem> draws; std::vector<LightItem> lights; std::vector<LineItem> lines; std::vector<TextItem> texts;
   WorldSettings world; bool fog = false; int viewMode = VM_Lit; bool grid = false; glm::vec3 shadowCenter{0};
 };
@@ -38,7 +39,7 @@ public:
   const GpuMesh& gridMesh() const { return grid_; }
   int drawCalls = 0, triangles = 0;
 private:
-  unsigned lit_ = 0, vox_ = 0, flat_ = 0, depth_ = 0, idp_ = 0, text_ = 0, shadowFbo_ = 0, shadowTex_ = 0, textVao_ = 0, textVbo_ = 0;
+  unsigned lit_ = 0, vox_ = 0, wat_ = 0, flat_ = 0, depth_ = 0, idp_ = 0, text_ = 0, shadowFbo_ = 0, shadowTex_ = 0, textVao_ = 0, textVbo_ = 0;
   int buildText(const TextItem& t);   // fills textVbo_, returns vertex count
   GpuMesh wireBox_, wireCapsule_, arrow_, axes_, wireCam_, grid_, grid10_;
   void shadowPass(const Frame& f, glm::mat4& lightVP, bool& has);
