@@ -77,6 +77,7 @@ public:
   glm::vec3 cameraDir() override;
   bool playerSwimming() override { return swimming_; }
   std::string savePath(const std::string& name) override;
+  void trophy(const std::string& id) override;
 
 private:
   struct Obj {
@@ -90,6 +91,7 @@ private:
   std::string mode_; uint32_t player_ = NO_BODY; float yaw_ = 0, pitch_ = 0; glm::vec3 specPos_{0, 2, 5}, moveDir_{0};
   double time_ = 0; bool restartRequested_ = false, started_ = false;
   std::set<std::string> keys_, pressed_; glm::vec4 mouseState_{0}; float lookDx_ = 0, lookDy_ = 0;
+  std::set<std::string> trophies_;
   std::string msg_; double msgUntil_ = 0; std::vector<std::pair<std::string, std::string>> hud_;
   std::vector<std::pair<std::string, std::string>> pendingKeys_;
 

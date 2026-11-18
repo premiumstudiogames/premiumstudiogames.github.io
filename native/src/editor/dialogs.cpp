@@ -46,6 +46,8 @@ world
   world.destroy(actor)
   world.message('Text', seconds) big message in the middle of the screen
   world.hud('id', 'Text')        a line in the corner (empty text removes it)
+  premium.trophy('id')           a trophy on the player's Premium Games account (id from the store's list)
+  premium.console / .store       true when started from Premium Games' console mode / from Premium Games
   world.restart()                restart the level
   world.setGravity(-9.81)
 

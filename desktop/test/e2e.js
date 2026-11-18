@@ -25,6 +25,7 @@ if (FIRST) { try {
   fs.mkdirSync(path.join(app.getPath('appData'), '.terravolt'), { recursive: true });
   fs.writeFileSync(path.join(app.getPath('appData'), '.terravolt', 'license.json'), JSON.stringify({ key: 'PREMIUM-STUDIO', ed: 'gold', ps: true }));
 } catch (e) { console.log('old BLOCKFALL setup:', e.message); } }
+global.__psManifestFile = path.join(__dirname, '..', '..', 'docs', 'games.json');   // this branch's games list
 require('../main.js');
 const ev = { senderFrame: { url: 'https://premiumstudiogames.github.io/' } };
 const call = (ch, ...a) => ipcMain._invokeHandlers.get(ch)(ev, ...a);
@@ -229,6 +230,43 @@ app.whenReady().then(async () => {
     const bfRun = async () => Object.keys(await call('ps:getRunning')).find(k => k.startsWith('blockfall'));
     ok('BLOCKFALL started directly goes through Premium Studio', await waitFor(bfRun, 90000), await bfRun());
     const k = await bfRun(); if (k) { await call('ps:stop', k); await waitFor(async () => !(await bfRun()), 40000); }
+    // ---- BLOCKFALL on Premium Engine: its own game; zip + sha256 from version.json, updates when the version changes
+    {
+      const T = global.__psTest, key = 'blockfall-pge', gdir = path.join(process.env.LOCALAPPDATA, 'PremiumStudio', 'games', key);
+      const vj = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'games', 'blockfall', 'dist', 'version.json'), 'utf8'));
+      const tp = Date.now(); await call('ps:install', key);
+      const pi = (await call('ps:getInstalled'))[key];
+      ok('engine game: installs (zip, sha256, unzip)', !!pi && pi.type === 'pge' && fs.existsSync(path.join(gdir, vj.exe)) && fs.existsSync(path.join(gdir, 'game.pge.json')), Math.round((Date.now() - tp) / 1000) + 's · ' + (pi && pi.version));
+      ok('engine game: its own name and icon', pi && pi.name === 'BLOCKFALL 3001 · Premium Engine' && fs.existsSync(path.join(desk, 'BLOCKFALL 3001 · Premium Engine.lnk')));
+      ok('engine game: the main BLOCKFALL is still there', !!(await call('ps:getInstalled')).blockfall);
+      await call('ps:setConsole', true);
+      await call('ps:launch', key);
+      const alive = () => { const c = T.pgeProc(key); return !!c && c.exitCode === null; };
+      ok('engine game: runs from the console', await waitFor(alive, 15000) && !!(await call('ps:getRunning'))[key]);
+      await sleep(8000);
+      ok('engine game: still running after 8 s (the world loads)', alive());
+      try { fs.mkdirSync(path.join(__dirname, 'shots'), { recursive: true }); const img = await require('electron').desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1280, height: 720 } }); if (img[0]) fs.writeFileSync(path.join(__dirname, 'shots', 'engine-game.png'), img[0].thumbnail.toPNG()); } catch (e) {}
+      const ccW2 = () => BrowserWindow.getAllWindows().find(w => !w.isDestroyed() && /cc\.html$/.test(w.webContents.getURL()) && w.isVisible());
+      T.padPress();
+      ok('engine game: Home opens the Control Center over it', await waitFor(ccW2, 10000));
+      const ecd = await call('cc:data');
+      ok('engine game: Control Center knows it', ecd && ecd.key === key, ecd && ecd.name);
+      await sleep(600); T.padPress();
+      ok('engine game: Home again brings the game back to the front', await waitFor(() => !ccW2() && /^focused \d+ 1$/.test(T.lastFocused()), 8000), T.lastFocused());
+      // a trophy the game writes goes to the account
+      fs.appendFileSync(path.join(app.getPath('userData'), 'events', key + '.txt'), 'trophy e2e_trophy\nbad line\n');
+      ok('engine game: its trophies are read', await waitFor(() => T.granted().some(g => g.endsWith(key + 'e2e_trophy')), 6000) || !T.granted().length, T.granted().join(','));
+      await call('ps:stop', key);
+      ok('engine game: closes from Premium Games', await waitFor(async () => !alive() && !(await call('ps:getRunning'))[key], 30000));
+      await call('ps:setConsole', false);
+      // an update: the version in version.json changed → it's downloaded again before playing
+      { const reg = path.join(process.env.LOCALAPPDATA, 'PremiumStudio', 'games', 'installed.json'), r = JSON.parse(fs.readFileSync(reg, 'utf8')); r[key].version = '00.00.00'; fs.writeFileSync(reg, JSON.stringify(r, null, 2)); }
+      await call('ps:launch', key);
+      ok('engine game: updates when version.json changes, then starts', await waitFor(alive, 60000) && (await call('ps:getInstalled'))[key].version === vj.version, (await call('ps:getInstalled'))[key].version);
+      await call('ps:stop', key); await waitFor(() => !alive(), 30000);
+      await call('ps:uninstall', key);
+      ok('engine game: uninstalls (files and icon)', !fs.existsSync(gdir) && !fs.existsSync(path.join(desk, 'BLOCKFALL 3001 · Premium Engine.lnk')) && !(await call('ps:getInstalled'))[key]);
+    }
     // ---- Premium Engine from Premium Games (like Epic Games Launcher with Unreal)
     const engAlive = () => require('child_process').execSync('tasklist /FI "IMAGENAME eq PremiumEngine.exe" /NH').toString().includes('PremiumEngine.exe');
     const killEng = () => { try { require('child_process').execSync('taskkill /IM PremiumEngine.exe /F', { stdio: 'ignore' }); } catch (e) {} };

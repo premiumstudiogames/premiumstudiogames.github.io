@@ -3,6 +3,7 @@
 #include <quickjs.h>
 #include <chrono>
 #include <cctype>
+#include <cstdlib>
 #include <map>
 #include <cmath>
 #include "voxel.h"
@@ -88,6 +89,8 @@ function __api(id) {
     destroy() { __n.destroy(id); } };
   __apis.set(id, a); return a;
 }
+// Premium Games: trophies on the player's account, and whether the game runs on the console (from Premium Games' console mode)
+const premium = { trophy(id) { __n.trophy(String(id)); }, get store() { return __n.psEnv('PREMIUM_GAMES'); }, get console() { return __n.psEnv('PREMIUM_CONSOLE'); } };
 const world = { vars: {}, get voxels() { return voxels; },
   get camera() { const c = __n.camera(); return { position: new Vec3(c[0], c[1], c[2]), forward: new Vec3(c[3], c[4], c[5]) }; },
   get time() { return __n.time(); }, get player() { return __player; },
@@ -197,6 +200,8 @@ static void bindNatives(JSContext* c) {
   FN("pressed", 1, return JS_NewBool(c, W(c)->pressed(keyAlias(S(c, a[0]))));) ;
   FN("mouse", 0, { glm::vec4 m = W(c)->mouse(); JSValue r = JS_NewArray(c); for (int i = 0; i < 4; i++) JS_SetPropertyUint32(c, r, i, JS_NewFloat64(c, m[i])); return r; });
   FN("log", 1, W(c)->log(S(c, a[0])); return JS_UNDEFINED;);
+  FN("trophy", 1, W(c)->trophy(S(c, a[0])); return JS_UNDEFINED;);
+  FN("psEnv", 1, { const char* v = std::getenv(S(c, a[0]).c_str()); return JS_NewBool(c, v && *v && std::string(v) != "0"); });
   FN("camera", 0, { glm::vec3 p = W(c)->cameraPos(), f = W(c)->cameraDir(); JSValue r = JS_NewArray(c); float v[6] = {p.x, p.y, p.z, f.x, f.y, f.z}; for (int i = 0; i < 6; i++) JS_SetPropertyUint32(c, r, i, JS_NewFloat64(c, v[i])); return r; });
   // block world
   FN("voxCreate", 1, { std::string e = W(c)->createVoxels(S(c, a[0])); return JS_NewStringLen(c, e.data(), e.size()); });

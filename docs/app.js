@@ -87,6 +87,13 @@ const GAMES = [
    about:["برنامج مستقل عن BLOCKFALL 3001 العادية، له أيقونته وعوالمه وإعداداته.", "يعطيها الاستوديو للمطورين."],
    feat:["قائمة المطور","ورشة المشاريع","عوالم وإعدادات مستقلة"], tags:["مطورين"],
    editions:[{id:"dev",name:"BLOCKFALL 3001 المطور",price:null,studio:true,d:"قائمة المطور وورشة المشاريع"}]},
+  // BLOCKFALL rebuilt on our own engine (Premium Engine): its own game, only on Premium Games
+  {id:"blockfall-pge", title:"BLOCKFALL 3001 · Premium Engine", en:"BLOCKFALL 3001 · PREMIUM ENGINE", ar:false, sub:"على محرك Premium Engine · حصريًا على Premium Games",
+   tagline:"عالم BLOCKFALL 3001 مبني من جديد على محركنا Premium Engine.",
+   about:["نفس عالم BLOCKFALL 3001 بأرضه وأشجاره وكهوفه وبحيراته وبلوكاته بأحجامها من 20 سم إلى متر، شغّال على محرك Premium Engine.", "موجودة على متجر Premium Games بس، وتتحدّث تلقائيًا من التطبيق."],
+   feat:["محرك Premium Engine","عالم من −98 إلى +302 متر","بلوكات من 20 سم إلى متر بتسعة أشكال","تعديلاتك على العالم تنحفظ"],
+   tags:["بناء","عالم مفتوح","Premium Engine"],
+   editions:[{id:"std",name:"BLOCKFALL 3001 · Premium Engine",price:0,d:"مجانية"}]},
   {id:"last-recording", title:"التسجيل الأخير", en:"THE LAST RECORDING", ar:true, sub:"رعب نفسي · قصة · أونلاين",
    tagline:"شريط واحد. ليلة واحدة. مول ما يطلع منه أحد.",
    about:["ليلة 3 نوفمبر 1999، الساعة 3:33 الفجر. مول متعدد الطوابق بإضاءة نيون، وكاميرا فيديو قديمة في يدك ما زالت تسجّل.",
@@ -101,7 +108,8 @@ const SHOP = GAMES.filter(g => !g.hidden);   // what the store shows (hidden gam
 // BLOCKFALL's Developer edition is bought/given as blockfall__dev but is its own game here
 const libItem = v => v && v.game === "blockfall" && v.edition === "dev" ? {...v, game:"blockfall-dev"} : v;
 // games that install once for every edition (the player picks the edition inside the game's launcher)
-const oneInstall = gid => (MANIFEST.games[gid] || {}).type === "bf-launcher";
+const oneInstall = gid => ["bf-launcher", "pge"].includes((MANIFEST.games[gid] || {}).type);
+const isFree = g => !g.editions.some(e => e.price > 0);   // every edition free (no paid one)
 // what you need to run each game
 const REQ = {
   blockfall:{min:[["النظام","Windows 10 64-bit"],["المعالج","Intel Core i3 / AMD Ryzen 3"],["الذاكرة","4 GB RAM"],["كرت الشاشة","Intel UHD 620 أو أفضل (WebGL 2)"],["المساحة","500 MB"]],
@@ -144,6 +152,7 @@ async function loadLatest(){
     try {
       if (m.type === "bf-launcher") { const [p, g] = await Promise.all([fetch(noCache(m.parts)).then(r => r.json()), fetch(noCache(m.gameManifest)).then(r => r.json())]); LATEST[id] = {version:p.version, game:g.latest && g.latest.release, size:p.size}; }
       else if (m.type === "manifest") { const j = await fetch(noCache(m.base + "manifest.json")).then(r => r.json()); LATEST[id] = {version:j.version}; }
+      else if (m.type === "pge") { const j = await fetch(noCache(m.dist + "version.json")).then(r => r.json()); LATEST[id] = {version:j.version, size:j.size}; }
     } catch(e) {}
   }
   render();
@@ -195,7 +204,7 @@ const covers = new Set();
 function cover(el, id){ const c = document.createElement("canvas"); el.prepend(c); const o = {c, id}; covers.add(o); paint(o); }
 function paint(o, t){ const box = o.c.parentElement; if (!box || !box.isConnected) return false; const dpr = Math.min(devicePixelRatio || 1, 2);
   const w = Math.max(40, box.clientWidth*dpr|0), h = Math.max(30, box.clientHeight*dpr|0); if (o.c.width !== w || o.c.height !== h){ o.c.width = w; o.c.height = h; }
-  const g = o.c.getContext("2d"); g.setTransform(1,0,0,1,0,0); g.shadowBlur = 0; g.textAlign = "left"; if (o.id === "blockfall" || o.id === "blockfall-dev") drawBlockfall(g,w,h); else if (o.id === "premium-engine") drawEngine(g,w,h); else drawHorror(g,w,h,t); return true; }
+  const g = o.c.getContext("2d"); g.setTransform(1,0,0,1,0,0); g.shadowBlur = 0; g.textAlign = "left"; if (o.id === "blockfall" || o.id === "blockfall-dev" || o.id === "blockfall-pge") drawBlockfall(g,w,h); else if (o.id === "premium-engine") drawEngine(g,w,h); else drawHorror(g,w,h,t); return true; }
 function drawEngine(g,w,h){ const gr = g.createLinearGradient(0,0,0,h); gr.addColorStop(0,"#0a84ff"); gr.addColorStop(1,"#00306f"); g.fillStyle = gr; g.fillRect(0,0,w,h);
   g.fillStyle = "#fff"; g.font = `800 ${Math.round(Math.min(w,h)*0.42)}px system-ui,sans-serif`; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText("PE", w/2, h/2); g.textAlign = "left"; g.textBaseline = "alphabetic"; }
 let rsT = 0; addEventListener("resize", () => { clearTimeout(rsT); rsT = setTimeout(() => { for (const o of [...covers]) if (!paint(o)) covers.delete(o); }, 150); });
@@ -412,8 +421,8 @@ function getAppModal(g, ed, key){
 
 /* ---------------- views ---------------- */
 let heroIdx = 0, heroT = 0;
-function lowPrice(g){ return Math.min(...g.editions.filter(e => e.price > 0).map(e => salePrice(g.id, e.price))); }
-const lowBase = g => Math.min(...g.editions.filter(e => e.price > 0).map(e => e.price));
+function lowPrice(g){ const p = g.editions.filter(e => e.price > 0).map(e => salePrice(g.id, e.price)); return p.length ? Math.min(...p) : 0; }
+const lowBase = g => { const p = g.editions.filter(e => e.price > 0).map(e => e.price); return p.length ? Math.min(...p) : 0; };
 function renderHero(){
   const g = SHOP[heroIdx % SHOP.length], {best} = ent(g.id);
   const h = $("#hero"); h.innerHTML = `<div class="art"></div><div class="side">
@@ -421,8 +430,8 @@ function renderHero(){
     <h1 class="gtitle ${g.ar ? "ar" : ""}">${esc(g.title)}</h1>
     <div class="muted">${esc(g.tagline)}</div>
     <div class="tags">${g.tags.map(t => `<span class="tag">${esc(t)}</span>`).join("")}</div>
-    <div class="price">${best ? '<span class="own">في مكتبتك ✓</span>' : `<small>يبدأ من </small>${priceHTML(g.id, lowBase(g))}`}</div>${best ? "" : cdHTML(g.id)}
-    <div class="row"><a class="btn buy" href="#${g.id}">صفحة اللعبة</a>${best ? "" : `<button class="btn ghost" data-demo="${g.id}">جرّب الديمو مجانًا</button>`}</div>
+    <div class="price">${best ? '<span class="own">في مكتبتك ✓</span>' : isFree(g) ? money(0) : `<small>يبدأ من </small>${priceHTML(g.id, lowBase(g))}`}</div>${best ? "" : cdHTML(g.id)}
+    <div class="row"><a class="btn buy" href="#${g.id}">صفحة اللعبة</a>${best ? "" : `<button class="btn ghost" data-demo="${g.id}">${isFree(g) ? "أضفها لمكتبتك مجانًا" : "جرّب الديمو مجانًا"}</button>`}</div>
     <div class="dots">${SHOP.map((x, i) => `<button aria-label="${esc(x.en || x.title)}" aria-current="${i === heroIdx}" data-i="${i}"></button>`).join("")}</div></div>`;
   cover(h.querySelector(".art"), g.id);
   h.querySelectorAll(".dots button").forEach(b => b.onclick = () => { heroIdx = +b.dataset.i; renderHero(); restartHero(); });
@@ -434,7 +443,7 @@ function renderGrid(){
   SHOP.forEach(g => { const {best} = ent(g.id);
     const a = document.createElement("a"); a.className = "card"; a.href = "#" + g.id;
     a.innerHTML = `<div class="art"></div><div class="body"><div class="t ${g.ar ? "ar" : ""}">${esc(g.title)}</div><div class="muted" style="font-size:13px">${esc(g.sub)}</div>
-      <div class="ft">${best ? `<span class="own">في مكتبتك · ${esc(edName(g, best.edition))}${anyInstalled(g.id) ? " · مثبتة" : ""}</span>` : '<span class="tag">ديمو مجاني</span>'}<span class="price" style="font-size:16px">${priceHTML(g.id, lowBase(g))}</span></div>${saleOf(g.id) ? cdHTML(g.id) : ""}</div>`;
+      <div class="ft">${best ? `<span class="own">في مكتبتك · ${esc(edName(g, best.edition))}${anyInstalled(g.id) ? " · مثبتة" : ""}</span>` : '<span class="tag">' + (isFree(g) ? "مجانية" : "ديمو مجاني") + '</span>'}<span class="price" style="font-size:16px">${isFree(g) ? money(0) : priceHTML(g.id, lowBase(g))}</span></div>${saleOf(g.id) ? cdHTML(g.id) : ""}</div>`;
     box.appendChild(a); cover(a.querySelector(".art"), g.id); });
   renderSoon();
 }

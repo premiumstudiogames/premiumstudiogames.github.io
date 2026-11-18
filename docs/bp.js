@@ -96,7 +96,7 @@ const CF = () => PS && PS.consoleFiles;   // the console's own files on the PC (
   /* ---------- open / close ---------- */
   // the console lives in its own shadow root, so the store's CSS can't change it (and its CSS can't leak out)
   async function loadSheet(){ if (sheet) return sheet; sheet = new CSSStyleSheet();
-    try { const u = new URL("bp.css?v=10", import.meta.url); sheet.replaceSync(await (await fetch(u)).text()); } catch(e) {} return sheet; }
+    try { const u = new URL("bp.css?v=11", import.meta.url); sheet.replaceSync(await (await fetch(u)).text()); } catch(e) {} return sheet; }
   async function open(){ if (on) return; on = true; document.body.classList.add("bp-on"); pages = H.accounts ? [{t:"users"}] : []; stack = []; space = "games"; sel.games = -1; busy = "";
     host = document.createElement("div"); host.id = "bpHost"; host.className = "nomouse"; document.body.appendChild(host);
     root = host.attachShadow({mode:"open"}); root.adoptedStyleSheets = [await loadSheet()];
@@ -266,7 +266,7 @@ const CF = () => PS && PS.consoleFiles;   // the console's own files on the PC (
         <button class="ps-w frw" data-bp="page" data-p="friends"><h4><span class="ic">${I.friends}</span> الأصدقاء المتصلون</h4>${onl.length ? `<div class="avs">${onl.slice(0, 6).map(([, f]) => `<i>${esc((f.username || "?")[0].toUpperCase())}</i>`).join("")}</div><small>${onl.length} متصل</small>` : "<small>لا يوجد أصدقاء متصلون.</small>"}</button>
         <button class="ps-w act" data-bp="page" data-p="friends"><h4><span class="ic">${I.base}</span> نشاط الأصدقاء</h4>${act.length ? act.slice(0, 2).map(([id, f]) => `<div class="kv"><span><b>@${esc(f.username)}</b> يلعب</span><span>${esc(s.playing(id))}</span></div>`).join("") : "<small>ما أحد من أصدقائك يلعب الحين.</small>"}</button>
       </div>
-      <button class="ps-w feat" data-bp="gpage" data-g="${feat.id}"><span class="cv" data-cover="${feat.id}"></span><h4><span class="ic">${I.store}</span> من المتجر</h4><span class="cap"><b>${title(feat)}</b><small>${ent(feat.id).best ? "في مكتبتك" : "من " + money(Math.round(H.lowPrice(feat) * 100) / 100)}</small></span></button>
+      <button class="ps-w feat" data-bp="gpage" data-g="${feat.id}"><span class="cv" data-cover="${feat.id}"></span><h4><span class="ic">${I.store}</span> من المتجر</h4><span class="cap"><b>${title(feat)}</b><small>${ent(feat.id).best ? "في مكتبتك" : H.lowPrice(feat) ? "من " + money(Math.round(H.lowPrice(feat) * 100) / 100) : "مجانية"}</small></span></button>
     </div>`; }
 
   /* ---------- full pages ---------- */
@@ -304,7 +304,7 @@ const CF = () => PS && PS.consoleFiles;   // the console's own files on the PC (
     return ""; }
   /* store cards: cover with the name and price under it */
   function storeCard(g){ const e = ent(g.id), sl = H.saleOf(g.id), w = (S().WISH || {})[g.id];
-    return `<button class="ps-sc" data-bp="gpage" data-g="${g.id}"><span class="art" data-cover="${g.id}"></span>${sl ? `<i class="off num">-${sl.pct}%</i>` : ""}${w && !e.best ? `<i class="wl">${I.heart}</i>` : ""}<span class="nm">${title(g)}</span><small>${e.best ? "في مكتبتك" : "من " + money(Math.round(H.lowPrice(g) * 100) / 100)}</small></button>`; }
+    return `<button class="ps-sc" data-bp="gpage" data-g="${g.id}"><span class="art" data-cover="${g.id}"></span>${sl ? `<i class="off num">-${sl.pct}%</i>` : ""}${w && !e.best ? `<i class="wl">${I.heart}</i>` : ""}<span class="nm">${title(g)}</span><small>${e.best ? "في مكتبتك" : H.lowPrice(g) ? "من " + money(Math.round(H.lowPrice(g) * 100) / 100) : "مجانية"}</small></button>`; }
   const soonCard = x => `<button class="ps-sc" data-bp="soon" data-s="${x.id}"><span class="art">${H.soonArt(x)}</span><span class="nm">${esc(x.title)}</span><small>قريبًا · ${esc(x.when)}</small></button>`;
   const STABS = [["new","الأحدث"],["deals","العروض"],["soon","قريبًا"],["browse","استعرض"]];
   /* ---------- Premium Plus (like PlayStation Plus) ---------- */
@@ -390,7 +390,7 @@ const CF = () => PS && PS.consoleFiles;   // the console's own files on the PC (
       ${eds.length > 1 ? `<div class="eds">${eds.map(x => `<span class="${x === ed ? "on" : ""}">${esc(ED_TAG[x] || x)}</span>`).join("")}<small>${G("x")} غيّر النسخة</small></div>` : ""}
       <p>${esc(g.tagline || "")}</p>
       <div class="ps-acts">${actBtn(g, ed)}<button class="ps-btn icon" data-bp="menu" data-g="${g.id}" aria-label="خيارات">${I.more}</button>${eds.length ? "" : `<button class="ps-btn icon${(S().WISH || {})[g.id] ? " on" : ""}" data-bp="wishT" data-g="${g.id}" aria-label="قائمة الأمنيات">${I.heart}</button><button class="ps-btn ghost" data-bp="buy" data-g="${g.id}">الإصدارات والأسعار</button>`}</div>
-      <div class="ps-cards">${eds.length ? `<div class="ps-card info"><b class="num">${mins(g.id) ? hrs(mins(g.id)) : "—"}</b><small>وقت اللعب</small></div><div class="ps-card info"><b>${last(g.id) ? ago(last(g.id)) : "—"}</b><small>آخر مرة</small></div>` : `<div class="ps-card info"><b class="num">${money(Math.round(H.lowPrice(g) * 100) / 100)}</b><small>يبدأ من${H.saleOf(g.id) ? " · خصم " + H.saleOf(g.id).pct + "%" : ""}</small></div>`}
+      <div class="ps-cards">${eds.length ? `<div class="ps-card info"><b class="num">${mins(g.id) ? hrs(mins(g.id)) : "—"}</b><small>وقت اللعب</small></div><div class="ps-card info"><b>${last(g.id) ? ago(last(g.id)) : "—"}</b><small>آخر مرة</small></div>` : `${H.lowPrice(g) ? `<div class="ps-card info"><b class="num">${money(Math.round(H.lowPrice(g) * 100) / 100)}</b><small>يبدأ من${H.saleOf(g.id) ? " · خصم " + H.saleOf(g.id).pct + "%" : ""}</small></div>` : `<div class="ps-card info"><b>مجانية</b><small>تنضاف لمكتبتك</small></div>`}`}
         ${ach.all ? `<div class="ps-card info"><b class="num">${ach.got}/${ach.all}</b><small>التروفيات</small></div>` : ""}${e && e.d ? `<div class="ps-card info"><b>${esc(e.d)}</b><small>${esc(e.name)}</small></div>` : ""}</div>
       ${ach.all ? `<div class="ps-sec" id="psTro">الجوائز <small class="num">${ach.got}/${ach.all}</small></div><div class="achs">${ach.list.slice(0, 30).map(a => `<span class="${a.got ? "got" : ""}" title="${esc(a.desc)}">${ach.icon(a.tier, a.got)} ${esc(a.name)}</span>`).join("")}${ach.all > 30 ? `<span>+${ach.all - 30}</span>` : ""}</div>` : ""}
       </div></div>`; }

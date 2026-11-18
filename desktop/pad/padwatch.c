@@ -3,22 +3,51 @@
    Xbox pads (the Xbox button, through XInput) and PlayStation pads (the PS button, through HID).
    Out (stdout, one line each):  "ready", "pad <ps|xbox|other> <name>", "unpad", "home 1" (pressed), "home 0" (let go).
    View + Menu (Back + Start) together also count as Home.
-   In (stdin): "test" -> a short Home press (for the tests); the program ends when stdin closes (the app quit). */
+   In (stdin): "test" -> a short Home press (for the tests); "focus <pid>" -> that program's window to the front
+   (a game in its own program, back from the console); the program ends when stdin closes (the app quit).
+   "PremiumPad --focus <pid>" only brings that window to the front and ends. */
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #ifdef _WIN32
 #include <windows.h>
 #endif
 
 static volatile int quit = 0, test = 0;
-#ifdef _WIN32
-static DWORD WINAPI readIn(LPVOID p) { (void)p; char b[64]; while (fgets(b, sizeof b, stdin)) { if (!strncmp(b, "test", 4)) test = 1; } quit = 1; return 0; }
-#endif
 static void out(const char* s) { fputs(s, stdout); fputc('\n', stdout); fflush(stdout); }
+#ifdef _WIN32
+/* the game's main window: visible, top level, not owned by another window */
+typedef struct { DWORD pid; HWND w; } Find;
+static BOOL CALLBACK findWin(HWND w, LPARAM l) { Find* f = (Find*)l; DWORD pid = 0; GetWindowThreadProcessId(w, &pid);
+  if (pid == f->pid && IsWindowVisible(w) && !GetWindow(w, GW_OWNER)) { f->w = w; return FALSE; } return TRUE; }
+static int focusPid(DWORD pid) {
+  Find f = { pid, NULL }; EnumWindows(findWin, (LPARAM)&f); if (!f.w) return 0;
+  if (IsIconic(f.w)) ShowWindow(f.w, SW_RESTORE);
+  /* Windows only lets the program the player is using change the front window: the input of the current front
+     window is joined for a moment (and an Alt tap counts as the player's own input), then the game comes forward */
+  HWND fg = GetForegroundWindow(); DWORD fgT = fg ? GetWindowThreadProcessId(fg, NULL) : 0, me = GetCurrentThreadId();
+  if (fgT && fgT != me) AttachThreadInput(me, fgT, TRUE);
+  keybd_event(VK_MENU, 0, 0, 0); keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0);
+  BringWindowToTop(f.w); SetForegroundWindow(f.w); SetFocus(f.w);
+  if (fgT && fgT != me) AttachThreadInput(me, fgT, FALSE);
+  return GetForegroundWindow() == f.w;
+}
+static DWORD WINAPI readIn(LPVOID p) { (void)p; char b[64];
+  while (fgets(b, sizeof b, stdin)) {
+    if (!strncmp(b, "test", 4)) test = 1;
+    else if (!strncmp(b, "focus ", 6)) { char line[64]; DWORD pid = (DWORD)strtoul(b + 6, NULL, 10); snprintf(line, sizeof line, "focused %lu %d", (unsigned long)pid, pid ? focusPid(pid) : 0); out(line); }
+  }
+  quit = 1; return 0; }
+#endif
 
-int main(void) {
+int main(int argc, char** argv) {
+#ifdef _WIN32
+  if (argc == 3 && !strcmp(argv[1], "--focus")) return focusPid((DWORD)strtoul(argv[2], NULL, 10)) ? 0 : 1;
+#else
+  (void)argc; (void)argv;
+#endif
   SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
   SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS5_RUMBLE, "0");        /* don't change how the pad talks to games */
   SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS4_RUMBLE, "0");

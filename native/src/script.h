@@ -47,6 +47,8 @@ public:
   virtual glm::vec3 cameraDir() { return glm::vec3(0, 0, -1); }
   virtual bool playerSwimming() { return false; }
   virtual std::string savePath(const std::string& name) { return name; }   // Documents/PremiumEngine/Saves/<game>/<name>
+  // Premium Games: a trophy for the player's account (only when the game was started from the Premium Games store)
+  virtual void trophy(const std::string& id) { log("[trophy] " + id); }
 };
 
 enum ScriptEvent { EV_Start = 0, EV_Update, EV_Overlap, EV_Hit, EV_Key, EV_COUNT };

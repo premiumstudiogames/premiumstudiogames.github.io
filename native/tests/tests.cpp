@@ -290,6 +290,26 @@ function onUpdate() { world.vars.swim = world.player.swimming; })";
     run(g, 0.2f); float y3 = g.playerPos().y; run(g, 1.0f); CHECK(g.playerPos().y < y3, "without Space the player sinks slowly");
     int errs = 0; for (auto& l : logLines()) errs += l.kind == LogKind::Error; CHECK(errs == 0, "no errors");
   }
+  {   // Premium Games: trophies go to the file the store names, once each; premium.console / premium.store
+    std::string ev = (std::filesystem::temp_directory_path() / "pge-test-events.txt").string(); std::filesystem::remove(ev);
+#ifdef _WIN32
+    _putenv_s("PREMIUM_GAMES_EVENTS", ev.c_str()); _putenv_s("PREMIUM_CONSOLE", "1"); _putenv_s("PREMIUM_GAMES", "1");
+#else
+    setenv("PREMIUM_GAMES_EVENTS", ev.c_str(), 1); setenv("PREMIUM_CONSOLE", "1", 1); setenv("PREMIUM_GAMES", "1", 1);
+#endif
+    Project q = makeTemplate("Blank", "T");
+    q.scripts["SC_P"] = {"SC_P", "function onStart() { premium.trophy('first_block'); premium.trophy('first_block'); premium.trophy('bad id!'); if (premium.console && premium.store) premium.trophy('console'); }"};
+    Actor a = newActor("Empty", "Trophies"); a.script = "SC_P"; q.levels[0].second.actors.push_back(a);
+    Game g(q, q.startLevel); logClear(); CHECK(g.start(), "trophy game starts"); run(g, 0.1f);
+    std::string got; if (FILE* f = std::fopen(ev.c_str(), "rb")) { char b[256]; size_t n = std::fread(b, 1, sizeof b, f); got.assign(b, n); std::fclose(f); }
+    CHECK(got == "trophy first_block\ntrophy console\n", ("the trophy is written once, a bad id is not, premium.console works: '" + got + "'").c_str());
+    bool warned = false; for (auto& l : logLines()) warned |= l.kind == LogKind::Warn && l.text.find("premium.trophy") != std::string::npos; CHECK(warned, "a bad trophy id is a warning");
+#ifdef _WIN32
+    _putenv_s("PREMIUM_GAMES_EVENTS", ""); _putenv_s("PREMIUM_CONSOLE", ""); _putenv_s("PREMIUM_GAMES", "");
+#else
+    unsetenv("PREMIUM_GAMES_EVENTS"); unsetenv("PREMIUM_CONSOLE"); unsetenv("PREMIUM_GAMES");
+#endif
+  }
   {   // BLOCKFALL's height: -98 .. +302 m
     Physics ph; ph.init(-9.81f); VoxelConfig cfg; cfg.minY = -98; cfg.maxY = 302; cfg.fineLo = -2; cfg.fineHi = 20; cfg.viewDistance = 3; cfg.threads = 3;
     VoxelWorld w(cfg, &ph); BlockType bt; w.defineBlock(1, bt); w.defineBlock(3, bt);

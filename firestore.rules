@@ -14,6 +14,7 @@ service cloud.firestore {
     function prices() {
       return {
         'blockfall__demo': 0, 'blockfall__std': 39.99, 'blockfall__gold': 99.99,
+        'blockfall-pge__std': 0,
         'last-recording__demo': 0, 'last-recording__std': 69.99, 'last-recording__gold': 999999.99
       };
     }

@@ -216,7 +216,7 @@ function markStopped(key) {
   addPlaytime(r, Date.now() - r.since); pushPresence(); runningChanged();
   if (ovKey === key) closeOverlay();
   if (recKey === key && recWin && !recWin.isDestroyed()) recWin.webContents.send('rec:stop');
-  if (![...running.keys()].some(k => (readReg()[k] || {}).type === 'bf-launcher')) gameKeys(false);
+  if (![...running.keys()].some(k => ['bf-launcher', 'pge'].includes((readReg()[k] || {}).type))) gameKeys(false);
 }
 // BLOCKFALL runs as its own program: watch its process
 let bfTimer = null;
@@ -315,6 +315,14 @@ async function stopGame(key) {
     while (Date.now() - t0 < 25000) { await new Promise(r => setTimeout(r, 1000)); if (!(await bfAlive(g.game || key))) break; }
     if (process.platform === 'win32') { try { require('child_process').execSync(`taskkill /IM ${V.image} /F`, { stdio: 'ignore' }); } catch (e) {} }
     try { fs.rmSync(path.join(V.data, 'premium_cmd.json'), { force: true }); } catch (e) {}
+    stopping.delete(key); markStopped(key); return;
+  }
+  const c = pgeProcs.get(key);
+  if (c && c.exitCode === null) {   // asked to close (the game saves as it quits); after 15 s it's closed
+    if (stopping.has(key)) return; stopping.add(key); runningChanged();
+    const done = new Promise(r => c.once('exit', r));
+    if (process.platform === 'win32') require('child_process').execFile('taskkill', ['/PID', String(c.pid)], { windowsHide: true }, () => {}); else c.kill('SIGTERM');
+    if (await Promise.race([done.then(() => true), new Promise(r => setTimeout(() => r(false), 15000))]) === false) { try { c.kill('SIGKILL'); } catch (e) {} await Promise.race([done, new Promise(r => setTimeout(r, 3000))]); }
     stopping.delete(key); markStopped(key); return;
   }
   const w = gameWins.get(key);
@@ -570,6 +578,7 @@ function focusGame(key) {
   if (w) { if (w.isMinimized()) w.restore(); w.show(); if (w.consoleMode) w.setFullScreen(true); w.focus(); return; }
   const g = readReg()[key];   // a game in its own program: ask it to come to the front
   if (g && g.type === 'bf-launcher') { try { fs.writeFileSync(path.join(bfv(g.game || key).data, 'premium_cmd.json'), JSON.stringify({ cmd: 'focus', at: Date.now() })); } catch (e) {} }
+  const c = pgeProcs.get(key); if (c && c.exitCode === null) focusPid(c.pid);
 }
 // the console's home screen over the running game (the game keeps running behind it)
 function consoleHome(key, page) {
@@ -579,7 +588,7 @@ function consoleHome(key, page) {
 }
 // the controller watcher: PremiumPad.exe (SDL, reads every controller in the background, also the real Xbox button),
 // or - when it's missing (development) - a 1 x 1 px see-through window that reads the controller through Chromium
-let padProc = null, padDown = 0, padLongT = null, padLong = false, padKind = '';
+let lastFocused = '', padProc = null, padDown = 0, padLongT = null, padLong = false, padKind = '';
 const PAD_EXE = () => app.isPackaged ? path.join(process.resourcesPath, 'PremiumPad.exe') : path.join(__dirname, 'build', 'PremiumPad.exe');
 function startPadProc() {
   if (padProc || process.platform !== 'win32' || !fs.existsSync(PAD_EXE())) return !!padProc;
@@ -595,12 +604,13 @@ function startPadProc() {
 function padLine(line) {
   if (line === 'ready') { if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('bp:nativePad', true); return; }
   if (line.startsWith('pad ')) { padKind = line.split(' ')[1]; return; }
+  if (line.startsWith('focused ')) { lastFocused = line; return; }
   if (line === 'home 1' && !padDown) { padDown = Date.now(); padLong = false; clearTimeout(padLongT); padLongT = setTimeout(() => { if (padDown) { padLong = true; homePressed(true, true); } }, 600); }
   else if (line === 'home 0' && padDown) { padDown = 0; clearTimeout(padLongT); if (!padLong) homePressed(false, true); }
 }
 const nativePad = () => !!padProc;
 ipcMain.handle('ps:nativePad', guard(async () => nativePad()));
-global.__psTest = Object.assign(global.__psTest || {}, { padProc: () => padProc, padPress: () => { if (padProc) padProc.stdin.write('test\n'); }, padLine });
+global.__psTest = Object.assign(global.__psTest || {}, { padProc: () => padProc, padPress: () => { if (padProc) padProc.stdin.write('test\n'); }, padLine, pgeProc: k => pgeProcs.get(k), granted: () => [...granted], lastFocused: () => lastFocused });
 function syncPadWatch() {
   if (consoleOn) startPadProc(); else if (padProc) { try { padProc.stdin.end(); padProc.kill(); } catch (e) {} padProc = null; }
   const need = consoleOn && running.size > 0 && !padProc;
@@ -664,7 +674,7 @@ function gameKeys(on) {
   const { globalShortcut } = require('electron');
   try {
     if (on) {
-      const bf = () => [...running.keys()].find(k => (readReg()[k] || {}).type === 'bf-launcher');
+      const bf = () => [...running.keys()].find(k => ['bf-launcher', 'pge'].includes((readReg()[k] || {}).type));
       if (!globalShortcut.isRegistered('F12')) globalShortcut.register('F12', () => { const k = bf(); if (k) screenshot(k); });
       if (!globalShortcut.isRegistered('Shift+Tab')) globalShortcut.register('Shift+Tab', () => { const k = bf(); if (k) { if (consoleOn) homePressed(false); else toggleOverlay(k); } });
       if (!globalShortcut.isRegistered('F9')) globalShortcut.register('F9', () => { const k = bf(); if (k) toggleRecord(k); });
@@ -717,7 +727,7 @@ async function launchWithUpdate(id, edition, opts) {
   const g = installedNow()[id];
   const pb = g && parentalBlocks(g.game || id.split('--')[0]); if (pb) { flash('🔒 ' + pb); throw new Error(pb); }
   if (g && !running.has(id) && !consoleOn) showSplash(id);
-  if (g && g.type === 'manifest' && !busy.has(id) && !running.has(id)) {
+  if (g && (g.type === 'manifest' || g.type === 'pge') && !busy.has(id) && !running.has(id)) {
     try {
       const m = ((await fetchManifest()).games || {})[g.game];
       if (m && JSON.stringify(m.account || null) !== JSON.stringify(readReg()[id].account || null)) { const reg = readReg(); reg[id].account = m.account || undefined; await writeReg(reg); }
@@ -753,6 +763,7 @@ function launchGame(id, edition, opts) {
     markRunning(id);
     return;
   }
+  if (g.type === 'pge') { launchPge(id, g); return; }
   if (gameWins.has(id) && !gameWins.get(id).isDestroyed()) { focusGame(id); return; }
   const cm = consoleOn;   // started from console mode: full screen like a console game, no window frame
   const w = new BrowserWindow({
@@ -779,6 +790,39 @@ function launchGame(id, edition, opts) {
     markStopped(id); });
   gameWins.set(id, w);
   markRunning(id);
+}
+
+// A Premium Engine game: its own program. It's told it runs from Premium Games (and on the console or the PC),
+// and writes its trophies to an events file that is read here and put on the player's account.
+const pgeProcs = new Map();   // install key -> child process
+const PGE_EVENTS = id => path.join(app.getPath('userData'), 'events', id + '.txt');
+function launchPge(id, g) {
+  const old = pgeProcs.get(id); if (old && old.exitCode === null) { focusGame(id); if (splashKey === id) closeSplash(); return; }
+  const dir = gameDir(id, g), ev = PGE_EVENTS(id);
+  try { fs.mkdirSync(path.dirname(ev), { recursive: true }); fs.writeFileSync(ev, ''); } catch (e) {}
+  const cm = consoleOn;
+  const child = require('child_process').spawn(path.join(dir, g.entry), [], { cwd: dir, stdio: 'ignore', windowsHide: false,
+    env: { ...process.env, PREMIUM_GAMES: '1', PREMIUM_CONSOLE: cm ? '1' : '0', PREMIUM_GAMES_EVENTS: ev, PREMIUM_GAMES_USER: playerName() || '' } });
+  pgeProcs.set(id, child);
+  let read = 0;
+  const poll = setInterval(() => {   // trophies the game wrote
+    try { const b = fs.readFileSync(ev, 'utf8'); if (b.length <= read) return; const lines = b.slice(read).split('\n'); read = b.length - lines[lines.length - 1].length;
+      for (const l of lines.slice(0, -1)) { const m = /^trophy ([A-Za-z0-9_-]{1,40})$/.exec(l.trim()); if (m) grantTrophy(g.game || id, m[1]); } } catch (e) {}
+  }, 1000);
+  child.on('error', () => {});
+  child.on('exit', () => { clearInterval(poll); if (pgeProcs.get(id) === child) pgeProcs.delete(id);
+    try { const b = fs.readFileSync(ev, 'utf8').slice(read); for (const l of b.split('\n')) { const m = /^trophy ([A-Za-z0-9_-]{1,40})$/.exec(l.trim()); if (m) grantTrophy(g.game || id, m[1]); } } catch (e) {}
+    markStopped(id); });
+  if (cm) { const game = g.game || id; csLog('game-start', { game, key: id, version: g.version || '', from: 'console' }); csGame(game, r => ({ sessions: r.sessions + 1, last: Date.now(), version: g.version || r.version })); }
+  setTimeout(() => { if (splashKey === id) closeSplash(); }, 2500);
+  gameKeys(true);
+  markRunning(id);
+}
+// a window of another program to the front (Windows lets only the program in front do that: PremiumPad does it)
+function focusPid(pid) {
+  if (process.platform !== 'win32' || !pid) return;
+  if (padProc) { try { padProc.stdin.write('focus ' + pid + '\n'); } catch (e) {} return; }
+  if (fs.existsSync(PAD_EXE())) { try { require('child_process').spawn(PAD_EXE(), ['--focus', String(pid)], { stdio: 'ignore', windowsHide: true, detached: true }).unref(); } catch (e) {} }
 }
 
 // Installs from before editions were separate: give them their game id and an edition in the name and shortcut
@@ -852,12 +896,14 @@ async function fetchJSON(url) {
   if (!r.ok) throw new Error('HTTP ' + r.status + ' · ' + url);
   return r.json();
 }
-const fetchManifest = () => fetchJSON(SITE + 'games.json');
+// (the end-to-end test can hand in the games list of the branch it tests)
+const fetchManifest = () => global.__psManifestFile ? Promise.resolve(JSON.parse(fs.readFileSync(global.__psManifestFile, 'utf8'))) : fetchJSON(SITE + 'games.json');
 
 // Latest version each game's own update source offers right now.
 async function latestOf(m) {
   if (m.type === 'bf-launcher') { const p = await fetchJSON(m.parts); let game = ''; try { game = (await fetchJSON(m.gameManifest)).latest.release; } catch (e) {} return { version: p.version, game, size: p.size }; }
   if (m.type === 'manifest') { const j = await fetchJSON(m.base + 'manifest.json'); return { version: j.version, files: j.files }; }
+  if (m.type === 'pge') { const j = await fetchJSON(m.dist + 'version.json'); return { version: j.version, size: j.size }; }
   return { version: m.version };
 }
 async function getLatest() {
@@ -945,12 +991,32 @@ async function install(id, opts) {
       send('ps:progress', { id, phase: 'extract', received, total: received });
       await fsp.rm(gameDir(id), { recursive: true, force: true });
       await fsp.rename(stage, gameDir(id)); stage = null;
+    } else if (m.type === 'pge') {
+      // a game made with Premium Engine: version.json + one zip (checked with its sha256), unzipped into the game's folder
+      const j = await fetchJSON(m.dist + 'version.json'); version = j.version; total = +j.size || 0;
+      if (!j.file || /[\\/]|\.\./.test(j.file) || !j.exe || /[\\/]|\.\./.test(j.exe) || !/^[0-9a-f]{64}$/.test(j.sha256 || '')) throw new Error('بيانات التحديث غير صالحة');
+      send('ps:progress', { id, phase: 'download', received: 0, total });
+      tmpZip = path.join(app.getPath('temp'), `ps-${id}-${Date.now()}.zip`);
+      await download(m.dist + encodeURIComponent(j.file), tick, tmpZip);
+      const h = crypto.createHash('sha256'); await new Promise((res, rej) => fs.createReadStream(tmpZip).on('data', d => h.update(d)).on('end', res).on('error', rej));
+      if (h.digest('hex') !== j.sha256) throw new Error('الملف وصل ناقص، جرّب مرة ثانية');
+      send('ps:progress', { id, phase: 'extract', received, total: received });
+      stage = gameDir(id) + '.new';
+      await fsp.rm(stage, { recursive: true, force: true });
+      await require('extract-zip')(tmpZip, { dir: stage });
+      const inner = path.join(stage, j.zipRoot || '');
+      if (!inner.startsWith(stage) || !fs.existsSync(path.join(inner, j.exe))) throw new Error('اللعبة ناقصة في الملف');
+      const old = pgeProcs.get(id); if (old) { try { old.kill(); } catch (e) {} }
+      await fsp.rm(gameDir(id), { recursive: true, force: true });
+      await fsp.rename(inner, gameDir(id));
+      await fsp.rm(stage, { recursive: true, force: true }); stage = null;
+      entry = j.exe;
     } else {
       throw new Error('نوع اللعبة غير معروف');
     }
 
-    const reg = readReg(), bf = m.type === 'bf-launcher';
-    reg[id] = { type: m.type, game: info.game, base: m.name, name: bf ? m.name : edTitle(m.name, edition), version, entry, demoPatch: Array.isArray(m.demoPatch) ? m.demoPatch : undefined, account: m.account || undefined, icon: bf ? 'resources/app/icon.ico' : 'icon.ico', edition: bf ? undefined : edition,
+    const reg = readReg(), bf = m.type === 'bf-launcher', one = bf || m.type === 'pge';   // one install for every edition
+    reg[id] = { type: m.type, game: info.game, base: m.name, name: one ? m.name : edTitle(m.name, edition), version, entry, demoPatch: Array.isArray(m.demoPatch) ? m.demoPatch : undefined, account: m.account || undefined, icon: bf ? 'resources/app/icon.ico' : m.type === 'pge' ? entry : 'icon.ico', edition: one ? undefined : edition,
       size: await dirSize(bf ? V.dir : gameDir(id, m)), installedAt: Date.now(), lastPlayed: (readReg()[id] || {}).lastPlayed };
     if (bf) writeBfAccount();
     await writeReg(reg);
@@ -988,6 +1054,7 @@ async function uninstall(id) {
   id = bfKey(id);
   if (!validId(id)) throw new Error('لعبة غير معروفة');
   const w = gameWins.get(id); if (w && !w.isDestroyed()) w.close();
+  if (pgeProcs.has(id)) await stopGame(id);
   const reg = readReg(), g = reg[id];
   if (g && g.type === 'bf-launcher') {
     const V = bfv(g.game || id);
@@ -1367,10 +1434,17 @@ ipcMain.handle('ps:retryOnline', guard(async () => { if (mainWin) mainWin.loadUR
 ipcMain.on('game:achieve', (e, aid) => {
   const key = [...gameWins].find(([, w]) => !w.isDestroyed() && w.webContents === e.sender);
   if (!key || !currentUser || !currentUser.uid || typeof aid !== 'string' || !/^[a-z0-9_-]{1,40}$/i.test(aid)) return;
-  const game = (readReg()[key[0]] || {}).game || key[0].split('--')[0];
-  fbCommit([{ update: { name: `${FB_DB}/users/${currentUser.uid}/achievements/${game}__${aid}`, fields: { game: { stringValue: game }, id: { stringValue: aid } } },
-    currentDocument: { exists: false }, updateTransforms: [{ fieldPath: 'at', setToServerValue: 'REQUEST_TIME' }] }]);
+  grantTrophy((readReg()[key[0]] || {}).game || key[0].split('--')[0], aid);
 });
+// a trophy on the player's account (once: it isn't written again)
+const granted = new Set();
+function grantTrophy(game, aid) {
+  if (!currentUser || !currentUser.uid || !validId(game) || !/^[a-z0-9_-]{1,40}$/i.test(aid) || granted.has(currentUser.uid + game + aid)) return;
+  granted.add(currentUser.uid + game + aid);
+  fbCommit([{ update: { name: `${FB_DB}/users/${currentUser.uid}/achievements/${game}__${aid}`, fields: { game: { stringValue: game }, id: { stringValue: aid } } },
+    currentDocument: { exists: false }, updateTransforms: [{ fieldPath: 'at', setToServerValue: 'REQUEST_TIME' }] }]).catch(() => {});
+  if (consoleOn) csLog('trophy', { game, id: aid });
+}
 ipcMain.on('game:guide', (e, long) => { for (const [k, w] of gameWins) if (w && !w.isDestroyed() && w.webContents === e.sender) { if (consoleOn || w.consoleMode) { if (!nativePad()) homePressed(!!long); } else if (!long) toggleOverlay(k); break; } });
 ipcMain.on('game:exit', e => { const w = BrowserWindow.fromWebContents(e.sender); if (w) w.close(); });
 ipcMain.on('game:nick', e => { e.returnValue = playerName(); });

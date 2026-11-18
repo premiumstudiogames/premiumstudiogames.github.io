@@ -7,6 +7,8 @@
 #include <glm/gtc/quaternion.hpp>
 #include <algorithm>
 #include <cmath>
+#include <cctype>
+#include <cstdlib>
 #include <functional>
 #include <filesystem>
 
@@ -370,4 +372,14 @@ std::string Game::savePath(const std::string& name) {
   return (std::filesystem::u8path(documentsDir()) / "Saves" / std::filesystem::u8path(game) / std::filesystem::u8path(n + ".pgworld")).u8string();
 }
 glm::vec3 Game::cameraDir() { return quatYXZ({pitch_, yaw_, 0}) * glm::vec3(0, 0, -1); }
+// A trophy: Premium Games (which started this game) reads the events file it named and puts the trophy on the player's account
+void Game::trophy(const std::string& id) {
+  bool ok = !id.empty() && id.size() <= 40; for (char ch : id) ok = ok && (std::isalnum((unsigned char)ch) || ch == '_' || ch == '-');
+  if (!ok) { logMsg("warning: premium.trophy: the id is letters, numbers, _ or - (up to 40)", LogKind::Warn); return; }
+  if (!trophies_.insert(id).second) return;   // once per run is enough
+  const char* f = std::getenv("PREMIUM_GAMES_EVENTS");
+  if (!f || !*f) { logMsg("[trophy] " + id + " (goes on the account when played from Premium Games)"); return; }
+  if (FILE* o = std::fopen(f, "ab")) { std::fprintf(o, "trophy %s\n", id.c_str()); std::fclose(o); }
+}
+
 }

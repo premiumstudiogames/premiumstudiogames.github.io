@@ -534,6 +534,13 @@
       "site": "https://abdullra7manx-cmyk.github.io/terravolt/",
       "hidden": true
     },
+    "blockfall-pge": {
+      "type": "pge",
+      "name": "BLOCKFALL 3001 · Premium Engine",
+      "dist": "https://raw.githubusercontent.com/premiumstudiogames/premiumstudiogames.github.io/main/games/blockfall/dist/",
+      "installSize": 7000000,
+      "achievements": {}
+    },
     "last-recording": {
       "type": "manifest",
       "name": "التسجيل الأخير",

@@ -148,6 +148,8 @@ await ok('plus: ended subscription takes nothing', assertFails((async () => { aw
 await ok('plus: anyone can see the plus games', assertSucceeds(getDoc(doc(env.unauthenticatedContext().firestore(), 'config/plus'))));
 // existing features still work
 await ok('player still adds a demo', assertSucceeds(setDoc(doc(B, 'users/B/library/last-recording__demo'), { game: 'last-recording', edition: 'demo', price: 0, status: 'free', at: serverTimestamp() })));
+await ok('player adds the free BLOCKFALL on Premium Engine', assertSucceeds(setDoc(doc(B, 'users/B/library/blockfall-pge__std'), { game: 'blockfall-pge', edition: 'std', price: 0, status: 'free', at: serverTimestamp() })));
+await ok('but not as a paid-for item', assertFails(setDoc(doc(B, 'users/B/library/blockfall-pge__std'), { game: 'blockfall-pge', edition: 'std', price: 0, status: 'paid', at: serverTimestamp() })));
 await ok('player still renames', assertSucceeds(updateDoc(doc(B, 'users/B'), { name: 'Bobby' })));
 await env.cleanup();
 console.log(failed ? failed + ' FAILED' : 'ALL PASSED'); process.exit(failed ? 1 : 0);
