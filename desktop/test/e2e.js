@@ -90,6 +90,42 @@ app.whenReady().then(async () => {
     ok('F9 records a clip', await waitFor(() => { try { return fs.readdirSync(clipDir).some(d => fs.readdirSync(path.join(clipDir, d)).some(f => f.endsWith('.webm') && fs.statSync(path.join(clipDir, d, f)).size > 1000)); } catch (e) { return false; } }, 15000), recLog.join(' | ') + ' · gw=' + !!gw);
     await call('ps:stop', 'last-recording--std');
     ok('horror game closes', await waitFor(async () => !(await call('ps:getRunning'))['last-recording--std'], 20000));
+    // ---- console mode with a game running (like a PS5): full screen, no launcher window, Home = Control Center over the game
+    await call('ps:setConsole', true);
+    const homeSent = []; { const mw = BrowserWindow.getAllWindows().find(w => /#bigpicture$/.test(w.webContents.getURL())); if (mw) { const orig = mw.webContents.send.bind(mw.webContents); mw.webContents.send = (ch, p) => { if (ch === 'bp:home') homeSent.push(p); return orig(ch, p); }; } }
+    await call('ps:launch', 'last-recording--std');
+    ok('console: game runs', await waitFor(async () => !!(await call('ps:getRunning'))['last-recording--std'], 30000));
+    const cgw = await (async () => { let w = null; await waitFor(() => (w = BrowserWindow.getAllWindows().find(x => !x.isDestroyed() && x.webContents.getURL().startsWith('psgame') && x.isVisible())), 15000); return w; })();
+    ok('console: the game is full screen without a window frame', !!cgw && cgw.consoleMode === true && cgw.isFullScreen());
+    ok('console: no "starting game" window', !BrowserWindow.getAllWindows().some(w => !w.isDestroyed() && w.webContents.getURL().startsWith('data:') && /%D8%AC%D8%A7%D8%B1%D9%8A|جاري تشغيل/.test(w.webContents.getURL().slice(0, 4000))));
+    const padW = () => BrowserWindow.getAllWindows().find(w => !w.isDestroyed() && w.getBounds().width <= 2 && w.isAlwaysOnTop());
+    ok('console: the controller watcher runs while a game runs', !!padW());
+    const ccW = () => BrowserWindow.getAllWindows().find(w => !w.isDestroyed() && /cc\.html$/.test(w.webContents.getURL()) && w.isVisible());
+    await sleep(3000); if (cgw) { cgw.focus(); await sleep(500); }
+    if (cgw) ipcMain.emit('game:guide', { sender: cgw.webContents }, false);
+    ok('console: Home opens the Control Center over the game', await waitFor(ccW, 10000));
+    await sleep(1500);
+    const ccd = await call('cc:data');
+    ok('console: Control Center knows the game', ccd && ccd.key === 'last-recording--std' && ccd.running.length === 1, ccd && ccd.name);
+    try { fs.mkdirSync(path.join(__dirname, 'shots'), { recursive: true }); const w = ccW(); if (w) fs.writeFileSync(path.join(__dirname, 'shots', 'control-center.png'), (await w.webContents.capturePage()).toPNG()); } catch (e) {}
+    const focusedInCC = ccW() ? await ccW().webContents.executeJavaScript('document.activeElement && document.activeElement.dataset.a') : '';
+    ok('console: Control Center is drawn and focused on the game card', focusedInCC === 'close', focusedInCC);
+    ok('console: the game does not see the controller while the Control Center is open', cgw ? await cgw.webContents.executeJavaScript('[...navigator.getGamepads()].every(p => !p)') : false);
+    ok('console: mute the game from the Control Center', (await call('cc:act', 'mute')) === true && cgw.webContents.isAudioMuted());
+    await call('cc:act', 'mute');
+    await call('cc:act', 'home');
+    ok('console: Home → the console screen over the game (game keeps running)', await waitFor(async () => !ccW() && homeSent.length > 0 && !!(await call('ps:getRunning'))['last-recording--std'], 8000), JSON.stringify(homeSent));
+    await call('ps:launch', 'last-recording--std');   // from the console's tile: back to the game, not a second copy
+    ok('console: resume brings the same game back', await waitFor(() => cgw && cgw.isFocused(), 8000) && BrowserWindow.getAllWindows().filter(w => !w.isDestroyed() && w.webContents.getURL().startsWith('psgame')).length === 1);
+    app.emit('second-instance', {}, [process.execPath, 'premiumstudio://overlay']);   // what a game in its own program sends for Home
+    ok('console: premiumstudio://overlay opens the Control Center', await waitFor(ccW, 10000));
+    await call('cc:act', 'close');
+    ok('console: B / Home closes it, back to the game', await waitFor(() => !ccW(), 5000));
+    app.emit('second-instance', {}, [process.execPath, 'premiumstudio://overlay']); await waitFor(ccW, 10000);
+    await call('cc:act', 'stop');
+    ok('console: Close Game from the Control Center', await waitFor(async () => !(await call('ps:getRunning'))['last-recording--std'], 20000));
+    ok('console: the watcher goes with the game', await waitFor(() => !padW(), 5000));
+    await call('ps:setConsole', false);
     // ---- parental controls: a game that isn't allowed doesn't start
     await call('ps:setParental', { newPin: '4321', pin: '', on: true, allowed: ['blockfall'], daily: 0 });
     let blocked = false; try { await call('ps:launch', 'last-recording--std'); } catch (e) { blocked = /الرقابة/.test(String(e.message)); }

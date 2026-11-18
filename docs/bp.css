@@ -451,3 +451,18 @@
 .ps-ptier .ps-btn{align-self:flex-start}
 .ps-libplus{display:flex;flex-direction:column;align-items:flex-start;gap:.7vw;padding:2.4vw!important;border-radius:var(--r);background:linear-gradient(115deg,#3b2a00,#7a5600 55%,#c99100);direction:rtl;max-width:62vw;margin-bottom:1.4vw}
 .ps-libplus .ic{width:3vw;height:3vw}.ps-libplus b{font-size:2.2vw;font-weight:800}.ps-libplus small{font-size:1.15vw;color:rgba(255,255,255,.85)}
+
+/* a game starting (its picture fills the screen, like a console) */
+.ps-layer.t-launch{background:#000!important;animation:lfade .35s ease-out}
+@keyframes lfade{from{opacity:0}to{opacity:1}}
+.ps-launch{position:absolute;inset:0;display:grid;place-items:center;overflow:hidden}
+.ps-launch .lbg{position:absolute;inset:-4vw;filter:blur(2.4vw) brightness(.45);transform:scale(1.1)}
+.ps-launch .lbg canvas{width:100%!important;height:100%!important;object-fit:cover}
+.ps-launch .lc{position:relative;display:flex;flex-direction:column;align-items:center;gap:1.6vw;animation:lzoom 1.4s cubic-bezier(.2,.8,.2,1)}
+@keyframes lzoom{from{transform:scale(.86);opacity:0}to{transform:none;opacity:1}}
+.ps-launch .lcv{width:26vw;height:26vw;border-radius:1.2vw;overflow:hidden;box-shadow:0 2vw 6vw rgba(0,0,0,.7)}
+.ps-launch .lcv canvas{width:100%!important;height:100%!important;object-fit:cover}
+.ps-launch b{font-size:2.6vw;font-weight:800;letter-spacing:.02em}
+.ps-launch .lsp{display:flex;gap:.9vw;align-items:center;font-size:1.3vw;color:var(--dim);direction:rtl}
+.ps-launch .spin{width:1.5vw;height:1.5vw;border-radius:50%;border:.22vw solid rgba(255,255,255,.25);border-top-color:#fff;animation:spin .9s linear infinite;display:inline-block}
+@keyframes spin{to{transform:rotate(360deg)}}

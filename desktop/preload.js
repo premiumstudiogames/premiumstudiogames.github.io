@@ -36,6 +36,8 @@ if (ok) {
     power: what => ipcRenderer.invoke('ps:power', what),
     focusMain: () => ipcRenderer.invoke('ps:focusMain'),
     consoleMode: true,
+    setConsole: on => ipcRenderer.invoke('ps:setConsole', !!on),   // the console screen is open (games start full screen, Home opens the Control Center over them)
+    onConsoleHome: cb => { const f = (e, d) => cb(d); ipcRenderer.on('bp:home', f); return () => ipcRenderer.removeListener('bp:home', f); },
     openShots: file => ipcRenderer.invoke('ps:openShots', file),
     openClips: () => ipcRenderer.invoke('ps:openClips'),
     disk: () => ipcRenderer.invoke('ps:disk'),

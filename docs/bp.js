@@ -6,7 +6,7 @@ export function makeBP(H){
   let on = false, root = null, host = null, sheet = null, raf = 0, wallRaf = 0, hideT = 0, fresh = false, lastRun = {};
   let tvOpen = false;
   if (PS && PS.tv && PS.tv.onClosed) PS.tv.onClosed(() => { tvOpen = false; if (on) { if (PS.fullscreen) PS.fullscreen(true).catch(() => {}); fresh = true; draw(); } });
-  let space = "games", sel = {games:-1, media:0}, pages = [], stack = [], toasts = [], unProg = null;
+  let space = "games", sel = {games:-1, media:0}, pages = [], stack = [], toasts = [], unProg = null, unHome = null, launching = null;
   const pad = {last:{}, held:{}}, ST = {glyphs:"auto", sounds:true, wall:"autumn"};
   try { Object.assign(ST, JSON.parse(localStorage.getItem("bp-ui") || "{}")); } catch(e) {}
   const saveUI = () => { try { localStorage.setItem("bp-ui", JSON.stringify({wall:ST.wall, sort:ST.sort, toasts:ST.toasts})); } catch(e) {} };
@@ -42,7 +42,7 @@ export function makeBP(H){
   /* ---------- button names follow the controller in your hands ---------- */
   let padKind = "xbox", padOn = false;
   const G = b => { const k = ST.glyphs === "auto" ? padKind : ST.glyphs;
-    const m = k === "ps" ? {a:"✕", b:"○", x:"□", y:"△", lb:"L1", rb:"R1", start:"OPTIONS", guide:"PS"} : {a:"A", b:"B", x:"X", y:"Y", lb:"LB", rb:"RB", start:"☰", guide:"Xbox"};
+    const m = k === "ps" ? {a:"✕", b:"○", x:"□", y:"△", lb:"L1", rb:"R1", start:"OPTIONS", guide:"⌂"} : {a:"A", b:"B", x:"X", y:"Y", lb:"LB", rb:"RB", start:"☰", guide:"⌂"};
     return `<kbd class="g g-${k}-${b}">${m[b]}</kbd>`; };
 
   /* ---------- small icons (drawn, no image files) ---------- */
@@ -51,7 +51,7 @@ export function makeBP(H){
     gear:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M10.3 2.8h3.4l.5 2.4 1.7.8 2.1-1.3 2.4 2.4-1.3 2.1.8 1.7 2.4.5v3.4l-2.4.5-.8 1.7 1.3 2.1-2.4 2.4-2.1-1.3-1.7.8-.5 2.4h-3.4l-.5-2.4-1.7-.8-2.1 1.3-2.4-2.4 1.3-2.1-.8-1.7-2.4-.5v-3.4l2.4-.5.8-1.7-1.3-2.1 2.4-2.4 2.1 1.3 1.7-.8z"/></svg>',
     store:'<svg viewBox="0 0 24 24"><path d="M5 8h14l-1.2 12H6.2z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg>',
     lib:'<svg viewBox="0 0 24 24"><rect x="3" y="3" width="4" height="4"/><rect x="9" y="3" width="4" height="4"/><rect x="15" y="3" width="4" height="4"/><rect x="3" y="9" width="4" height="4"/><path d="M11 13h7a3 3 0 0 1 3 3v2a2 2 0 0 1-3.4 1.4L16 18h-3l-1.6 1.4A2 2 0 0 1 8 18v-2a3 3 0 0 1 3-3z"/></svg>',
-    hub:'<svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><path d="M17 3l4 7h-8z"/><path d="M3.5 14.5l6 6M9.5 14.5l-6 6"/><circle cx="17" cy="17.5" r="3.5"/></svg>',
+    hub:'<svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><path d="M17 13.5l1.1 2.4 2.4 1.1-2.4 1.1L17 20.5l-1.1-2.4-2.4-1.1 2.4-1.1z"/></svg>',
     media:'<svg viewBox="0 0 24 24"><rect x="3" y="4" width="13" height="10" rx="1"/><path d="M6 4v10M13 4v10M3 8h3M3 11h3M13 8h3M13 11h3"/><path d="M18 9v9.5a2 2 0 1 1-1.5-2V10l4-1v7.5a2 2 0 1 1-1.5-2"/></svg>',
     shot:'<svg viewBox="0 0 24 24"><rect x="3" y="5" width="13" height="10" rx="1"/><path d="M5 19h4"/><rect x="13" y="12" width="8" height="6" rx="1"/><circle cx="17" cy="15" r="1.6"/></svg>',
     clip:'<svg viewBox="0 0 24 24"><rect x="3" y="5" width="13" height="12" rx="1.5"/><path d="M16 9l5-3v12l-5-3z"/></svg>',
@@ -89,7 +89,7 @@ export function makeBP(H){
   /* ---------- open / close ---------- */
   // the console lives in its own shadow root, so the store's CSS can't change it (and its CSS can't leak out)
   async function loadSheet(){ if (sheet) return sheet; sheet = new CSSStyleSheet();
-    try { const u = new URL("bp.css?v=8", import.meta.url); sheet.replaceSync(await (await fetch(u)).text()); } catch(e) {} return sheet; }
+    try { const u = new URL("bp.css?v=9", import.meta.url); sheet.replaceSync(await (await fetch(u)).text()); } catch(e) {} return sheet; }
   async function open(){ if (on) return; on = true; document.body.classList.add("bp-on"); pages = H.accounts ? [{t:"users"}] : []; stack = []; space = "games"; sel.games = -1; busy = "";
     host = document.createElement("div"); host.id = "bpHost"; host.className = "nomouse"; document.body.appendChild(host);
     root = host.attachShadow({mode:"open"}); root.adoptedStyleSheets = [await loadSheet()];
@@ -102,14 +102,30 @@ export function makeBP(H){
       else if (p.phase === "error") notify(I.dl, "ما اكتمل التحميل: " + (H.keyTitle(p.id) || ""));
       const d = root && root.querySelector(`[data-progk="${CSS.escape(p.id)}"]`); if (d && p.total) d.style.width = H.pct(p) + "%"; });
     try { if (PS && PS.getSettings) Object.assign(ST, await PS.getSettings()); } catch(e) {}
+    if (PS && PS.setConsole) PS.setConsole(true).catch(() => {});
+    if (PS && PS.onConsoleHome && !unHome) unHome = PS.onConsoleHome(d => onHomeFromGame(d || {}));
+    window.__bpCC = ccData;
     fresh = true; draw(); beep("open"); }
   function close(){ if (!on) return; on = false; document.body.classList.remove("bp-on"); stopWall(); if (host) host.remove(); host = null; root = null; pages = []; stack = [];
     document.removeEventListener("keydown", key, true); cancelAnimationFrame(raf); if (unProg) { unProg(); unProg = null; }
+    if (unHome) { unHome(); unHome = null; } if (PS && PS.setConsole) PS.setConsole(false).catch(() => {}); delete window.__bpCC;
     if (PS && PS.fullscreen) PS.fullscreen(false).catch(() => {}); else { try { if (document.fullscreenElement) document.exitFullscreen(); } catch(e) {} }
     if (location.hash === "#bigpicture") location.hash = "#library"; }
   function wake(){ if (!host) return; host.classList.remove("nomouse"); clearTimeout(hideT); hideT = setTimeout(() => host && host.classList.add("nomouse"), 3000); }
   function hover(e){ const t = e.target.closest("[data-bp]"); if (t && !t.disabled && root.activeElement !== t && !host.classList.contains("nomouse") && inScope(t)) focusEl(t, true); }
   function wheel(e){ const r = e.target.closest(".ps-row"); if (r && !stack.length && !pages.length) { e.preventDefault(); const it = rowItems(), i = cur(); const n = Math.max(0, Math.min(it.length - 1, i + (e.deltaY > 0 || e.deltaX > 0 ? 1 : -1))); focusTile(n); } }
+
+  /* ---------- a game in front: its Home button comes here (the app shows the console over the game) ---------- */
+  function selectGame(gid){ const i = rowItems().findIndex(x => x.k === "game" && x.g === gid); if (i >= 0) { space = "games"; sel.games = i; } }
+  function onHomeFromGame(d){ if (!on) return; const g = (d.key || "").split("--")[0]; stack = []; pages = []; launching = null; busy = "";
+    if (g) selectGame(g); fresh = true; beep("open");
+    if (d.page === "notes") { draw(); return push({t:"cc", panel:"notes"}); }
+    if (d.page && ["friends", "trophies", "profile", "downloads"].includes(d.page)) return openPage({t:d.page});
+    draw(); }
+  // what the Control Center over a game shows from here: notifications, profile
+  function ccData(){ const s = S(), p = s.PROFILE || {};
+    return {notes:H.notes().slice(0, 8).map(n => ({i:n.i, t:n.t})), profile:{name:p.name || "", initial:((p.username || p.name || "?").trim()[0] || "?").toUpperCase(), hue:hue(s.user ? s.user.uid : "")},
+      friendsOnline:Object.entries(s.FRIENDS).filter(([id, f]) => f.status === "ok" && s.online(id)).length}; }
 
   /* ---------- notifications (top corner, like the PS5) ---------- */
   function notify(icon, text){ if (!on || !root || ST.toasts === false) return; beep("note"); const id = Math.random().toString(36).slice(2);
@@ -125,7 +141,7 @@ export function makeBP(H){
     for (const ed of eds) { const [k, inst] = instOf(g.id, ed); if (inst) return {k, ed, inst:true, info:inst}; }
     return {k:instOf(g.id, eds[0] || "demo")[0], ed:eds[0], none:true}; }
   function actBtn(g, prefer){ const st = gameState(g, prefer);
-    if (st.run) return `<button class="ps-btn stop" data-bp="act" data-a="stop" data-g="${g.id}" data-e="${st.ed}">إغلاق اللعبة</button>`;
+    if (st.run) return `<button class="ps-btn play" data-bp="act" data-a="play" data-g="${g.id}" data-e="${st.ed}">متابعة اللعب</button>`;
     if (st.prog) return `<button class="ps-btn" data-bp="act" data-a="none" data-g="${g.id}">يحمّل <span class="num">${H.pct(st.prog)}%</span></button>`;
     if (st.inst) return `<button class="ps-btn play" data-bp="act" data-a="play" data-g="${g.id}" data-e="${st.ed}">العب اللعبة</button>`;
     if (st.ed) return `<button class="ps-btn" data-bp="act" data-a="install" data-g="${g.id}" data-e="${st.ed}">تنزيل</button>`;
@@ -443,6 +459,7 @@ export function makeBP(H){
       return `<div class="ps-dlg"><h2>أضف إلى قائمة</h2>${lists.map(l => `<button class="ps-mi${l.games.includes(L.g) ? " sel" : ""}" data-bp="toggleList" data-id="${l.id}" data-g="${L.g}">${esc(l.name)} <small class="num">(${l.games.length})</small></button>`).join("")}<button class="ps-mi" data-bp="newlist" data-g="${L.g}">＋ قائمة جديدة</button></div>`; }
     if (L.t === "listmenu") return `<div class="ps-menu"><h3>القائمة</h3><button class="ps-mi" data-bp="renlist" data-id="${L.id}">غيّر الاسم</button><button class="ps-mi danger" data-bp="dellist" data-id="${L.id}">احذف القائمة</button></div>`;
     if (L.t === "kbd") return kbdHTML(L);
+    if (L.t === "launch") { const g = H.byId(L.g) || {}; return `<div class="ps-launch"><span class="lbg" data-cover="${L.g}"></span><div class="lc"><span class="lcv" data-cover="${L.g}"></span><b>${title(g)}</b><span class="lsp"><i class="spin"></i>جاري التشغيل</span></div></div>`; }
     if (L.t === "power") return `<div class="ps-dlg"><h2>الطاقة</h2>${powerBtns()}</div>`;
     if (L.t === "me") { const s = S(), p = s.PROFILE || {}, n = p.name || (s.user && s.user.displayName) || "";
       return `<div class="ps-menu me"><div class="who"><span class="uav" style="--h:${hue(s.user ? s.user.uid : "")}">${initial({name:n, username:p.username})}</span><span><b>${esc(n)}</b><small class="ltr">${p.username ? "@" + esc(p.username) : ""}</small></span></div>
@@ -474,7 +491,7 @@ export function makeBP(H){
         ${sh ? card(I.shot, "أنشئ مؤخرًا", "لقطة شاشة جديدة", `<img src="${sh.thumb}" alt="">`, `data-bp="shot" data-i="0"`) : ""}
         ${sale ? card(I.news, "خصم " + H.saleOf(sale.id).pct + "%", title(sale), `<span class="cv" data-cover="${sale.id}"></span>`, `data-bp="gpage" data-g="${sale.id}"`) : ""}
         ${card(I.tip, "اكتشف", "نصائح وضع الكونسل", "", `data-bp="cc" data-k="tips"`)}</div>`; }
-    if (L.panel === "tips") return `<div class="ps-ccpanel"><h3>نصائح</h3><ul class="tips"><li>${G("guide")} أو F1: مركز التحكم في أي وقت</li><li>${G("start")}: خيارات اللعبة المحددة</li><li>${G("lb")}${G("rb")}: بين الألعاب والوسائط</li><li>${G("y")}: البحث</li><li>F12 وأنت تلعب: لقطة شاشة · F9: سجّل مقطع</li><li>Shift+Tab أو زر اليد الرئيسي داخل اللعبة: قائمة اللعبة</li></ul></div>`;
+    if (L.panel === "tips") return `<div class="ps-ccpanel"><h3>نصائح</h3><ul class="tips"><li>${G("guide")} أو F1: مركز التحكم</li><li>${G("start")}: خيارات اللعبة المحددة</li><li>${G("lb")}${G("rb")}: بين الألعاب والوسائط</li><li>${G("y")}: البحث</li><li>F12 وأنت تلعب: لقطة شاشة · F9: سجّل مقطع</li><li>${G("guide")} وأنت تلعب: مركز التحكم فوق اللعبة · اضغطه مطوّل: الشاشة الرئيسية واللعبة تبقى شغّالة</li><li>يد إكس بوكس: زر الرئيسية = View و Menu مع بعض</li><li>Shift+Tab وأنت تلعب بالكيبورد: مركز التحكم</li></ul></div>`;
     if (L.panel === "switcher") { const run = Object.entries(s.RUNNING), rec = mine().filter(g => last(g.id)).slice(0, 4);
       return `<div class="ps-ccpanel"><h3>المبدل</h3><div class="ps-cccards">${run.map(([k, r]) => card(I.pad, "شغّالة · " + G("a") + " إغلاق", esc(r.name || H.keyTitle(k)), "", `data-bp="qstop" data-k="${k}"`)).join("")}
         ${rec.map(g => `<button class="ps-ccc art" data-bp="gpage" data-g="${g.id}"><span class="cv" data-cover="${g.id}"></span><span class="cap"><small>${ago(last(g.id))}</small><b>${title(g)}</b></span></button>`).join("")}${!run.length && !rec.length ? '<p class="ps-empty">ما فيه شي مفتوح.</p>' : ""}</div></div>`; }
@@ -612,12 +629,16 @@ export function makeBP(H){
   function popPage(){ if (!pages.length || onUsers()) return false; pages.pop(); fresh = !pages.length ? false : true; beep("back"); draw(); return true; }
   function goHome(){ stack = []; pages = []; fresh = true; draw(); }
 
+  /* the game's start screen (like the PS5: its picture fills the screen until the game is up) */
+  function startScreen(g, k){ launching = {g:g.id, k, at:Date.now()}; stack = [{t:"launch", g:g.id}]; fresh = true; beep("open"); draw();
+    setTimeout(() => { if (launching && launching.k === k && Date.now() - launching.at >= 29000) { launching = null; stack = stack.filter(L => L.t !== "launch"); draw(); } }, 30000); }
+
   /* ---------- actions ---------- */
   const fake = d => { const b = document.createElement("button"); for (const [k, v] of Object.entries(d)) b.dataset[k] = v; return b; };
   async function activate(el){
     const k = el.dataset.bp, top = stack[stack.length - 1]; if (!k) return; beep("ok");
     if (k === "tile") { const x = rowItems()[+el.dataset.i]; if (!x) return; if (+el.dataset.i !== cur()) return focusTile(+el.dataset.i);
-      if (x.k === "game") { const g = H.byId(x.g), st = gameState(g); if (st.inst && !st.run) return activate(fake({bp:"act", a:"play", g:g.id, e:st.ed})); return openPage({t:"game", g:x.g}); }
+      if (x.k === "game") { const g = H.byId(x.g), st = gameState(g); if (st.inst || st.run) return activate(fake({bp:"act", a:"play", g:g.id, e:st.ed})); return openPage({t:"game", g:x.g}); }
       if (x.k === "store") { q = ""; return openPage({t:"store"}); } if (x.k === "library") return openPage({t:"library"}); if (x.k === "gallery" || x.k === "mhub") return openPage({t:"gallery"});
       if (x.k === "plus") return openPage({t:"plus"}); if (x.k === "youtube") return activate(fake({bp:"tv", a:"youtube"}));
       if (x.k === "clips") return activate(fake({bp:"clips"})); if (x.k === "engine") return activate(fake({bp:"engine"}));
@@ -644,8 +665,8 @@ export function makeBP(H){
     if (k === "act") { const a = el.dataset.a, g = H.byId(el.dataset.g), st = gameState(g, el.dataset.e);
       if (a === "none") return; if (!PS) { beep("err"); return notify(I.pad, "التشغيل من تطبيق Premium Games على الكمبيوتر"); }
       if (el.isConnected) el.disabled = true; stack = stack.filter(L => L.t !== "menu");
-      try { if (a === "play") { await PS.launch(st.k, st.ed); notify(I.pad, "يشغّل " + (g.en || g.title) + "…"); } else if (a === "stop") await PS.stop(st.k); else if (a === "install") { await PS.install(st.k, {edition:st.ed}); notify(I.dl, "بدأ التنزيل: " + (g.en || g.title)); } }
-      catch(e) { beep("err"); notify(I.pad, String(e && e.message || e)); }
+      try { if (a === "play") { if (!st.run) startScreen(g, st.k); await PS.launch(st.k, st.ed); } else if (a === "stop") await PS.stop(st.k); else if (a === "install") { await PS.install(st.k, {edition:st.ed}); notify(I.dl, "بدأ التنزيل: " + (g.en || g.title)); } }
+      catch(e) { launching = null; stack = stack.filter(L => L.t !== "launch"); beep("err"); notify(I.pad, String(e && e.message || e)); }
       setTimeout(softRefresh, 500); return; }
     if (k === "menu") return push({t:"menu", g:el.dataset.g, list:(pages[pages.length - 1] || {}).t === "list" ? pages[pages.length - 1].id : ""});
     if (k === "mact") { const a = el.dataset.a, key2 = el.dataset.k; stack = [];
@@ -739,16 +760,32 @@ export function makeBP(H){
   function move(dx, dy){
     const sc = scope(), items = [...sc.querySelectorAll("[data-bp]")].filter(e => !e.disabled && e.offsetParent !== null), c = root.activeElement;
     if (!items.length) return; if (!items.includes(c)) return focusEl(items[0]);
-    // inside the home row: left / right walk the tiles
-    if (c.dataset.bp === "tile" && dx) { const n = cur() + dx; if (n >= 0 && n < rowItems().length) focusTile(n); return; }
+    // the home screen has three bands, like the PS5: the top bar, the row of tiles, the hub under it
+    let pool = items;
+    if (!pages.length && !stack.length) {
+      const zone = e => e.closest(".ps-top") ? "top" : e.closest(".ps-strip") ? "row" : "hub", z = zone(c), tile = () => root.querySelector(`.ps-t[data-i="${cur()}"]`);
+      if (z === "row") { if (dx) { const n = cur() + dx; if (n >= 0 && n < rowItems().length) focusTile(n); return; }
+        if (dy < 0) { const t = root.querySelector(`.ps-top .sp[data-v="${space}"]`); if (t) focusEl(t); return; }
+        pool = items.filter(e => zone(e) === "hub");
+        if (!pool.length) return;
+        const f = pool.find(e => e.closest(".ps-acts")) || pool.slice().sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top || b.getBoundingClientRect().right - a.getBoundingClientRect().right)[0];   // down: the hub's first button (Play)
+        return focusEl(f); }
+      else if (z === "top") { if (dy > 0) { const t = tile(); if (t) focusEl(t); return; } if (dy < 0) return; pool = items.filter(e => zone(e) === "top"); }
+      else { pool = items.filter(e => zone(e) === "hub"); }
+      if (z === "hub" && dy < 0) {   // up from the top of the hub: back to the tile
+        const r = c.getBoundingClientRect(); if (!pool.some(e => e !== c && e.getBoundingClientRect().bottom <= r.top + 4)) { const t = tile(); if (t) focusEl(t); return; } }
+    }
     const r0 = c.getBoundingClientRect(), c0 = {x:r0.left + r0.width / 2, y:r0.top + r0.height / 2};
     let best = null, bd = 1e9;
-    for (const e of items) { if (e === c) continue; const r = e.getBoundingClientRect(); if (e.dataset.bp === "tile" && (r.right < 0 || r.left > innerWidth)) continue; if (dy && e.closest(".ps-side") && !c.closest(".ps-side")) continue;   // the side icons are reached with left / right only
+    for (const e of pool) { if (e === c) continue; const r = e.getBoundingClientRect(); if (e.dataset.bp === "tile" && (r.right < 0 || r.left > innerWidth)) continue; if (dy && e.closest(".ps-side") && !c.closest(".ps-side")) continue;   // the side icons are reached with left / right only
       const p = {x:r.left + r.width / 2, y:r.top + r.height / 2}, vx = p.x - c0.x, vy = p.y - c0.y;
       if (dx && (Math.sign(vx) !== dx || Math.abs(vx) < 4)) continue; if (dy && (Math.sign(vy) !== dy || Math.abs(vy) < 4)) continue;
       // measured edge to edge, so a wide button right under you wins over a small one whose centre happens to be closer
       const gx = Math.max(0, r.left - r0.right, r0.left - r.right), gy = Math.max(0, r.top - r0.bottom, r0.top - r.bottom);
-      const d = dx ? gx + Math.abs(vx) * .25 + gy * 3 : gy + Math.abs(vy) * .25 + gx * 2.2; if (d < bd) { bd = d; best = e; } }
+      // left / right stay in the same row when there is something there (like a console)
+      const sameRow = r.bottom > r0.top + 2 && r.top < r0.bottom - 2;
+      if (dx && !sameRow) continue;
+      const d = dx ? gx + Math.abs(vx) * .25 : gy + Math.abs(vy) * .25 + gx * 2.2; if (d < bd) { bd = d; best = e; } }
     if (best && best.dataset.bp === "tile" && c.dataset.bp !== "tile") best = root.querySelector(`.ps-t[data-i="${cur()}"]`) || best;   // back into the row: the selected tile
     if (best) focusEl(best);
   }
@@ -794,7 +831,11 @@ export function makeBP(H){
     if (top && top.t === "test") { raf = requestAnimationFrame(poll); return; }
     for (const p of pads) {
       const b = i => p.buttons[i] && p.buttons[i].pressed, ax = p.axes || [];
-      const st = {a:b(0), b:b(1), x:b(2), y:b(3), lb:b(4), rb:b(5), lt:b(6), rt:b(7), sel:b(8), start:b(9), guide:b(16), up:b(12) || ax[1] < -0.55, down:b(13) || ax[1] > 0.55, left:b(14) || ax[0] < -0.55, right:b(15) || ax[0] > 0.55};
+      // View + Menu together = Home (Windows keeps the Xbox button for its Game Bar); so View and Menu alone act when let go
+      const combo = b(8) && b(9), ck = p.index + "combo"; if (combo) pad.last[ck] = true;
+      const relSel = !b(8) && pad.last[p.index + "selD"] && !pad.last[ck], relStart = !b(9) && pad.last[p.index + "startD"] && !pad.last[ck];
+      pad.last[p.index + "selD"] = b(8); pad.last[p.index + "startD"] = b(9); if (!b(8) && !b(9)) pad.last[ck] = false;
+      const st = {a:b(0), b:b(1), x:b(2), y:b(3), lb:b(4), rb:b(5), lt:b(6), rt:b(7), sel:relSel, start:relStart, guide:b(16) || combo, up:b(12) || ax[1] < -0.55, down:b(13) || ax[1] > 0.55, left:b(14) || ax[0] < -0.55, right:b(15) || ax[0] > 0.55};
       const now = performance.now();
       for (const [k, v] of Object.entries(st)) {
         const prev = pad.last[p.index + k]; pad.last[p.index + k] = v;
@@ -829,9 +870,12 @@ export function makeBP(H){
   }
 
   /* ---------- live updates ---------- */
+  let lastEnded = {};
   function refresh(){ if (!on) return;
-    const run = S().RUNNING, ended = Object.keys(lastRun).filter(k => !run[k]), started = Object.keys(run).filter(k => !lastRun[k]); lastRun = Object.assign({}, run);
-    if (ended.length && PS && PS.focusMain) { PS.focusMain().catch(() => {}); if (PS.fullscreen) PS.fullscreen(true).catch(() => {}); }   // back to the console screen when a game closes
+    lastEnded = Object.assign({}, lastRun); const run = S().RUNNING, ended = Object.keys(lastRun).filter(k => !run[k]), started = Object.keys(run).filter(k => !lastRun[k]); lastRun = Object.assign({}, run);
+    if (ended.length && PS && PS.focusMain) { PS.focusMain().catch(() => {}); if (PS.fullscreen) PS.fullscreen(true).catch(() => {});   // back to the console screen when a game closes, on its tile
+      const g = (run[ended[0]] || lastEnded[ended[0]] || {}).game || ended[0].split("--")[0]; stack = stack.filter(L => L.t !== "launch"); pages = []; selectGame(g); fresh = true; }
+    if (launching && started.some(k => k === launching.k || k.split("--")[0] === launching.g)) { const l = launching; setTimeout(() => { if (launching === l) { launching = null; stack = stack.filter(L => L.t !== "launch"); if (on) draw(); } }, 1500); }
     if (started.length) SHOTS = null; if (ended.length) SHOTS = null;
     softRefresh(); }
   setInterval(() => { if (on) { const c = root && root.querySelector(".ps-top .clock, .ps-users .clock"); if (c) c.textContent = clock(); } }, 15000);

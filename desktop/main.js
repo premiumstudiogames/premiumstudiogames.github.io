@@ -137,7 +137,8 @@ function createMain(hash, query) {
   });
   mainWin.loadURL(SITE + q + (hash ? '#' + hash : ''));
   mainWin.on('close', e => { if (!quitting && tray) { e.preventDefault(); mainWin.hide(); } });
-  mainWin.on('closed', () => { mainWin = null; });
+  mainWin.on('closed', () => { mainWin = null; consoleOn = false; syncPadWatch(); });
+  mainWin.webContents.on('did-navigate', () => { consoleOn = false; syncPadWatch(); });   // a new page: the console screen says again when it opens
   mainWin.webContents.on('did-finish-load', () => mainWin && mainWin.webContents.send('ps:running', runningList()));
   return mainWin;
 }
@@ -197,6 +198,7 @@ function addPlaytime(r, ms) {
 }
 const runningList = () => Object.fromEntries([...running].map(([k, v]) => [k, { since: v.since, game: v.game, closing: stopping.has(k) || !!v.closing }]));
 function runningChanged() {
+  syncPadWatch();
   if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('ps:running', runningList());
   updateTray();
 }
@@ -498,6 +500,97 @@ async function toggleOverlay(key) {
   ovWin.on('closed', () => { ovWin = null; });
 }
 function closeOverlay() { if (ovWin && !ovWin.isDestroyed()) { const w = gameWins.get(ovKey); ovWin.destroy(); if (w && !w.isDestroyed()) w.focus(); } ovWin = null; }
+/* ---------------- console mode while a game runs (like a PS5) ----------------
+   The console screen tells us when it's open. Games started from it run full screen without a launcher. The controller's
+   Home button (PS button; on Xbox pads View + Menu together, as Windows keeps the Xbox button for itself) opens the
+   Control Center over the game; held, it goes to the console's home screen while the game keeps running.
+   A tiny always-on-top window reads the controller, so Home works over games in their own program too. */
+let consoleOn = false, ccWin = null, ccKey = '', padWin = null, lastHome = 0;
+ipcMain.handle('ps:setConsole', guard(async on => { consoleOn = !!on; syncPadWatch(); if (!consoleOn) closeCC(); return true; }));
+function gameWindowOf(key) { const w = gameWins.get(key); return w && !w.isDestroyed() ? w : null; }
+// the game the player is in: the focused game window, else the newest running game
+function currentGame() {
+  for (const [k, w] of gameWins) if (w && !w.isDestroyed() && w.isFocused()) return k;
+  const ks = [...running.keys()].filter(k => !stopping.has(k)); return ks[ks.length - 1] || '';
+}
+function homePressed(long) {
+  const now = Date.now(); if (now - lastHome < 450) return; lastHome = now;
+  if (ccWin && !ccWin.isDestroyed()) { const k = ccKey; closeCC(); if (long) consoleHome(k); return; }
+  const fw = BrowserWindow.getFocusedWindow();
+  if (fw && (fw === mainWin || fw === tvWin)) return;   // the console screen and YouTube handle their own Home
+  const k = currentGame(); if (!k) return;
+  if (long) consoleHome(k); else openCC(k);
+}
+function focusGame(key) {
+  const w = gameWindowOf(key);
+  if (w) { if (w.isMinimized()) w.restore(); w.show(); if (w.consoleMode) w.setFullScreen(true); w.focus(); return; }
+  const g = readReg()[key];   // a game in its own program: ask it to come to the front
+  if (g && g.type === 'bf-launcher') { try { fs.writeFileSync(path.join(bfv(g.game || key).data, 'premium_cmd.json'), JSON.stringify({ cmd: 'focus', at: Date.now() })); } catch (e) {} }
+}
+// the console's home screen over the running game (the game keeps running behind it)
+function consoleHome(key, page) {
+  const w = mainWin && !mainWin.isDestroyed() ? mainWin : createMain('bigpicture');
+  if (w.isMinimized()) w.restore(); w.show(); w.setFullScreen(true); w.focus();
+  w.webContents.send('bp:home', { key: key || '', page: page || '' });
+}
+// the controller watcher: 1 x 1 px, see-through, never takes focus
+function syncPadWatch() {
+  const need = consoleOn && running.size > 0;
+  if (!need) { if (padWin && !padWin.isDestroyed()) padWin.destroy(); padWin = null; return; }
+  if (padWin && !padWin.isDestroyed()) return;
+  padWin = new BrowserWindow({ width: 1, height: 1, x: 0, y: 0, frame: false, transparent: true, focusable: false, skipTaskbar: true, alwaysOnTop: true, resizable: false, show: false, hasShadow: false,
+    webPreferences: { preload: path.join(__dirname, 'pad-preload.js'), contextIsolation: true, sandbox: true, backgroundThrottling: false } });
+  padWin.setAlwaysOnTop(true, 'screen-saver'); padWin.setIgnoreMouseEvents(true);
+  padWin.loadURL('data:text/html;charset=utf-8,<html><body style="margin:0;background:transparent"></body></html>');
+  padWin.once('ready-to-show', () => padWin && !padWin.isDestroyed() && padWin.showInactive());
+  padWin.on('closed', () => { padWin = null; });
+}
+ipcMain.on('pad:home', (e, long) => { if (padWin && e.sender === padWin.webContents) homePressed(!!long); });
+
+/* the Control Center over a game */
+const coverOf = gid => { try { return 'data:image/png;base64,' + fs.readFileSync(path.join(COVERS, gid + '.png')).toString('base64'); } catch (e) { return ''; } };
+async function ccData(key) {
+  const r = running.get(key) || {}, reg = readReg(), g = reg[key] || {}, w = gameWindowOf(key);
+  let defs = {}; try { defs = (((await fetchManifest()).games || {})[r.game] || {}).achievements || {}; } catch (e) {}
+  const got = Object.keys(defs).length ? await achievementsFor(r.game) : [];
+  let con = null;   // notifications, friends and profile come from the console screen
+  try { if (mainWin && !mainWin.isDestroyed()) con = await Promise.race([mainWin.webContents.executeJavaScript('window.__bpCC ? window.__bpCC() : null'), new Promise(res => setTimeout(() => res(null), 1200))]); } catch (e) {}
+  const games = [...running].map(([k, v]) => ({ key: k, name: v.name || k, cover: coverOf(v.game), since: v.since }));
+  return { key, name: r.name || g.name || key, game: r.game, cover: coverOf(r.game), since: r.since || Date.now(),
+    trophies: { all: Object.keys(defs).length, got: got.filter(id => defs[id]).length, list: Object.entries(defs).map(([id, v]) => ({ name: v.name, tier: v.tier || 'bronze', got: got.includes(id) })).sort((a, b) => b.got - a.got).slice(0, 6) },
+    running: games, muted: w ? w.webContents.isAudioMuted() : false, canMute: !!w, recording: recLive && recKey === key, con: con || {} };
+}
+async function openCC(key) {
+  if (ccWin && !ccWin.isDestroyed()) return;
+  ccKey = key;
+  const { screen } = require('electron'), w = gameWindowOf(key);
+  const b = w ? w.getBounds() : screen.getPrimaryDisplay().bounds;
+  ccWin = new BrowserWindow({ ...b, frame: false, transparent: true, alwaysOnTop: true, skipTaskbar: true, resizable: false, show: false, hasShadow: false, backgroundColor: '#00000000',
+    webPreferences: { preload: path.join(__dirname, 'cc-preload.js'), contextIsolation: true, sandbox: true, backgroundThrottling: false } });
+  ccWin.setAlwaysOnTop(true, 'screen-saver');
+  ccWin.loadFile(path.join(__dirname, 'cc.html'));
+  ccWin.once('ready-to-show', () => { if (ccWin && !ccWin.isDestroyed()) { ccWin.show(); ccWin.focus(); } });
+  ccWin.on('closed', () => { ccWin = null; });
+  if (w) w.webContents.send('game:paused', true);
+}
+function closeCC() {
+  if (!ccWin || ccWin.isDestroyed()) { ccWin = null; return; }
+  const k = ccKey; ccWin.destroy(); ccWin = null;
+  const w = gameWindowOf(k); if (w) { w.webContents.send('game:paused', false); w.focus(); } else if (k) focusGame(k);
+}
+ipcMain.handle('cc:data', guard(async () => ccKey ? ccData(ccKey) : null));
+ipcMain.handle('cc:act', guard(async (what, arg) => {
+  const k = ccKey, w = gameWindowOf(k);
+  if (what === 'close') { closeCC(); return true; }
+  if (what === 'home') { ccWin && ccWin.destroy(); ccWin = null; consoleHome(k, typeof arg === 'string' ? arg : ''); return true; }
+  if (what === 'switch') { ccWin && ccWin.destroy(); ccWin = null; if (arg === 'home') consoleHome(k); else if (running.has(arg)) focusGame(arg); return true; }
+  if (what === 'stop') { ccWin && ccWin.destroy(); ccWin = null; consoleHome(k); stopGame(k); return true; }
+  if (what === 'shot') { closeCC(); setTimeout(() => screenshot(k), 300); return true; }
+  if (what === 'rec') { closeCC(); setTimeout(() => toggleRecord(k), 300); return true; }
+  if (what === 'mute') { if (w) w.webContents.setAudioMuted(!w.webContents.isAudioMuted()); return w ? w.webContents.isAudioMuted() : false; }
+  if (what === 'power') { if (['sleep', 'restart', 'shutdown', 'quit'].includes(arg)) { closeCC(); await power(arg); } return true; }
+  throw new Error('bad action');
+}));
 // games in their own program (BLOCKFALL) get F12 and Shift+Tab while they run
 function gameKeys(on) {
   const { globalShortcut } = require('electron');
@@ -505,7 +598,7 @@ function gameKeys(on) {
     if (on) {
       const bf = () => [...running.keys()].find(k => (readReg()[k] || {}).type === 'bf-launcher');
       if (!globalShortcut.isRegistered('F12')) globalShortcut.register('F12', () => { const k = bf(); if (k) screenshot(k); });
-      if (!globalShortcut.isRegistered('Shift+Tab')) globalShortcut.register('Shift+Tab', () => { const k = bf(); if (k) toggleOverlay(k); });
+      if (!globalShortcut.isRegistered('Shift+Tab')) globalShortcut.register('Shift+Tab', () => { const k = bf(); if (k) { if (consoleOn) homePressed(false); else toggleOverlay(k); } });
       if (!globalShortcut.isRegistered('F9')) globalShortcut.register('F9', () => { const k = bf(); if (k) toggleRecord(k); });
     } else { globalShortcut.unregister('F12'); globalShortcut.unregister('Shift+Tab'); globalShortcut.unregister('F9'); }
   } catch (e) {}
@@ -555,7 +648,7 @@ ipcMain.handle('ps:setCover', guard(async (id, dataUrl) => {
 async function launchWithUpdate(id, edition) {
   const g = installedNow()[id];
   const pb = g && parentalBlocks(g.game || id.split('--')[0]); if (pb) { flash('🔒 ' + pb); throw new Error(pb); }
-  if (g && !running.has(id)) showSplash(id);
+  if (g && !running.has(id) && !consoleOn) showSplash(id);
   if (g && g.type === 'manifest' && !busy.has(id) && !running.has(id)) {
     try {
       const m = ((await fetchManifest()).games || {})[g.game];
@@ -573,33 +666,38 @@ function launchGame(id, edition) {
   const g = installedNow()[id];
   if (!g) throw new Error('اللعبة مو مثبتة');
   if (g.type === 'bf-launcher') {
+    if (running.has(id)) { focusGame(id); return; }   // already playing: back to it
     // One install serves every owned edition: the launcher reads what you own from premium_account.json and you pick inside it.
+    // From console mode the launcher is skipped: the game starts straight away, full screen, in the edition picked on the console.
     const V = bfv(g.game || id);
     writeBfAccount();
     try { fs.rmSync(path.join(V.data, 'premium_cmd.json'), { force: true }); } catch (e) {}
+    const ed = EDITIONS.includes(edition) ? edition : '';
+    try { fs.writeFileSync(path.join(V.data, 'premium_launch.json'), JSON.stringify({ console: consoleOn, edition: ed, at: Date.now() })); } catch (e) {}
     const { spawn } = require('child_process');
-    const child = spawn(V.exe, ['--premium'], { cwd: V.dir, detached: true, stdio: 'ignore' });
+    const child = spawn(V.exe, ['--premium', ...(consoleOn ? ['--console'] : []), ...(consoleOn && ed ? ['--edition=' + ed] : [])], { cwd: V.dir, detached: true, stdio: 'ignore' });
     // the starting window stays until BLOCKFALL shows up
     (async () => { const t0 = Date.now(); while (splashKey === id && Date.now() - t0 < 30000) { await new Promise(r => setTimeout(r, 700)); if (await bfAlive(g.game || id)) break; } if (splashKey === id) closeSplash(); })();
     child.unref();
     markRunning(id);
     return;
   }
-  if (gameWins.has(id) && !gameWins.get(id).isDestroyed()) { const w = gameWins.get(id); w.show(); w.focus(); return; }
+  if (gameWins.has(id) && !gameWins.get(id).isDestroyed()) { focusGame(id); return; }
+  const cm = consoleOn;   // started from console mode: full screen like a console game, no window frame
   const w = new BrowserWindow({
     width: 1600, height: 900, backgroundColor: '#000000', title: g.name, icon: path.join(gameDir(id, g), g.icon || 'icon.ico'),
-    autoHideMenuBar: true, show: false,
+    autoHideMenuBar: true, show: false, frame: !cm, fullscreen: cm,
     webPreferences: { preload: path.join(__dirname, 'game-preload.js'), contextIsolation: false, sandbox: false, nodeIntegration: false, backgroundThrottling: false }
   });
-  w.setMenu(null);
-  w.once('ready-to-show', () => { w.maximize(); w.show(); if (splashKey === id) closeSplash(); });
+  w.setMenu(null); w.consoleMode = cm;
+  w.once('ready-to-show', () => { if (cm) { w.setFullScreen(true); w.show(); w.focus(); } else { w.maximize(); w.show(); } if (splashKey === id) closeSplash(); });
   w.webContents.setWindowOpenHandler(({ url }) => { openExternal(url); return { action: 'deny' }; });
   w.webContents.on('before-input-event', (e, input) => {
     if (input.type !== 'keyDown') return;
-    if (input.key === 'F11') { w.setFullScreen(!w.isFullScreen()); e.preventDefault(); }
+    if (input.key === 'F11') { if (!w.consoleMode) w.setFullScreen(!w.isFullScreen()); e.preventDefault(); }
     else if (input.key === 'F12') { e.preventDefault(); screenshot(id); }
     else if (input.key === 'F9') { e.preventDefault(); toggleRecord(id); }
-    else if (input.key === 'Tab' && input.shift) { e.preventDefault(); toggleOverlay(id); }
+    else if (input.key === 'Tab' && input.shift) { e.preventDefault(); if (w.consoleMode) homePressed(false); else toggleOverlay(id); }
   });
   const q = g.edition === 'demo' ? '?demo=1' : '';
   w.loadURL(`psgame://${id}/${g.entry}${q}`);
@@ -1043,7 +1141,7 @@ ipcMain.handle('ps:getInstalled', guard(async () => installedNow()));
 ipcMain.handle('ps:install', guard(async (id, opts) => { await install(id, opts); return true; }));
 ipcMain.handle('ps:getLatest', guard(async () => getLatest()));
 ipcMain.handle('ps:uninstall', guard(async id => { await uninstall(id); return true; }));
-ipcMain.handle('ps:launch', guard(async id => { await launchWithUpdate(bfKey(id)); return true; }));
+ipcMain.handle('ps:launch', guard(async (id, edition) => { await launchWithUpdate(bfKey(id), EDITIONS.includes(edition) ? edition : undefined); return true; }));
 ipcMain.handle('ps:features', guard(async () => ({ editions: true, running: true })));
 ipcMain.handle('ps:getRunning', guard(async () => runningList()));
 ipcMain.handle('ps:stop', guard(async id => { id = bfKey(id); if (!validId(id)) throw new Error('bad id'); stopGame(id); return true; }));
@@ -1093,7 +1191,8 @@ ipcMain.handle('ps:setSettings', guard(async o => { const cur = settings(); if (
 function applyStartup(x) { if (!app.isPackaged || process.platform !== 'win32') return; x = x || settings();
   try { app.setLoginItemSettings({ openAtLogin: x.startup !== false, args: x.consoleBoot ? ['--hidden', '--console'] : ['--hidden'] }); } catch (e) {} }
 // power menu in console mode: sleep / restart / shut down the PC, like a console
-ipcMain.handle('ps:power', guard(async what => {
+ipcMain.handle('ps:power', guard(async what => power(what)));
+async function power(what) {
   if (process.platform !== 'win32') throw new Error('غير مدعوم');
   const { execFile } = require('child_process');
   if (what === 'sleep') execFile('rundll32.exe', ['powrprof.dll,SetSuspendState', '0,1,0']);
@@ -1102,7 +1201,7 @@ ipcMain.handle('ps:power', guard(async what => {
   else if (what === 'quit') setTimeout(() => quitApp(), 50);
   else if (what === 'desktop') { if (mainWin && !mainWin.isDestroyed()) { mainWin.setFullScreen(false); mainWin.minimize(); } }
   else throw new Error('أمر غير معروف');
-  return true; }));
+  return true; }
 // back to the console screen when a game closes (like a console does)
 ipcMain.handle('ps:focusMain', guard(async () => { if (mainWin && !mainWin.isDestroyed()) { if (mainWin.isMinimized()) mainWin.restore(); mainWin.show(); mainWin.focus(); } return true; }));
 // game properties: check the files (download again what's wrong or missing), put the icon back on the desktop
@@ -1199,7 +1298,7 @@ ipcMain.on('game:achieve', (e, aid) => {
   fbCommit([{ update: { name: `${FB_DB}/users/${currentUser.uid}/achievements/${game}__${aid}`, fields: { game: { stringValue: game }, id: { stringValue: aid } } },
     currentDocument: { exists: false }, updateTransforms: [{ fieldPath: 'at', setToServerValue: 'REQUEST_TIME' }] }]);
 });
-ipcMain.on('game:guide', e => { for (const [k, w] of gameWins) if (w && !w.isDestroyed() && w.webContents === e.sender) { toggleOverlay(k); break; } });
+ipcMain.on('game:guide', (e, long) => { for (const [k, w] of gameWins) if (w && !w.isDestroyed() && w.webContents === e.sender) { if (consoleOn || w.consoleMode) homePressed(!!long); else if (!long) toggleOverlay(k); break; } });
 ipcMain.on('game:exit', e => { const w = BrowserWindow.fromWebContents(e.sender); if (w) w.close(); });
 ipcMain.on('game:nick', e => { e.returnValue = playerName(); });
 ipcMain.on('game:user', e => { e.returnValue = currentUser && currentUser.username ? { username: currentUser.username, name: currentUser.name, pid: currentUser.pid, email: currentUser.email } : null; });
@@ -1211,6 +1310,8 @@ function handleDeepLink(url) {
   // premiumstudio://game/<id>  → open store page;  premiumstudio://launch/<id> → start the game
   try {
     const u = new URL(url), kind = u.hostname, id = u.pathname.replace(/^\/+/, '').split('/')[0];
+    // a game in its own program asks for the console's Control Center (Home button) or the home screen (Home held)
+    if (kind === 'overlay' || kind === 'home') { if (running.size) homePressed(kind === 'home'); else createMain(consoleOn ? 'bigpicture' : ''); return; }
     if (kind === 'launch' && validId(id) && installedNow()[bfKey(id)]) return playFromOutside(bfKey(id));
     if (kind === 'play' && validId(id)) {
       const mine = Object.entries(installedNow()).filter(([k, v]) => (v.game || k.split('--')[0]) === id)
