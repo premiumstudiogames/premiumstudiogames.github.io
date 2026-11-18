@@ -17,7 +17,13 @@ if (ok) {
     install: (id, opts) => ipcRenderer.invoke('ps:install', id, opts),
     getLatest: () => ipcRenderer.invoke('ps:getLatest'),
     uninstall: id => ipcRenderer.invoke('ps:uninstall', id),
-    launch: (id, edition) => ipcRenderer.invoke('ps:launch', id, edition),
+    launch: (id, edition, opts) => ipcRenderer.invoke('ps:launch', id, edition, opts),
+    gameVersions: gid => ipcRenderer.invoke('ps:gameVersions', gid),   // BLOCKFALL's versions, for its console menu
+    // the console's own files (settings, game lists, per-game picks, activity)
+    consoleFiles: { get: name => ipcRenderer.invoke('cs:get', name), set: (name, data) => ipcRenderer.invoke('cs:set', name, data), log: (type, data) => ipcRenderer.invoke('cs:log', type, data) },
+    nativePad: () => ipcRenderer.invoke('ps:nativePad'),
+    onGuide: cb => { const f = (e, d) => cb(d || {}); ipcRenderer.on('bp:guide', f); return () => ipcRenderer.removeListener('bp:guide', f); },
+    onNativePad: cb => { const f = (e, on) => cb(!!on); ipcRenderer.on('bp:nativePad', f); return () => ipcRenderer.removeListener('bp:nativePad', f); },
     showFolder: id => ipcRenderer.invoke('ps:showFolder', id),
     setUser: u => ipcRenderer.invoke('ps:setUser', u),
     setOwned: o => ipcRenderer.invoke('ps:setOwned', o),

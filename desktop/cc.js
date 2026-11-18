@@ -24,7 +24,9 @@ I.notes = I.bell;
 let D = null, panel = '', confirm = null, kind = 'xbox';
 const G = b => kind === 'ps' ? `<kbd class="p${b}">${{ a: '✕', b: '○' }[b]}</kbd>` : `<kbd class="x${b}">${b.toUpperCase()}</kbd>`;
 const mins = since => Math.max(1, Math.round((Date.now() - since) / 60000));
-const playing = since => { const m = mins(since); return m >= 60 ? `تلعب من ${(m / 60).toFixed(1).replace(/\.0$/, '')} ساعة` : `تلعب من ${m} دقيقة`; };
+const playing = since => { const m = mins(since), h = Math.floor(m / 60), r = m % 60;
+  const hs = h === 1 ? 'ساعة' : h === 2 ? 'ساعتين' : h + ' ساعات', ms = r === 1 ? 'دقيقة' : r === 2 ? 'دقيقتين' : r <= 10 ? r + ' دقائق' : r + ' دقيقة';
+  return m < 1 ? 'بدأت الحين' : h ? `لك ${hs}${r ? ' و' + ms : ''} تلعب` : `لك ${ms} تلعب`; };
 const BAR = [['home', 'الرئيسية'], ['switcher', 'المبدل'], ['notes', 'الإشعارات'], ['base', 'قاعدة الألعاب'], ['sound', 'الصوت'], ['profile', 'الملف الشخصي'], ['power', 'الطاقة']];
 
 function cards() {

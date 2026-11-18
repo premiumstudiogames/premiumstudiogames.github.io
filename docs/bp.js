@@ -6,10 +6,11 @@ export function makeBP(H){
   let on = false, root = null, host = null, sheet = null, raf = 0, wallRaf = 0, hideT = 0, fresh = false, lastRun = {};
   let tvOpen = false;
   if (PS && PS.tv && PS.tv.onClosed) PS.tv.onClosed(() => { tvOpen = false; if (on) { if (PS.fullscreen) PS.fullscreen(true).catch(() => {}); fresh = true; draw(); } });
-  let space = "games", sel = {games:-1, media:0}, pages = [], stack = [], toasts = [], unProg = null, unHome = null, launching = null;
+  let space = "games", sel = {games:-1, media:0}, pages = [], stack = [], toasts = [], unProg = null, unHome = null, unNat = null, unGuide = null, nativeHome = false, launching = null;
   const pad = {last:{}, held:{}}, ST = {glyphs:"auto", sounds:true, wall:"autumn"};
   try { Object.assign(ST, JSON.parse(localStorage.getItem("bp-ui") || "{}")); } catch(e) {}
-  const saveUI = () => { try { localStorage.setItem("bp-ui", JSON.stringify({wall:ST.wall, sort:ST.sort, toasts:ST.toasts})); } catch(e) {} };
+const CF = () => PS && PS.consoleFiles;   // the console's own files on the PC (the app); the browser keeps a copy
+  const saveUI = () => { const o = {wall:ST.wall, sort:ST.sort, toasts:ST.toasts}; try { localStorage.setItem("bp-ui", JSON.stringify(o)); } catch(e) {} if (CF()) CF().set("system", o).catch(() => {}); };
   const S = () => state();
   const onUsers = () => (pages[pages.length - 1] || {}).t === "users";
   let busy = "";
@@ -27,8 +28,14 @@ export function makeBP(H){
   function ago(t){ const d = (Date.now() - t) / 60000; return d < 60 ? "منذ " + Math.max(1, Math.round(d)) + " دقيقة" : d < 1440 ? "منذ " + Math.round(d / 60) + " ساعة" : "منذ " + Math.round(d / 1440) + " يوم"; }
 
   /* ---------- game lists (like PS5 "قوائم الألعاب"), kept on this PC ---------- */
-  const LISTS = { all(){ try { return JSON.parse(localStorage.getItem("bp-lists") || "[]"); } catch(e) { return []; } },
-    save(l){ try { localStorage.setItem("bp-lists", JSON.stringify(l)); } catch(e) {} } };
+  let LISTC = null, HQ = {};   // game lists and per-game console picks, from the console's files
+  const LISTS = { all(){ if (LISTC) return JSON.parse(JSON.stringify(LISTC)); try { return JSON.parse(localStorage.getItem("bp-lists") || "[]"); } catch(e) { return []; } },
+    save(l){ LISTC = l; try { localStorage.setItem("bp-lists", JSON.stringify(l)); } catch(e) {} if (CF()) CF().set("lists", l).catch(() => {}); } };
+  async function loadFiles(){ if (!CF()) return; try { const [sys, lists, hq] = await Promise.all([CF().get("system"), CF().get("lists"), CF().get("hq")]);
+      if (sys && Object.keys(sys).length) Object.assign(ST, sys); else saveUI();   // first time: the browser's settings go into the console's files
+      if (Array.isArray(lists) && lists.length) LISTC = lists; else { LISTC = LISTS.all(); if (LISTC.length) CF().set("lists", LISTC).catch(() => {}); }
+      HQ = hq && typeof hq === "object" ? hq : {}; } catch(e) {} }
+  const clog = (type, data) => { if (CF()) CF().log(type, data || {}).catch(() => {}); };
 
   /* ---------- sounds (made on the fly) ---------- */
   let ac = null;
@@ -89,7 +96,7 @@ export function makeBP(H){
   /* ---------- open / close ---------- */
   // the console lives in its own shadow root, so the store's CSS can't change it (and its CSS can't leak out)
   async function loadSheet(){ if (sheet) return sheet; sheet = new CSSStyleSheet();
-    try { const u = new URL("bp.css?v=9", import.meta.url); sheet.replaceSync(await (await fetch(u)).text()); } catch(e) {} return sheet; }
+    try { const u = new URL("bp.css?v=10", import.meta.url); sheet.replaceSync(await (await fetch(u)).text()); } catch(e) {} return sheet; }
   async function open(){ if (on) return; on = true; document.body.classList.add("bp-on"); pages = H.accounts ? [{t:"users"}] : []; stack = []; space = "games"; sel.games = -1; busy = "";
     host = document.createElement("div"); host.id = "bpHost"; host.className = "nomouse"; document.body.appendChild(host);
     root = host.attachShadow({mode:"open"}); root.adoptedStyleSheets = [await loadSheet()];
@@ -102,13 +109,17 @@ export function makeBP(H){
       else if (p.phase === "error") notify(I.dl, "ما اكتمل التحميل: " + (H.keyTitle(p.id) || ""));
       const d = root && root.querySelector(`[data-progk="${CSS.escape(p.id)}"]`); if (d && p.total) d.style.width = H.pct(p) + "%"; });
     try { if (PS && PS.getSettings) Object.assign(ST, await PS.getSettings()); } catch(e) {}
+    await loadFiles();
     if (PS && PS.setConsole) PS.setConsole(true).catch(() => {});
+    if (PS && PS.nativePad) PS.nativePad().then(v => { nativeHome = !!v; }).catch(() => {});
+    if (PS && PS.onNativePad && !unNat) unNat = PS.onNativePad(v => { nativeHome = v; });
+    if (PS && PS.onGuide && !unGuide) unGuide = PS.onGuide(d => { if (!on) return; if (d.long) { if (!onUsers()) { stack = []; pages = []; fresh = true; beep("back"); draw(); } } else context("guide"); });
     if (PS && PS.onConsoleHome && !unHome) unHome = PS.onConsoleHome(d => onHomeFromGame(d || {}));
     window.__bpCC = ccData;
     fresh = true; draw(); beep("open"); }
   function close(){ if (!on) return; on = false; document.body.classList.remove("bp-on"); stopWall(); if (host) host.remove(); host = null; root = null; pages = []; stack = [];
     document.removeEventListener("keydown", key, true); cancelAnimationFrame(raf); if (unProg) { unProg(); unProg = null; }
-    if (unHome) { unHome(); unHome = null; } if (PS && PS.setConsole) PS.setConsole(false).catch(() => {}); delete window.__bpCC;
+    if (unHome) { unHome(); unHome = null; } if (unNat) { unNat(); unNat = null; } if (unGuide) { unGuide(); unGuide = null; } if (PS && PS.setConsole) PS.setConsole(false).catch(() => {}); delete window.__bpCC;
     if (PS && PS.fullscreen) PS.fullscreen(false).catch(() => {}); else { try { if (document.fullscreenElement) document.exitFullscreen(); } catch(e) {} }
     if (location.hash === "#bigpicture") location.hash = "#library"; }
   function wake(){ if (!host) return; host.classList.remove("nomouse"); clearTimeout(hideT); hideT = setTimeout(() => host && host.classList.add("nomouse"), 3000); }
@@ -286,6 +297,7 @@ export function makeBP(H){
     if (P.t === "settings") return settingsHTML(P);
     if (P.t === "profile") return profileHTML();
     if (P.t === "game") return gamePageHTML(P);
+    if (P.t === "hq") return hqHTML(P);
     if (P.t === "soon") { const x = H.SOON.find(s => s.id === P.s) || {};
       return `<div class="ps-page gp"><span class="gbg">${H.soonArt(x)}</span><div class="ginfo"><div class="eyebrow">قريبًا · ${esc(x.genreAr || "")}</div><h1>${esc(x.title || "")}</h1><p>${esc(x.tagline || "")}</p>
         <div class="ps-cards"><div class="ps-card info"><b>${esc(x.when || "")}</b><small>موعد الإصدار</small></div></div></div></div>`; }
@@ -459,6 +471,7 @@ export function makeBP(H){
       return `<div class="ps-dlg"><h2>أضف إلى قائمة</h2>${lists.map(l => `<button class="ps-mi${l.games.includes(L.g) ? " sel" : ""}" data-bp="toggleList" data-id="${l.id}" data-g="${L.g}">${esc(l.name)} <small class="num">(${l.games.length})</small></button>`).join("")}<button class="ps-mi" data-bp="newlist" data-g="${L.g}">＋ قائمة جديدة</button></div>`; }
     if (L.t === "listmenu") return `<div class="ps-menu"><h3>القائمة</h3><button class="ps-mi" data-bp="renlist" data-id="${L.id}">غيّر الاسم</button><button class="ps-mi danger" data-bp="dellist" data-id="${L.id}">احذف القائمة</button></div>`;
     if (L.t === "kbd") return kbdHTML(L);
+    if (L.t === "versions") return versionsHTML(L);
     if (L.t === "launch") { const g = H.byId(L.g) || {}; return `<div class="ps-launch"><span class="lbg" data-cover="${L.g}"></span><div class="lc"><span class="lcv" data-cover="${L.g}"></span><b>${title(g)}</b><span class="lsp"><i class="spin"></i>جاري التشغيل</span></div></div>`; }
     if (L.t === "power") return `<div class="ps-dlg"><h2>الطاقة</h2>${powerBtns()}</div>`;
     if (L.t === "me") { const s = S(), p = s.PROFILE || {}, n = p.name || (s.user && s.user.displayName) || "";
@@ -629,6 +642,32 @@ export function makeBP(H){
   function popPage(){ if (!pages.length || onUsers()) return false; pages.pop(); fresh = !pages.length ? false : true; beep("back"); draw(); return true; }
   function goHome(){ stack = []; pages = []; fresh = true; draw(); }
 
+  /* ---------- a game's console menu (its "HQ"): every edition - yours or not -, the version, and in ---------- */
+  const HQV = {};   // gid -> versions (null = this game has no console menu)
+  async function hqOf(gid){ if (gid in HQV) return HQV[gid]; if (!PS || !PS.gameVersions) return HQV[gid] = null; try { HQV[gid] = await PS.gameVersions(gid); } catch(e) { HQV[gid] = null; } return HQV[gid]; }
+  function hqPick(g){ const own = ownedEds(g.id), p = HQ[g.id] || {}, V = HQV[g.id] || {versions:[]};
+    const ed = own.includes(p.ed) ? p.ed : own.slice().sort((a, b) => (g.editions || []).findIndex(e => e.id === b) - (g.editions || []).findIndex(e => e.id === a))[0] || "";
+    const ver = V.versions.some(v => v.id === p.ver) ? p.ver : V.latest || ((V.versions[0] || {}).id) || ""; return {ed, ver}; }
+  function hqSave(gid, o){ HQ[gid] = Object.assign(HQ[gid] || {}, o); if (CF()) CF().set("hq", HQ).catch(() => {}); }
+  async function openHQ(g){ busy = "…"; draw(); await hqOf(g.id); busy = "";
+    if (!HQV[g.id]) { draw(); return false; } const p = hqPick(g); stack = []; openPage({t:"hq", g:g.id, ed:p.ed, ver:p.ver}); clog("hq-open", {game:g.id}); return true; }
+  function hqHTML(P){ const g = H.byId(P.g) || {}, own = ownedEds(g.id), V = HQV[g.id] || {versions:[], latest:""}, v = V.versions.find(x => x.id === P.ver) || {};
+    const eds = (g.editions || []).filter(e => !e.studio || own.includes(e.id)), st = gameState(g), dt = t => { try { return new Date(t).toLocaleDateString("ar-SA-u-ca-gregory-nu-latn", {year:"numeric", month:"short", day:"numeric"}); } catch(e) { return ""; } };
+    return `<div class="ps-page hq"><span class="gbg" data-cover="${g.id}"></span><i class="hqshade"></i>
+      <header class="hqh"><small>${esc(g.sub || "")}</small><h1>${title(g)}</h1><span class="hqt">HQ</span></header>
+      <div class="hqbody"><div class="hqcol">
+        <div class="ps-sec">النسخ</div>
+        <div class="hqeds">${eds.map(e => { const have = own.includes(e.id), on = P.ed === e.id;
+          return `<button class="hqed${on ? " on" : ""}${have ? "" : " lock"}" data-bp="hqed" data-e="${e.id}"><span class="cv" data-cover="${g.id}"></span><span class="t"><b>${esc(e.name)}</b><small>${have ? (on ? "✓ النسخة اللي بتدخلها" : "✓ عندك") : e.price ? "ما عندك · " + money(e.price) : "ما عندك"}</small></span>${e.gold ? '<i class="gold">GOLD</i>' : ""}</button>`; }).join("")}</div>
+        <div class="ps-sec">الإصدار</div>
+        <button class="hqver" data-bp="hqvers"><span><b class="num ltr">${esc(P.ver || "—")}</b>${P.ver && P.ver === V.latest ? '<i class="new">الأحدث</i>' : ""}${v.installed ? '<i class="inst">مثبّت</i>' : P.ver ? '<i class="dl">يتحمّل أول ما تدخل</i>' : ""}</span><small>${esc(v.title || "")}</small><em>${G("a")} غيّر الإصدار</em></button>
+      </div><div class="hqcol right">
+        <div class="hqnote"><b>${esc(v.title || "ملاحظات الإصدار")}</b><small class="num">${v.time ? dt(v.time) : ""}</small><ul>${(v.notes || []).map(n => `<li>${esc(n)}</li>`).join("") || "<li>ما فيه ملاحظات.</li>"}</ul></div>
+        <button class="ps-btn play hqgo" data-bp="hqgo"${P.ed ? "" : " disabled"}>${st.run ? "متابعة اللعب" : P.ed ? "ادخل" : "اشترِ نسخة أول"}</button>
+      </div></div></div>`; }
+  function versionsHTML(L){ const P = pages[pages.length - 1] || {}, V = HQV[L.g] || {versions:[]};
+    return `<div class="ps-dlg wide hqvl"><h2>اختر الإصدار</h2><div class="ps-list">${V.versions.map(v => `<button class="ps-row-i${v.id === P.ver ? " on" : ""}" data-bp="hqv" data-v="${esc(v.id)}"><span class="t"><b><span class="num ltr">${esc(v.id)}</span>${v.id === V.latest ? ' · الأحدث' : ""}${v.installed ? ' · مثبّت' : ""}</b><small>${esc(v.title || "")}</small></span>${v.id === P.ver ? "<i>✓</i>" : ""}</button>`).join("") || '<p class="ps-empty">ما قدرت أجيب الإصدارات. تأكد من الإنترنت.</p>'}</div></div>`; }
+
   /* the game's start screen (like the PS5: its picture fills the screen until the game is up) */
   function startScreen(g, k){ launching = {g:g.id, k, at:Date.now()}; stack = [{t:"launch", g:g.id}]; fresh = true; beep("open"); draw();
     setTimeout(() => { if (launching && launching.k === k && Date.now() - launching.at >= 29000) { launching = null; stack = stack.filter(L => L.t !== "launch"); draw(); } }, 30000); }
@@ -664,10 +703,19 @@ export function makeBP(H){
     if (k === "buy") { close(); location.hash = el.dataset.g; return; }
     if (k === "act") { const a = el.dataset.a, g = H.byId(el.dataset.g), st = gameState(g, el.dataset.e);
       if (a === "none") return; if (!PS) { beep("err"); return notify(I.pad, "التشغيل من تطبيق Premium Games على الكمبيوتر"); }
+      if (a === "play" && !st.run && !el.dataset.hq && await openHQ(g)) return;   // a game with versions: its console menu first
       if (el.isConnected) el.disabled = true; stack = stack.filter(L => L.t !== "menu");
-      try { if (a === "play") { if (!st.run) startScreen(g, st.k); await PS.launch(st.k, st.ed); } else if (a === "stop") await PS.stop(st.k); else if (a === "install") { await PS.install(st.k, {edition:st.ed}); notify(I.dl, "بدأ التنزيل: " + (g.en || g.title)); } }
+      try { if (a === "play") { if (!st.run) startScreen(g, st.k); await PS.launch(st.k, el.dataset.e || st.ed, el.dataset.v ? {version:el.dataset.v} : undefined); } else if (a === "stop") await PS.stop(st.k); else if (a === "install") { await PS.install(st.k, {edition:st.ed}); notify(I.dl, "بدأ التنزيل: " + (g.en || g.title)); } }
       catch(e) { launching = null; stack = stack.filter(L => L.t !== "launch"); beep("err"); notify(I.pad, String(e && e.message || e)); }
       setTimeout(softRefresh, 500); return; }
+    if (k === "hqed") { const P = pages[pages.length - 1], g = H.byId(P.g), e = el.dataset.e;
+      if (!ownedEds(g.id).includes(e)) { beep("err"); return push({t:"confirm", title:"ما عندك هذي النسخة", text:"تقدر تشتريها من المتجر وترجع تدخلها من هنا.", ok:"افتح صفحة المتجر", yes:() => { close(); location.hash = g.id; }}); }
+      P.ed = e; hqSave(g.id, {ed:e}); beep("move"); return draw(); }
+    if (k === "hqvers") { const P = pages[pages.length - 1]; return push({t:"versions", g:P.g}); }
+    if (k === "hqv") { const P = pages.find(x => x.t === "hq"); if (P) { P.ver = el.dataset.v; hqSave(P.g, {ver:P.ver}); } stack = stack.filter(L => L.t !== "versions"); beep("ok"); return draw(); }
+    if (k === "hqgo") { const P = pages[pages.length - 1], g = H.byId(P.g), st = gameState(g, P.ed); if (!P.ed) return;
+      clog("hq-enter", {game:g.id, edition:P.ed, version:P.ver}); pages.pop();
+      return activate(fake({bp:"act", a:"play", g:g.id, e:P.ed, v:P.ver || "", hq:"1"})); }
     if (k === "menu") return push({t:"menu", g:el.dataset.g, list:(pages[pages.length - 1] || {}).t === "list" ? pages[pages.length - 1].id : ""});
     if (k === "mact") { const a = el.dataset.a, key2 = el.dataset.k; stack = [];
       if (a === "uninstall") return push({t:"confirm", title:"تحذف " + H.keyTitle(key2) + "؟", text:"تقدر تنزّلها مرة ثانية من مكتبتك.", ok:"احذف", yes:async () => { await PS.uninstall(key2); notify(I.dl, "انحذفت " + H.keyTitle(key2)); }});
@@ -835,7 +883,7 @@ export function makeBP(H){
       const combo = b(8) && b(9), ck = p.index + "combo"; if (combo) pad.last[ck] = true;
       const relSel = !b(8) && pad.last[p.index + "selD"] && !pad.last[ck], relStart = !b(9) && pad.last[p.index + "startD"] && !pad.last[ck];
       pad.last[p.index + "selD"] = b(8); pad.last[p.index + "startD"] = b(9); if (!b(8) && !b(9)) pad.last[ck] = false;
-      const st = {a:b(0), b:b(1), x:b(2), y:b(3), lb:b(4), rb:b(5), lt:b(6), rt:b(7), sel:relSel, start:relStart, guide:b(16) || combo, up:b(12) || ax[1] < -0.55, down:b(13) || ax[1] > 0.55, left:b(14) || ax[0] < -0.55, right:b(15) || ax[0] > 0.55};
+      const st = {a:b(0), b:b(1), x:b(2), y:b(3), lb:b(4), rb:b(5), lt:b(6), rt:b(7), sel:relSel, start:relStart, guide:!nativeHome && (b(16) || combo), up:b(12) || ax[1] < -0.55, down:b(13) || ax[1] > 0.55, left:b(14) || ax[0] < -0.55, right:b(15) || ax[0] > 0.55};
       const now = performance.now();
       for (const [k, v] of Object.entries(st)) {
         const prev = pad.last[p.index + k]; pad.last[p.index + k] = v;

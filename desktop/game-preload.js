@@ -8,6 +8,7 @@ window.TV_LAUNCHER = {
   nick() { return ipcRenderer.sendSync('game:nick') || 'Player'; }
 };
 window.PREMIUM_STUDIO = { platform: 'windows', version: window.TV_LAUNCHER.version, user: ipcRenderer.sendSync('game:user'),
+  console: /[?&]console=1\b/.test(location.search),   // started from console mode: the console version (controller first, full screen)
   achieve(id) { ipcRenderer.send('game:achieve', String(id || '')); } };
 // Cloud save: data from your account, put back before the game starts
 try {

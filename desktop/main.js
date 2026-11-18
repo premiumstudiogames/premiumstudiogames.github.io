@@ -205,12 +205,13 @@ function runningChanged() {
 function markRunning(key) {
   if (running.has(key)) return;
   const g = readReg()[key] || {};
-  running.set(key, { since: Date.now(), game: g.game || key.split('--')[0], name: g.name || key });
+  running.set(key, { since: Date.now(), game: g.game || key.split('--')[0], name: g.name || key, console: consoleOn });
   pushPresence(); runningChanged();
   if (g.type === 'bf-launcher') { watchBf(); gameKeys(true); }
 }
 function markStopped(key) {
   const r = running.get(key); if (!r) return;
+  if (consoleOn || r.console) { const mins = Math.round((Date.now() - r.since) / 60000); csLog('game-stop', { game: r.game, key, minutes: mins }); csGame(r.game, x => ({ minutes: x.minutes + mins })); }
   running.delete(key);
   addPlaytime(r, Date.now() - r.since); pushPresence(); runningChanged();
   if (ovKey === key) closeOverlay();
@@ -382,7 +383,7 @@ async function screenshot(key) {
     const t = new Date(), pad = n => String(n).padStart(2, '0');
     const f = path.join(dir, `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())} ${pad(t.getHours())}.${pad(t.getMinutes())}.${pad(t.getSeconds())}.png`);
     await fsp.writeFile(f, img.toPNG());
-    flash('📸 انحفظت اللقطة');
+    flash('📸 انحفظت اللقطة'); if (consoleOn) csLog('screenshot', { game: (running.get(key) || {}).game || key, file: path.basename(f) });
     return f;
   } catch (e) { return null; }
 }
@@ -500,25 +501,68 @@ async function toggleOverlay(key) {
   ovWin.on('closed', () => { ovWin = null; });
 }
 function closeOverlay() { if (ovWin && !ovWin.isDestroyed()) { const w = gameWins.get(ovKey); ovWin.destroy(); if (w && !w.isDestroyed()) w.focus(); } ovWin = null; }
+/* ---------------- the console's own files (like a console's system storage) ----------------
+   %LOCALAPPDATA%\PremiumStudio\console\
+     system.json                 the console screen's settings (wallpaper, sounds, button names, sorting)
+     activity.log                everything that happens, one JSON line each (console opened, game started / closed, Home, ...)
+     users\<uid>\lists.json      your game lists
+     users\<uid>\hq.json         per game: the edition and version you picked in its console menu
+     users\<uid>\games.json      per game on the console: sessions, minutes, last played, edition, version
+     users\<uid>\activity.json   your last 500 events */
+const CS_DIR = path.join(LOCAL, 'PremiumStudio', 'console');
+const csUser = () => String((currentUser && currentUser.uid) || 'guest').replace(/[^\w-]/g, '').slice(0, 64) || 'guest';
+const CS_FILES = { system: () => path.join(CS_DIR, 'system.json'), lists: () => path.join(CS_DIR, 'users', csUser(), 'lists.json'), hq: () => path.join(CS_DIR, 'users', csUser(), 'hq.json'),
+  games: () => path.join(CS_DIR, 'users', csUser(), 'games.json'), activity: () => path.join(CS_DIR, 'users', csUser(), 'activity.json') };
+function csRead(name, def) { try { return JSON.parse(fs.readFileSync(CS_FILES[name](), 'utf8')); } catch (e) { return def; } }
+function csWrite(name, data) { const f = CS_FILES[name](); try { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f + '.tmp', JSON.stringify(data, null, 1)); fs.renameSync(f + '.tmp', f); } catch (e) {} }
+function csLog(type, data) {
+  const ev = Object.assign({ t: new Date().toISOString(), type, user: csUser() }, data || {});
+  try { fs.mkdirSync(CS_DIR, { recursive: true }); fs.appendFileSync(path.join(CS_DIR, 'activity.log'), JSON.stringify(ev) + '\n'); } catch (e) {}
+  try { const st = fs.statSync(path.join(CS_DIR, 'activity.log')); if (st.size > 4e6) fs.renameSync(path.join(CS_DIR, 'activity.log'), path.join(CS_DIR, 'activity.old.log')); } catch (e) {}
+  const a = csRead('activity', []); a.unshift(ev); csWrite('activity', a.slice(0, 500));
+}
+// a game started / stopped from the console: its console record
+function csGame(game, upd) { const g = csRead('games', {}); g[game] = Object.assign(g[game] || { sessions: 0, minutes: 0 }, upd(g[game] || { sessions: 0, minutes: 0 })); csWrite('games', g); }
+ipcMain.handle('cs:get', guard(async name => { if (!CS_FILES[name]) throw new Error('bad file'); return csRead(name, name === 'activity' || name === 'lists' ? [] : {}); }));
+ipcMain.handle('cs:set', guard(async (name, data) => { if (!['system', 'lists', 'hq'].includes(name)) throw new Error('read only');
+  if (JSON.stringify(data || null).length > 200000) throw new Error('too big'); csWrite(name, data); return true; }));
+ipcMain.handle('cs:log', guard(async (type, data) => { if (typeof type !== 'string' || !/^[a-z-]{2,24}$/.test(type)) throw new Error('bad event');
+  const d = data && typeof data === 'object' && JSON.stringify(data).length <= 2000 ? data : {}; csLog(type, d); return true; }));
+
+/* ---- the versions of a game that has them (BLOCKFALL: its own version list, like its launcher shows) */
+async function gameVersions(gid) {
+  const m = ((await fetchManifest()).games || {})[gid]; if (!m || !m.gameManifest) return null;
+  const vdir = path.join(bfv(gid).data, 'versions');
+  const have = new Set((() => { try { return fs.readdirSync(vdir).filter(id => fs.existsSync(path.join(vdir, id, id + '.json'))); } catch (e) { return []; } })());
+  let man = null; try { man = await fetchJSON(m.gameManifest); } catch (e) {}
+  if (!man) { try { man = JSON.parse(fs.readFileSync(path.join(vdir, 'version_manifest_v2.json'), 'utf8')); } catch (e) { man = { latest: {}, versions: [] }; } }
+  const list = (man.versions || []).map(v => ({ id: v.id, type: v.type || 'release', title: v.title || '', notes: (v.notes || []).slice(0, 8), time: v.releaseTime || v.time || '', size: v.size || 0, installed: have.has(v.id) }));
+  for (const id of have) if (!list.some(v => v.id === id)) list.push({ id, type: 'release', title: '', notes: [], time: '', size: 0, installed: true, offline: true });
+  return { latest: (man.latest && man.latest.release) || (list[0] || {}).id || '', versions: list };
+}
+ipcMain.handle('ps:gameVersions', guard(async gid => { if (!validId(gid)) throw new Error('bad id'); return gameVersions(gid); }));
+
 /* ---------------- console mode while a game runs (like a PS5) ----------------
    The console screen tells us when it's open. Games started from it run full screen without a launcher. The controller's
    Home button (PS button; on Xbox pads View + Menu together, as Windows keeps the Xbox button for itself) opens the
    Control Center over the game; held, it goes to the console's home screen while the game keeps running.
    A tiny always-on-top window reads the controller, so Home works over games in their own program too. */
 let consoleOn = false, ccWin = null, ccKey = '', padWin = null, lastHome = 0;
-ipcMain.handle('ps:setConsole', guard(async on => { consoleOn = !!on; syncPadWatch(); if (!consoleOn) closeCC(); return true; }));
+ipcMain.handle('ps:setConsole', guard(async on => { if (consoleOn !== !!on) csLog(on ? 'console-open' : 'console-close', {}); consoleOn = !!on; syncPadWatch(); if (!consoleOn) closeCC(); return true; }));
 function gameWindowOf(key) { const w = gameWins.get(key); return w && !w.isDestroyed() ? w : null; }
 // the game the player is in: the focused game window, else the newest running game
 function currentGame() {
   for (const [k, w] of gameWins) if (w && !w.isDestroyed() && w.isFocused()) return k;
   const ks = [...running.keys()].filter(k => !stopping.has(k)); return ks[ks.length - 1] || '';
 }
-function homePressed(long) {
+function homePressed(long, native) {
   const now = Date.now(); if (now - lastHome < 450) return; lastHome = now;
-  if (ccWin && !ccWin.isDestroyed()) { const k = ccKey; closeCC(); if (long) consoleHome(k); return; }
+  if (ccWin && !ccWin.isDestroyed()) { const k = ccKey; closeCC(); if (long) consoleHome(k); csLog('home', { long: !!long, to: long ? 'home' : 'game' }); return; }
   const fw = BrowserWindow.getFocusedWindow();
-  if (fw && (fw === mainWin || fw === tvWin)) return;   // the console screen and YouTube handle their own Home
+  if (fw && fw === tvWin) { if (native) closeTv(); return; }
+  if (fw && fw === mainWin) { if (native) mainWin.webContents.send('bp:guide', { long: !!long }); return; }   // the console screen: its own Control Center
   const k = currentGame(); if (!k) return;
+  csLog('home', { long: !!long, game: (running.get(k) || {}).game || k });
   if (long) consoleHome(k); else openCC(k);
 }
 function focusGame(key) {
@@ -533,9 +577,33 @@ function consoleHome(key, page) {
   if (w.isMinimized()) w.restore(); w.show(); w.setFullScreen(true); w.focus();
   w.webContents.send('bp:home', { key: key || '', page: page || '' });
 }
-// the controller watcher: 1 x 1 px, see-through, never takes focus
+// the controller watcher: PremiumPad.exe (SDL, reads every controller in the background, also the real Xbox button),
+// or - when it's missing (development) - a 1 x 1 px see-through window that reads the controller through Chromium
+let padProc = null, padDown = 0, padLongT = null, padLong = false, padKind = '';
+const PAD_EXE = () => app.isPackaged ? path.join(process.resourcesPath, 'PremiumPad.exe') : path.join(__dirname, 'build', 'PremiumPad.exe');
+function startPadProc() {
+  if (padProc || process.platform !== 'win32' || !fs.existsSync(PAD_EXE())) return !!padProc;
+  let p; try { p = padProc = require('child_process').spawn(PAD_EXE(), [], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true }); } catch (e) { padProc = null; return false; }
+  let buf = '';
+  p.stdin.on('error', () => {});
+  p.stdout.on('data', d => { if (p !== padProc) return; buf += d; let i; while ((i = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1); padLine(line); } });
+  p.on('error', () => {});
+  p.on('exit', () => { if (p !== padProc) return; padProc = null; padDown = 0; clearTimeout(padLongT); if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('bp:nativePad', false); syncPadWatch(); });
+  if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('bp:nativePad', true);
+  return true;
+}
+function padLine(line) {
+  if (line === 'ready') { if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('bp:nativePad', true); return; }
+  if (line.startsWith('pad ')) { padKind = line.split(' ')[1]; return; }
+  if (line === 'home 1' && !padDown) { padDown = Date.now(); padLong = false; clearTimeout(padLongT); padLongT = setTimeout(() => { if (padDown) { padLong = true; homePressed(true, true); } }, 600); }
+  else if (line === 'home 0' && padDown) { padDown = 0; clearTimeout(padLongT); if (!padLong) homePressed(false, true); }
+}
+const nativePad = () => !!padProc;
+ipcMain.handle('ps:nativePad', guard(async () => nativePad()));
+global.__psTest = Object.assign(global.__psTest || {}, { padProc: () => padProc, padPress: () => { if (padProc) padProc.stdin.write('test\n'); }, padLine });
 function syncPadWatch() {
-  const need = consoleOn && running.size > 0;
+  if (consoleOn) startPadProc(); else if (padProc) { try { padProc.stdin.end(); padProc.kill(); } catch (e) {} padProc = null; }
+  const need = consoleOn && running.size > 0 && !padProc;
   if (!need) { if (padWin && !padWin.isDestroyed()) padWin.destroy(); padWin = null; return; }
   if (padWin && !padWin.isDestroyed()) return;
   padWin = new BrowserWindow({ width: 1, height: 1, x: 0, y: 0, frame: false, transparent: true, focusable: false, skipTaskbar: true, alwaysOnTop: true, resizable: false, show: false, hasShadow: false,
@@ -545,7 +613,7 @@ function syncPadWatch() {
   padWin.once('ready-to-show', () => padWin && !padWin.isDestroyed() && padWin.showInactive());
   padWin.on('closed', () => { padWin = null; });
 }
-ipcMain.on('pad:home', (e, long) => { if (padWin && e.sender === padWin.webContents) homePressed(!!long); });
+ipcMain.on('pad:home', (e, long) => { if (padWin && e.sender === padWin.webContents && !nativePad()) homePressed(!!long); });
 
 /* the Control Center over a game */
 const coverOf = gid => { try { return 'data:image/png;base64,' + fs.readFileSync(path.join(COVERS, gid + '.png')).toString('base64'); } catch (e) { return ''; } };
@@ -578,9 +646,9 @@ function closeCC() {
   const k = ccKey; ccWin.destroy(); ccWin = null;
   const w = gameWindowOf(k); if (w) { w.webContents.send('game:paused', false); w.focus(); } else if (k) focusGame(k);
 }
-ipcMain.handle('cc:data', guard(async () => ccKey ? ccData(ccKey) : null));
+ipcMain.handle('cc:data', guard(async () => ccKey ? Object.assign(await ccData(ccKey), { nativePad: nativePad(), padKind }) : null));
 ipcMain.handle('cc:act', guard(async (what, arg) => {
-  const k = ccKey, w = gameWindowOf(k);
+  const k = ccKey, w = gameWindowOf(k); csLog('cc', { what, arg: typeof arg === 'string' ? arg : '', game: (running.get(k) || {}).game || k });
   if (what === 'close') { closeCC(); return true; }
   if (what === 'home') { ccWin && ccWin.destroy(); ccWin = null; consoleHome(k, typeof arg === 'string' ? arg : ''); return true; }
   if (what === 'switch') { ccWin && ccWin.destroy(); ccWin = null; if (arg === 'home') consoleHome(k); else if (running.has(arg)) focusGame(arg); return true; }
@@ -645,7 +713,7 @@ ipcMain.handle('ps:setCover', guard(async (id, dataUrl) => {
   await fsp.mkdir(COVERS, { recursive: true }); await fsp.writeFile(path.join(COVERS, id + '.png'), Buffer.from(dataUrl.split(',')[1], 'base64')); return true;
 }));
 
-async function launchWithUpdate(id, edition) {
+async function launchWithUpdate(id, edition, opts) {
   const g = installedNow()[id];
   const pb = g && parentalBlocks(g.game || id.split('--')[0]); if (pb) { flash('🔒 ' + pb); throw new Error(pb); }
   if (g && !running.has(id) && !consoleOn) showSplash(id);
@@ -660,9 +728,10 @@ async function launchWithUpdate(id, edition) {
   if (g && g.type === 'manifest' && !running.has(id)) { splashStatus('يجيب حفظك من السحابة…'); try { await cloudPull(id); } catch (e) {} }
   splashStatus('جاري التشغيل');
   try { const reg = readReg(); if (reg[id]) { reg[id].lastPlayed = Date.now(); await writeReg(reg); } } catch (e) {}
-  try { launchGame(id, edition); } catch (e) { closeSplash(); throw e; }
+  try { launchGame(id, edition, opts); } catch (e) { closeSplash(); throw e; }
 }
-function launchGame(id, edition) {
+function launchGame(id, edition, opts) {
+  const ver = (opts && opts.version) || '';
   const g = installedNow()[id];
   if (!g) throw new Error('اللعبة مو مثبتة');
   if (g.type === 'bf-launcher') {
@@ -673,9 +742,11 @@ function launchGame(id, edition) {
     writeBfAccount();
     try { fs.rmSync(path.join(V.data, 'premium_cmd.json'), { force: true }); } catch (e) {}
     const ed = EDITIONS.includes(edition) ? edition : '';
-    try { fs.writeFileSync(path.join(V.data, 'premium_launch.json'), JSON.stringify({ console: consoleOn, edition: ed, at: Date.now() })); } catch (e) {}
+    try { fs.mkdirSync(V.data, { recursive: true }); fs.writeFileSync(path.join(V.data, 'premium_launch.json'), JSON.stringify({ console: consoleOn, edition: ed, version: ver, at: Date.now() })); } catch (e) {}
     const { spawn } = require('child_process');
-    const child = spawn(V.exe, ['--premium', ...(consoleOn ? ['--console'] : []), ...(consoleOn && ed ? ['--edition=' + ed] : [])], { cwd: V.dir, detached: true, stdio: 'ignore' });
+    // console mode: the console version - no launcher window, straight into the game in the edition and version picked on the console
+    const child = spawn(V.exe, ['--premium', ...(consoleOn ? ['--console'] : []), ...(consoleOn && ed ? ['--edition=' + ed] : []), ...(consoleOn && ver ? ['--version=' + ver] : [])], { cwd: V.dir, detached: true, stdio: 'ignore' });
+    if (consoleOn) { const game = g.game || id; csLog('game-start', { game, key: id, edition: ed, version: ver, from: 'console' }); csGame(game, r => ({ sessions: r.sessions + 1, last: Date.now(), edition: ed || r.edition, version: ver || r.version })); }
     // the starting window stays until BLOCKFALL shows up
     (async () => { const t0 = Date.now(); while (splashKey === id && Date.now() - t0 < 30000) { await new Promise(r => setTimeout(r, 700)); if (await bfAlive(g.game || id)) break; } if (splashKey === id) closeSplash(); })();
     child.unref();
@@ -699,7 +770,8 @@ function launchGame(id, edition) {
     else if (input.key === 'F9') { e.preventDefault(); toggleRecord(id); }
     else if (input.key === 'Tab' && input.shift) { e.preventDefault(); if (w.consoleMode) homePressed(false); else toggleOverlay(id); }
   });
-  const q = g.edition === 'demo' ? '?demo=1' : '';
+  const qs = [...(g.edition === 'demo' ? ['demo=1'] : []), ...(cm ? ['console=1'] : [])], q = qs.length ? '?' + qs.join('&') : '';
+  if (cm) { const game = g.game || id.split('--')[0]; csLog('game-start', { game, key: id, edition: g.edition || '', from: 'console' }); csGame(game, r => ({ sessions: r.sessions + 1, last: Date.now(), edition: g.edition || r.edition })); }
   w.loadURL(`psgame://${id}/${g.entry}${q}`);
   // the game page hands over its saved data as it unloads (game-preload.js); it goes to the account after the window closes
   w.on('closed', () => { gameWins.delete(id); const snap = lastSave.get(id); lastSave.delete(id);
@@ -1141,7 +1213,8 @@ ipcMain.handle('ps:getInstalled', guard(async () => installedNow()));
 ipcMain.handle('ps:install', guard(async (id, opts) => { await install(id, opts); return true; }));
 ipcMain.handle('ps:getLatest', guard(async () => getLatest()));
 ipcMain.handle('ps:uninstall', guard(async id => { await uninstall(id); return true; }));
-ipcMain.handle('ps:launch', guard(async (id, edition) => { await launchWithUpdate(bfKey(id), EDITIONS.includes(edition) ? edition : undefined); return true; }));
+ipcMain.handle('ps:launch', guard(async (id, edition, opts) => { const ver = opts && typeof opts.version === 'string' && /^[\w.\-]{1,24}$/.test(opts.version) ? opts.version : '';
+  await launchWithUpdate(bfKey(id), EDITIONS.includes(edition) ? edition : undefined, { version: ver }); return true; }));
 ipcMain.handle('ps:features', guard(async () => ({ editions: true, running: true })));
 ipcMain.handle('ps:getRunning', guard(async () => runningList()));
 ipcMain.handle('ps:stop', guard(async id => { id = bfKey(id); if (!validId(id)) throw new Error('bad id'); stopGame(id); return true; }));
@@ -1298,7 +1371,7 @@ ipcMain.on('game:achieve', (e, aid) => {
   fbCommit([{ update: { name: `${FB_DB}/users/${currentUser.uid}/achievements/${game}__${aid}`, fields: { game: { stringValue: game }, id: { stringValue: aid } } },
     currentDocument: { exists: false }, updateTransforms: [{ fieldPath: 'at', setToServerValue: 'REQUEST_TIME' }] }]);
 });
-ipcMain.on('game:guide', (e, long) => { for (const [k, w] of gameWins) if (w && !w.isDestroyed() && w.webContents === e.sender) { if (consoleOn || w.consoleMode) homePressed(!!long); else if (!long) toggleOverlay(k); break; } });
+ipcMain.on('game:guide', (e, long) => { for (const [k, w] of gameWins) if (w && !w.isDestroyed() && w.webContents === e.sender) { if (consoleOn || w.consoleMode) { if (!nativePad()) homePressed(!!long); } else if (!long) toggleOverlay(k); break; } });
 ipcMain.on('game:exit', e => { const w = BrowserWindow.fromWebContents(e.sender); if (w) w.close(); });
 ipcMain.on('game:nick', e => { e.returnValue = playerName(); });
 ipcMain.on('game:user', e => { e.returnValue = currentUser && currentUser.username ? { username: currentUser.username, name: currentUser.name, pid: currentUser.pid, email: currentUser.email } : null; });
@@ -1415,5 +1488,5 @@ if (!app.requestSingleInstanceLock()) {
     if (app.isPackaged) backgroundUpdates();
   });
   app.on('window-all-closed', () => { if (!tray) app.quit(); });   // otherwise keep running in the tray
-  app.on('before-quit', () => { quitting = true; for (const k of [...running.keys()]) if (!gameWins.has(k)) { const r = running.get(k); addPlaytime(r, Date.now() - r.since); } });
+  app.on('before-quit', () => { quitting = true; if (padProc) { try { padProc.kill(); } catch (e) {} } for (const k of [...running.keys()]) if (!gameWins.has(k)) { const r = running.get(k); addPlaytime(r, Date.now() - r.since); } });
 }

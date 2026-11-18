@@ -12,6 +12,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: Build the controller reader (PremiumPad.exe)
+        shell: bash
+        run: |
+          cmake -S desktop/pad -B padbuild -A x64
+          cmake --build padbuild --config Release
+          cp padbuild/Release/PremiumPad.exe desktop/build/PremiumPad.exe
       - name: Install
         working-directory: desktop
         run: npm install --no-audit --no-fund
