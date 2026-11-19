@@ -1,8 +1,9 @@
-// BLOCKFALL 3001 on Premium Engine — step 1: the world.
+// BLOCKFALL 3001 on Premium Engine.
 // The ground is made by BLOCKFALL's own rules (the same noise, height formula, mountains, biomes and their colours, lakes and
 // trees as the game, from the same seed), in 16 m chunks on the engine's background threads: 20 cm blocks in the near
 // layer (0 - 20 m, like the game), 1 m blocks below it and in the mountains. The world is 400 m tall like the game's.
-// Left click: break.  Right click: place.  1 - 5: block size 20 cm - 1 m.  Q / E: change block.  Your changes are saved.
+// Keys like the game: WASD · Space jump (twice: fly in creative) · Shift sneak · Ctrl or W twice: sprint · left click break ·
+// right click build · middle click: pick the block · 1-9 / wheel: hotbar · E: bag · C: build menu · Esc: game menu.
 // Block numbers are BLOCKFALL's own (MATS ids), so worlds and designs can move over later.
 // every full block of the game: [id, top tile, side tile, bottom tile, see-through, shape (the game's sh 0-8), name]
 // tiles are in blocks.png (the game's own 32 px atlas, 27 tiles a row)
@@ -25,16 +26,9 @@ const DUNGEONS = {"order":["tower","keep","temple","crypt","camp","mine","spire"
 // the engine's 0, 0 is BLOCKFALL's 496, 496 (chunks line up); BLOCKFALL's world is 1000 m and you start in its middle
 const PARAMS = { src: WORLD_SRC, mats: MATS_K, dun: DUNGEONS, ores: [[118, 0, 20, 17, -63, 129, 1, 0], [62, 0, 12, 9, -87, 9, 1, 0], [177, 178, 16, 10, -79, 49, 1, 0], [175, 176, 4, 9, -127, -31, 1, 0], [181, 182, 4, 8, -127, -48, 0, 0], [179, 180, 2, 7, -95, -31, 1, 0], [87, 0, 7, 4, -143, -47, 1, 0], [183, 184, 20, 3, -79, 417, 1, 1]], seed: 2026, GENV: 5, size: 1000, chunkOff: 31, waterId: 60000,
   tint: { plains: [1, 1, 1], forest: [0.78, 0.92, 0.68], jungle: [0.55, 1.08, 0.5], savanna: [1.45, 1.12, 0.52], snow: [2.3, 2.25, 2.45], desert: [1.3, 1.1, 0.6] } };
-const SPAWN = [4.5, 4.5];
-let size = 0.2, pick = 0, shape = 0, spawned = false, saveIn = 0;
-
-function onStart() {
-  voxels.create({ bottom: -98, top: 302, nearLayer: [0, 20], viewDistance: 6, seed: PARAMS.seed });
-  voxels.setAtlas('blocks.png', 27);
-  for (const [id, top, side, bottom, tr, shape, name] of ALL)   // the game shades each block ±6 %
-    voxels.defineBlock(id, { name, color: '#ffffff', tile: { top, side, bottom }, transparent: !!tr || !!LEAVES[id], shape, vary: 0.06, biome: id === 1 ? 'top' : LEAVES[id] ? true : undefined });
-  for (const [id, tile, name] of PLANTS) voxels.defineBlock(id, { name, color: '#ffffff', tile, shape: 'cross', solid: false, transparent: true });
-  voxels.defineBlock(WATER_ID, { name: 'ماء', color: 'rgb(52,112,186)', liquid: true, opacity: 0.72 });
+// the game's bag categories (only what this version has)
+const CATS_OK = [["الأرض",[1,2,4,20,3,19]],["الخشب",[86,5,7,26]],["البناء",[8,9,10]],["الألوان",[11,21,22,23,24,25]],["النباتات",[6,27,18,15,16,29,30]],["البقاء",[120,121,122,118]],["الموارد",[62,87,69,666,667]],["الكونكريت",[70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85]],["أحجار",[140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,666,667]],["خامات ومعادن",[175,176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,192,193,194,195,196,197,198,199,200,201]],["أخشاب",[202,203,204,205,206,207,208,209,210,211,212,213,214,215,216,217,218,219,220,221,222,223,224,225,226,227,228]],["صوف ملوّن",[229,230,231,232,233,234,235,236,237,238,239,240,241,242,243,244]],["زجاج",[245,246,247,248,249,250,251,252,253,254,255,256,257,258,259,260,261]],["طين وخرسانة",[262,263,264,265,266,267,268,269,270,271,272,273,274,275,276,277,278,279,280,281,282,283,284,285,286,287,288,289,290,291,292,293,294,295,296,297,298,299,300,301,302,303,304,305,306,307,308,309,310]],["النذر",[311,312,313,314,315,316,317,318,319,320]],["الإند",[321,322,323,324]],["المحيط",[325,326,327,328,329,330,331,332,333,334,335]],["مميّزة",[336,337,338,339,340,341,342,343,344,345,346,347,348,349,350,351,352,353,354,355]]];
+function setGen(PARAMS) {
   voxels.setGenerator(function (chunk, noise, P) {
     // once per thread: load the game's world code and give it the engine's C++ copies of its noise (same numbers, faster)
     if (!globalThis.__bfw) {
@@ -125,29 +119,216 @@ function onStart() {
       for (let y = Math.max(0, th); y < WC; y++) if (!W.g[x + CS * (z + CS * y)]) { wa[x + CS * (z + CS * y)] = P.waterId; any = true; } }
     if (any) chunk.cells(0, 0, 0, CS, WC, CS, wa);
   }, PARAMS);
-  voxels.load('world');   // your changes from last time (nothing the first time)
-  world.hud('help', 'الزر اليسار: كسر   الزر اليمين: بناء   1-5: الحجم   Q / E: البلوكة   R: الشكل');
+}
+// ===================================================================================================================
+// THE GAME: menus, worlds, hotbar, bag, build menu, moving like the game. Same names, keys and feel as BLOCKFALL 3001.
+// ===================================================================================================================
+// keys (as in the game): WASD move · Space jump (twice quickly: fly in creative) · Shift sneak (down while flying)
+// Ctrl or W twice: sprint · 1-9 / mouse wheel: hotbar · E: bag · C: build menu (size and shape) · Esc: game menu
+const MAXW = 30, DEFHOT = [1, 2, 3, 7, 8, 0, 0, 0, 0];   // the game's start hotbar (its lift, chair, wheel and fan come with the vehicles)
+const SIZES = [['٢٠ سم', 0.2], ['٤٠ سم', 0.4], ['٦٠ سم', 0.6], ['٨٠ سم', 0.8], ['١ م', 1]];
+const MODES = { c: ['إبداع', 'كل البلوكات بلا حدود، وتطير بضغطتين على المسافة.'], s: ['بقاء', 'تجمع وتصنع وتنجو. (البقاء الكامل جاي في النسخ الجاية)'] };
+const SHAPES_W = { deep: ['عالم عميق', 'جبال وكهوف ودنجن وبوابة نجمية، من −98 إلى +302 متر.', 5], flat1: ['عالم مسطح', 'أرض مسطحة للبناء.', 'flat1'] };
+const ar = n => String(n).replace(/\d/g, d => '٠١٢٣٤٥٦٧٨٩'[d]);
+const C = { bg: '#0f1115ee', card: '#171a21f2', line: '#2c313c', pri: '#e0a02a', priT: '#1a1206', txt: '#e8e6e1', dim: '#9aa0aa', bad: '#c0473d', sel: '#ffd36a' };
+let WL = storage.getJSON('worlds', []), CUR = null, HOT = DEFHOT.slice(), sel = 0, size = 0.2, shape = 0, saveIn = 0, lastSpace = -1, spawned = false, menuWorld = false, selW = null, nwMode = 'c', nwShape = 'deep', autoT = 0;
+const S = storage.getJSON('settings', { last: null });
+
+// ---------- the block world of a game world
+function blockWorld(w) {
+  const gv = w.gv, size = w.size || 1000, sp = Math.floor(size / 2 / 16);
+  voxels.create({ bottom: -98, top: 302, nearLayer: [0, 20], viewDistance: 6, seed: w.seed | 0 });
+  voxels.setAtlas('blocks.png', 27);
+  for (const [id, top, side, bottom, tr, shp, name] of ALL)   // the game shades each block ±6 %
+    voxels.defineBlock(id, { name, color: '#ffffff', tile: { top, side, bottom }, transparent: !!tr || !!LEAVES[id], shape: shp, vary: 0.06, biome: id === 1 ? 'top' : LEAVES[id] ? true : undefined });
+  for (const [id, tile, name] of PLANTS) voxels.defineBlock(id, { name, color: '#ffffff', tile, shape: 'cross', solid: false, transparent: true });
+  voxels.defineBlock(WATER_ID, { name: 'ماء', color: 'rgb(52,112,186)', liquid: true, opacity: 0.72 });
+  setGen(Object.assign({}, PARAMS, { seed: w.seed | 0, GENV: gv, size, chunkOff: sp }));
+  return [size / 2 - sp * 16, size / 2 - sp * 16];   // where the game's spawn point is in the engine
 }
 
+// ---------- worlds: list, open, save, leave
+const saveWL = () => storage.setJSON('worlds', WL);
+function newWorld(name, mode, shapeKey, seedText) {
+  if (WL.length >= MAXW) { world.message('الحد الأقصى ' + ar(MAXW) + ' عالم', 2); return; }
+  let seed = (Math.random() * 1e9) | 0; const t = String(seedText || '').trim();
+  if (t) { seed = /^-?\d+$/.test(t) ? (+t | 0) : [...t].reduce((h, ch) => Math.imul(h ^ ch.codePointAt(0), 16777619) | 0, 2166136261 | 0); }
+  const w = { id: 'w' + Date.now().toString(36), name: name || 'عالم جديد', mode, seed, gv: SHAPES_W[shapeKey][2], size: 1000, t: Date.now() };
+  WL.unshift(w); saveWL(); openWorld(w);
+}
+function openWorld(w) {
+  saveNow(); hideAll(); CUR = w; menuWorld = false; spawned = false; w.t = Date.now(); saveWL(); S.last = w.id; storage.setJSON('settings', S);
+  const sp = blockWorld(w); w._sp = sp; voxels.load('w_' + w.id);
+  const st = storage.getJSON('w_' + w.id + '_p', null); HOT = st && st.hot ? st.hot : DEFHOT.slice(); sel = st ? st.sel | 0 : 0; w._st = st;
+  setMode(w.mode); hud.show(); drawHot(); world.message(w.name, 1.5);
+}
+function saveNow() {
+  if (!CUR || menuWorld) return; voxels.save('w_' + CUR.id);
+  const p = world.player.position; storage.setJSON('w_' + CUR.id + '_p', { p: [p.x, p.y, p.z], yaw: world.player.yaw, pitch: world.player.pitch, fly: world.player.fly, hot: HOT, sel });
+  CUR.t = Date.now(); saveWL(); }
+function leaveWorld() { saveNow(); CUR = null; hud.hide(); hotName.set({ visible: false }); hotNameT = 0; showMenuWorld(); show(mainMenu); }
+function deleteWorld(w) { WL = WL.filter(x => x.id !== w.id); saveWL(); storage.remove('w_' + w.id + '_p'); voxels.deleteSave('w_' + w.id); selW = null; drawWorlds(); }
+// the menu's background: a live BLOCKFALL world you look over
+function showMenuWorld() { menuWorld = true; CUR = null; const sp = blockWorld({ seed: 2026, gv: 5, size: 1000 }); world.player.fly = true; spawned = false; menuSpawn = sp; }
+let menuSpawn = [4.5, 4.5];
+
+// ---------- moving like the game (Minecraft style)
+function setMode(m) {
+  world.player.set({ walkSpeed: 4.317, runSpeed: 4.317 * 1.3, sneakSpeed: 1.31, jumpSpeed: 8.4, gravity: -32, accel: 46, runKey: 'Control', sneakKey: 'Shift', doubleTapRun: true,
+    flySpeed: 8, flyRun: 1.6, flyClimb: 6, fly: false });
+}
+
+// ---------- UI helpers
+ui.rtl = true; ui.escape = true; ui.scale = 1.3;
+const btn = (parent, text, on, o) => parent.add('button', Object.assign({ text, h: 54, w: 'fill', size: 22, bold: true, radius: 6, bg: C.card, color: C.txt, border: { width: 1, color: C.line },
+  hover: { bg: '#232733', border: C.pri }, press: { bg: '#2c313c' }, on: { click: on } }, o || {}));
+const priBtn = (parent, text, on, o) => btn(parent, text, on, Object.assign({ bg: C.pri, color: C.priT, hover: { bg: '#f0b23c' } }, o || {}));
+const card = (id, w, h) => ui.create('panel', { id, anchor: 'center', w, h, bg: C.bg, radius: 10, border: { width: 1, color: C.line }, layout: 'column', gap: 12, pad: 28, align: 'stretch',
+  modal: true, pause: true, visible: false, anim: { anim: 'garage', time: 0.3 }, shadow: true });
+const title = (p, t, sz) => p.add('text', { text: t, size: sz || 34, bold: true, color: C.txt, align: 'center', h: 'auto' });
+const note = (p, t) => p.add('text', { text: t, size: 17, color: C.dim, align: 'center', wrap: true, h: 'auto' });
+let open = null; const show = c => { if (open && open !== c) open.hide(); open = c; hotName.set({ visible: false }); if (c !== bag && c !== build) c.set({ pause: !!CUR }); c.show(); };   /* menus stop the game only inside a world; the menu world keeps moving behind them */ const hideAll = () => { if (open) open.hide(); open = null; };
+
+// main menu (the game's: «لاعب», settings, how to play, leave)
+const mainMenu = card('mMain', 520, 640);
+mainMenu.add('text', { text: 'BLOCKFALL 3001', size: 56, bold: true, color: C.pri, align: 'center', h: 70 });
+note(mainMenu, 'بعد الحرب الأخيرة · ابنِ · انجُ · قاتل');
+const mResume = priBtn(mainMenu, 'استئناف', () => hideAll(), { id: 'bResume', visible: false });
+priBtn(mainMenu, 'لاعب', () => { drawWorlds(); show(worldsMenu); }, { id: 'bPlay' });
+btn(mainMenu, 'طريقة اللعب', () => show(helpMenu), { id: 'bHelp' });
+const mExit = btn(mainMenu, 'حفظ والخروج للقائمة', () => leaveWorld(), { id: 'bExit', visible: false, bg: '#3a1714', hover: { bg: C.bad } });
+mainMenu.add('panel', { h: 'fill' });
+const mInfo = note(mainMenu, '');
+
+// your worlds
+const worldsMenu = card('mWorlds', 760, 720);
+title(worldsMenu, 'العوالم');
+const wList = worldsMenu.add('list', { h: 'fill', gap: 8, pad: 4, bg: '#0b0d11', radius: 6 });
+const wCount = note(worldsMenu, '');
+{ const r = worldsMenu.add('panel', { layout: 'row', gap: 10, h: 54 });
+  priBtn(r, 'العب العالم المحدد', () => { if (selW) openWorld(selW); }, { id: 'bWPlay' });
+  priBtn(r, 'إنشاء عالم جديد', () => { nwName.set({ value: 'عالم جديد' }); nwSeed.set({ value: '' }); drawNew(); show(newMenu); }, { id: 'bWNew' });
+  btn(r, 'حذف', () => { if (selW) deleteWorld(selW); }, { id: 'bWDel', bg: '#3a1714', hover: { bg: C.bad } });
+  btn(r, 'رجوع', () => show(mainMenu), { id: 'bWBack' }); }
+function drawWorlds() {
+  wList.clear(); wCount.set({ text: 'عدد العوالم: ' + ar(WL.length) });
+  if (!WL.length) wList.add('text', { text: 'ما عندك عوالم للحين. اضغط «إنشاء عالم جديد».', size: 18, color: C.dim, align: 'center', h: 80 });
+  WL.forEach((w, wi) => { const on = selW && selW.id === w.id, d = new Date(w.t);
+    const row = wList.add('button', { id: 'wrow' + wi, h: 76, w: 'fill', layout: 'column', pad: [8, 16], radius: 6, bg: on ? '#2b2414' : C.card, border: { width: on ? 2 : 1, color: on ? C.pri : C.line }, hover: { bg: '#232733' },
+      on: { click: () => { selW = w; drawWorlds(); }, dblclick: () => openWorld(w) } });
+    row.add('text', { text: w.name, size: 22, bold: true, color: C.txt, h: 30, pass: true });
+    row.add('text', { text: MODES[w.mode][0] + ' · ' + (SHAPES_W[w.gv === 'flat1' ? 'flat1' : 'deep'][0]) + ' · ' + ar(d.getFullYear() + '/' + (d.getMonth() + 1) + '/' + d.getDate()), size: 16, color: C.dim, h: 24, pass: true }); });
+}
+// a new world (the game's: name, mode, world shape, seed)
+const newMenu = card('mNew', 640, 640);
+title(newMenu, 'إنشاء عالم جديد');
+newMenu.add('text', { text: 'اسم العالم', size: 18, color: C.dim, h: 24 });
+const nwName = newMenu.add('input', { id: 'nwName', h: 50, size: 22, maxLength: 24, bg: '#0b0d11', color: C.txt, radius: 6, border: { width: 1, color: C.line }, pad: [0, 12] });
+const nwModeB = btn(newMenu, '', () => { nwMode = nwMode === 'c' ? 's' : 'c'; drawNew(); }, { id: 'bMode' });
+const nwModeD = note(newMenu, '');
+const nwShapeB = btn(newMenu, '', () => { nwShape = nwShape === 'deep' ? 'flat1' : 'deep'; drawNew(); }, { id: 'bShape' });
+const nwShapeD = note(newMenu, '');
+newMenu.add('text', { text: 'البذرة (السيد)', size: 18, color: C.dim, h: 24 });
+const nwSeed = newMenu.add('input', { id: 'nwSeed', h: 50, size: 20, maxLength: 32, placeholder: 'اتركها فاضية لبذرة عشوائية', bg: '#0b0d11', color: C.txt, radius: 6, border: { width: 1, color: C.line }, pad: [0, 12] });
+newMenu.add('panel', { h: 'fill' });
+{ const r = newMenu.add('panel', { layout: 'row', gap: 10, h: 54 });
+  priBtn(r, 'إنشاء العالم', () => newWorld(nwName.value.trim(), nwMode, nwShape, nwSeed.value), { id: 'bCreate' });
+  btn(r, 'إلغاء', () => show(worldsMenu), { id: 'bNewBack' }); }
+function drawNew() { nwModeB.set({ text: 'طور اللعب: ' + MODES[nwMode][0] }); nwModeD.set({ text: MODES[nwMode][1] }); nwShapeB.set({ text: 'شكل العالم: ' + SHAPES_W[nwShape][0] }); nwShapeD.set({ text: SHAPES_W[nwShape][1] }); }
+// how to play
+const helpMenu = card('mHelp', 760, 640);
+title(helpMenu, 'طريقة اللعب');
+helpMenu.add('text', { h: 'fill', size: 19, color: C.txt, wrap: true, lineHeight: 1.6, text:
+  'المشي: W A S D · القفز: المسافة · الطيران (إبداع): اضغط المسافة مرتين بسرعة، والمسافة تطلّعك وShift تنزّلك\n' +
+  'الركض: Ctrl أو W مرتين بسرعة · الانحناء: Shift\n' +
+  'الزر اليسار: كسر · الزر اليمين: بناء · 1 إلى 9 أو عجلة الماوس: الشريط\n' +
+  'E: الشنطة (كل البلوكات) · C: قائمة البناء (حجم البلوكة وشكلها) · Esc: قائمة اللعبة' });
+btn(helpMenu, 'رجوع', () => show(mainMenu), { id: 'bHelpBack' });
+
+// ---------- the hotbar (bottom of the screen, like the game)
+const hud = ui.create('panel', { id: 'hud', anchor: 'bottom', y: -18, w: 9 * 76 + 8 * 6 + 16, h: 92, layout: 'row', gap: 6, pad: 8, bg: '#0b0d11b0', radius: 8, visible: false, pass: true });
+const slots = []; for (let i = 0; i < 9; i++) slots.push(hud.add('panel', { id: 'slot' + i, w: 76, h: 76, radius: 6, bg: '#1b1f27d0', border: { width: 2, color: '#2c313c' }, droppable: true, data: { slot: i }, layout: 'free',
+  on: { drop: e => { if (e.data && e.data.id) { HOT[i] = e.data.id; drawHot(); } } } }));
+const hotName = ui.create('text', { id: 'hotName', anchor: 'bottom', y: -118, w: 900, h: 34, size: 22, bold: true, color: C.txt, align: 'center', visible: false, pass: true });
+let hotNameT = 0;
+function drawHot() {
+  for (let i = 0; i < 9; i++) { const s = slots[i], id = HOT[i]; s.clear(); s.set({ border: { width: i === sel ? 3 : 2, color: i === sel ? C.sel : '#2c313c' }, bg: i === sel ? '#2b2414e0' : '#1b1f27d0' });
+    if (id) s.add('image', { block: { id, cube: true }, anchor: 'center', w: 56, h: 56, pass: true });
+    s.add('text', { text: ar(i + 1), anchor: 'top-left', x: 5, y: 2, w: 20, h: 18, size: 13, color: C.dim, pass: true }); }
+  const id = HOT[sel]; hotName.set({ text: id ? (NAME[id] || '') + '  ·  ' + SIZES.find(z => z[1] === size)[0] + (shape ? '  ·  ' + SHAPES[shape] : '') : '', visible: !!id }); hotNameT = 2.2;
+}
+function heldId() { const id = HOT[sel]; if (!id) return 0; return shape ? SHAPE_OF[NAME[id] + '|' + shape] || id : id; }
+
+// ---------- the bag (E): every block by the game's categories; click puts it in your hand, drag it onto the hotbar
+const bag = card('mBag', 1180, 760); bag.set({ pause: false });
+title(bag, 'الشنطة', 30);
+const bagTabs = bag.add('panel', { layout: 'row', gap: 6, h: 44, scroll: true, clip: true });
+const bagGrid = bag.add('list', { h: 'fill', bg: '#0b0d11', radius: 6, pad: 8 });
+let bagCat = 0;
+function drawBag() {
+  bagTabs.clear(); CATS_OK.forEach((c, i) => bagTabs.add('button', { id: 'cat' + i, text: c[0], w: 'auto', h: 40, pad: [0, 14], size: 17, radius: 6, bg: i === bagCat ? C.pri : C.card, color: i === bagCat ? C.priT : C.txt,
+    hover: { bg: i === bagCat ? C.pri : '#232733' }, on: { click: () => { bagCat = i; drawBag(); } } }));
+  bagGrid.clear(); const g = bagGrid.add('grid', { cols: 13, cell: [80, 80], gap: 6, h: 'auto' });
+  for (const id of CATS_OK[bagCat][1]) { const c = g.add('button', { id: 'it' + id, radius: 6, bg: C.card, border: { width: 1, color: C.line }, hover: { bg: '#232733', border: C.pri }, draggable: true, data: { id }, layout: 'free',
+      on: { click: () => { HOT[sel] = id; drawHot(); } } });
+    c.add('image', { block: { id, cube: true }, anchor: 'center', w: 58, h: 58, pass: true }); }
+}
+// ---------- the build menu (C): the size and the shape of what you build
+const build = card('mBuild', 820, 470); build.set({ pause: false });
+title(build, 'البناء', 30);
+const bSizes = build.add('panel', { layout: 'row', gap: 8, h: 60 });
+const bShapes = build.add('grid', { cols: 5, cell: [148, 56], gap: 8, h: 'auto' });
+note(build, '١ - ٥: الحجم · C أو Esc: إغلاق');
+function drawBuild() {
+  bSizes.clear(); SIZES.forEach(([n, v], i) => bSizes.add('button', { id: 'sz' + i, text: n, h: 56, w: 'fill', size: 22, bold: true, radius: 6, bg: size === v ? C.pri : C.card, color: size === v ? C.priT : C.txt, on: { click: () => { size = v; drawBuild(); drawHot(); } } }));
+  bShapes.clear(); SHAPES.forEach((n, i) => bShapes.add('button', { id: 'sh' + i, text: n, size: 19, radius: 6, bg: shape === i ? C.pri : C.card, color: shape === i ? C.priT : C.txt, on: { click: () => { shape = i; drawBuild(); drawHot(); } } }));
+}
+
+// ---------- start: the menu over a live world
+function onStart() {
+  showMenuWorld(); show(mainMenu); mInfo.set({ text: 'BLOCKFALL 3001 · Premium Engine' });
+}
+function onStop() { saveNow(); }
+function onKey(k) {
+  if (k === 'Escape') {
+    if (open === bag || open === build) { hideAll(); return; }
+    if (!CUR) { if (open !== mainMenu) show(mainMenu); return; }
+    if (open) { if (open === mainMenu) hideAll(); else show(mainMenu); return; }
+    saveNow(); mResume.set({ visible: true }); mExit.set({ visible: true }); show(mainMenu); return;
+  }
+  if (!CUR || ui.typing) return;
+  if (k === 'KeyE') { if (open === bag) hideAll(); else if (!open) { drawBag(); show(bag); } return; }
+  if (k === 'KeyC') { if (open === build) hideAll(); else if (!open) { drawBuild(); show(build); } return; }
+  if (open === build && /^Digit[1-5]$/.test(k)) { size = SIZES[+k.slice(5) - 1][1]; drawBuild(); drawHot(); return; }
+  if (open) return;
+  if (/^Digit[1-9]$/.test(k)) { sel = +k.slice(5) - 1; drawHot(); }
+  if (k === 'WheelUp' || k === 'WheelDown') { sel = (sel + (k === 'WheelDown' ? 1 : 8)) % 9; drawHot(); }
+  if (k === 'Space' && CUR.mode === 'c') { const t = world.time; if (t - lastSpace < 0.3) { world.player.fly = !world.player.fly; world.message(world.player.fly ? 'الطيران مفعّل' : 'الطيران متوقف', 1); lastSpace = -1; } else lastSpace = t; }
+}
 function onUpdate(dt) {
-  if (!spawned && voxels.ready(SPAWN[0], 0, SPAWN[1])) {   // stand on open grass near the middle of the world once it is built
-    let at = [SPAWN[0], SPAWN[1]];
-    search: for (let r = 0; r < 24; r++) for (let a = 0; a < Math.max(1, r * 6); a++) {
-      const x = SPAWN[0] + Math.round(Math.cos(a / Math.max(1, r * 6) * 6.283) * r), z = SPAWN[1] + Math.round(Math.sin(a / Math.max(1, r * 6) * 6.283) * r), t = voxels.topY(x, z);
-      const b = isNaN(t) ? null : voxels.getBlock(x, t - 0.1, z); if (b && b.id === 1 && t < 12) { at = [x, z]; break search; } }
-    world.player.teleport(at[0], voxels.topY(at[0], at[1]) + 1.2, at[1]); spawned = true;
-  }
-  for (let i = 1; i <= 5; i++) if (input.pressed(String(i))) size = i / 5;
-  if (input.pressed('e')) pick = (pick + 1) % PICK.length;
-  if (input.pressed('q')) pick = (pick + PICK.length - 1) % PICK.length;
-  if (input.pressed('r')) shape = (shape + 1) % SHAPES.length;
-  const id = shape ? SHAPE_OF[NAME[PICK[pick]] + '|' + shape] || PICK[pick] : PICK[pick];
-  const cam = world.camera, hit = voxels.raycast(cam.position, cam.forward, 7);
+  if (!CUR) { mResume.set({ visible: false }); mExit.set({ visible: false }); }
+  // the menu world: drift slowly over the land
+  if (menuWorld) { if (!spawned && voxels.ready(menuSpawn[0], 0, menuSpawn[1])) { world.player.teleport(menuSpawn[0], voxels.topY(menuSpawn[0], menuSpawn[1]) + 14, menuSpawn[1]); world.player.pitch = -0.25; spawned = true; }
+    if (spawned) world.player.yaw = world.player.yaw + dt * 0.04; return; }
+  if (!CUR) return;
+  if (!spawned) {   // your place in this world, or open grass near the game's spawn point the first time
+    const st = CUR._st, sp = CUR._sp;
+    if (st && st.p) { if (voxels.ready(st.p[0], st.p[1], st.p[2])) { world.player.teleport(st.p[0], st.p[1], st.p[2]); world.player.yaw = st.yaw || 0; world.player.pitch = st.pitch || 0; world.player.fly = !!st.fly && CUR.mode === 'c'; spawned = true; } }
+    else if (voxels.ready(sp[0], 0, sp[1])) { let at = sp;
+      search: for (let r = 0; r < 24; r++) for (let a = 0; a < Math.max(1, r * 6); a++) {
+        const x = sp[0] + Math.round(Math.cos(a / Math.max(1, r * 6) * 6.283) * r), z = sp[1] + Math.round(Math.sin(a / Math.max(1, r * 6) * 6.283) * r), t = voxels.topY(x, z);
+        const b = isNaN(t) ? null : voxels.getBlock(x, t - 0.1, z); if (b && b.id === 1 && t < 12) { at = [x, z]; break search; } }
+      world.player.teleport(at[0], voxels.topY(at[0], at[1]) + 1.2, at[1]); spawned = true; }
+    return; }
+  if (hotNameT > 0 && (hotNameT -= dt) <= 0) hotName.set({ visible: false });
+  if (open) return;
+  const cam = world.camera, hit = voxels.raycast(cam.position, cam.forward, CUR.mode === 'c' ? 8 : 5);
   if (hit && input.pressed('MouseLeft') && voxels.removeBlock(hit.point.clone().addScaledVector(hit.normal, -0.05))) saveIn = 1;
-  if (hit && input.pressed('MouseRight')) {
+  if (input.pressed('MouseMiddle') && hit) { const b = voxels.getBlock(hit.point.clone().addScaledVector(hit.normal, -0.05)); if (b) { const base = ALL.find(a => a[0] === b.id); HOT[sel] = b.id; shape = base ? base[5] : 0; size = Math.min(1, Math.max(0.2, b.size)); drawHot(); } }
+  if (hit && input.pressed('MouseRight') && heldId()) {
     const p = hit.placePosition(size);
-    if (!voxels.setBlock(p, id, size)) world.message(voxels.lastError, 1.5); else saveIn = 1;
+    if (!voxels.setBlock(p, heldId(), size)) world.message(voxels.lastError, 1.5); else saveIn = 1;
   }
-  if (saveIn > 0 && (saveIn -= dt) <= 0) voxels.save('world');   // a second after a change (only the chunks you changed)
-  world.hud('block', NAME[id] + '  ' + Math.round(size * 100) + ' سم' + (hit ? '   تطالع: ' + (NAME[hit.id] || hit.id) : '') + (world.player.swimming ? '   تسبح' : ''));
+  if (saveIn > 0 && (saveIn -= dt) <= 0) saveNow();   // a second after a change (only the chunks you changed)
+  if ((autoT += dt) > 30) { autoT = 0; saveNow(); }
 }
