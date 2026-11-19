@@ -25,7 +25,7 @@ int main(int argc, char** argv) {
   if (!windowed) SDL_SetWindowFullscreen(W.win, SDL_WINDOW_FULLSCREEN_DESKTOP);
   Renderer R; R.init();
   Game G(P, P.startLevel); if (!G.start()) { showError(P.name, "The start level could not be loaded.", W.win); closeWindow(W); return 1; }
-  bool running = true, paused = false; Uint64 last = SDL_GetPerformanceCounter(); size_t seenLog = 0; std::string lastError; double errorUntil = 0;
+  bool running = true, paused = false, focused = true; Uint64 last = SDL_GetPerformanceCounter(); size_t seenLog = 0; std::string lastError; double errorUntil = 0;
   auto lock = [&](bool on) { SDL_SetRelativeMouseMode(on && G.wantsMouseLock() ? SDL_TRUE : SDL_FALSE); };
   auto toggleFull = [&]() { bool full = SDL_GetWindowFlags(W.win) & SDL_WINDOW_FULLSCREEN_DESKTOP; SDL_SetWindowFullscreen(W.win, full ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP); };
   if (selftest.empty()) lock(true);
@@ -43,14 +43,19 @@ int main(int argc, char** argv) {
     while (SDL_PollEvent(&e)) {
       ImGui_ImplSDL2_ProcessEvent(&e);
       if (e.type == SDL_QUIT) running = false;
-      else if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) { G.releaseInput(); if (!paused) { paused = true; lock(false); } }
-      else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE && !e.key.repeat) { paused = !paused; G.releaseInput(); lock(!paused); }
+      else if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) { focused = false; G.releaseInput(); if (!paused) { paused = true; lock(false); } }
+      else if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) focused = true;
+      // Escape: the engine's pause menu, unless the game's own menus use it (ui.escape = true; the pause menu is then the game's)
+      else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE && !e.key.repeat && (paused || !G.ownsEscape())) { paused = !paused; G.releaseInput(); lock(!paused); }
       else if (e.type == SDL_KEYDOWN && !e.key.repeat && (e.key.keysym.sym == SDLK_F11 || (e.key.keysym.sym == SDLK_RETURN && (e.key.keysym.mod & KMOD_ALT)))) toggleFull();
       else if (!paused) { if (e.type == SDL_MOUSEBUTTONDOWN && !SDL_GetRelativeMouseMode()) lock(true); G.event(e); }
     }
     Uint64 now = SDL_GetPerformanceCounter(); float dt = (float)((now - last) / (double)SDL_GetPerformanceFrequency()); last = now;
     if (!selftest.empty()) dt = 1.f / 60;
     if (!paused) G.update(dt);
+    // the game's menus free the mouse while they are open, and take it back when they close
+    if (selftest.empty()) { bool want = !paused && focused && G.wantsMouseLock(); if (want != (bool)SDL_GetRelativeMouseMode()) {
+        SDL_SetRelativeMouseMode(want ? SDL_TRUE : SDL_FALSE); if (!want) { int ww, wh; SDL_GetWindowSize(W.win, &ww, &wh); SDL_WarpMouseInWindow(W.win, ww / 2, wh / 2); } } }
     auto& L = logLines(); if (seenLog > L.size()) seenLog = L.size(); for (; seenLog < L.size(); seenLog++) if (L[seenLog].kind == LogKind::Error) { lastError = L[seenLog].text; errorUntil = SDL_GetTicks() / 1000.0 + 6; }
     int dw, dh; SDL_GL_GetDrawableSize(W.win, &dw, &dh);
     Frame F; Camera C; G.buildFrame(F, C, dh ? (float)dw / dh : 1.f); R.render(F, C, dw, dh, nullptr);

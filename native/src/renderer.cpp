@@ -91,7 +91,7 @@ vec3 atlasColor(vec3 base){
   if(uTiles > 0 && vTile != 65535){
     vec2 ts = vec2(textureSize(uAtlas, 0)); float tw = ts.x / float(uTiles); vec2 cell = vec2(tw) / ts;
     vec2 t = vec2(float(vTile % uTiles), float(vTile / uTiles)); vec2 f = fract(vUv); f.y = 1.0 - f.y;
-    vec4 tx = texture(uAtlas, (t + f) * cell); base *= toLin(tx.rgb); }
+    vec4 tx = texture(uAtlas, (t + f) * cell); if((vFlags & 16) != 0 && tx.a < 0.5) discard; base *= toLin(tx.rgb); }
   return base; }
 )";
 static const char* VOX_FS_MAIN = R"(
@@ -128,6 +128,17 @@ static const char* DEPTH_VS = R"(#version 330 core
 layout(location=0) in vec3 aPos; uniform mat4 uModel, uVP; void main(){ gl_Position = uVP*uModel*vec4(aPos,1.0); })";
 static const char* DEPTH_FS = R"(#version 330 core
 void main(){} )";
+// shadows of the block world: cut-out pixels (leaves) let the light through
+static const char* VDEPTH_VS = R"(#version 330 core
+layout(location=0) in vec3 aPos; layout(location=1) in vec2 aUv; layout(location=4) in uvec2 aInfo; uniform mat4 uModel, uVP;
+out vec2 vUv; flat out int vTile; flat out int vFlags;
+void main(){ vUv = aUv; vTile = int(aInfo.x); vFlags = int(aInfo.y & 255u); gl_Position = uVP*uModel*vec4(aPos,1.0); })";
+static const char* VDEPTH_FS = R"(#version 330 core
+in vec2 vUv; flat in int vTile; flat in int vFlags; uniform sampler2D uAtlas; uniform int uTiles;
+void main(){ if((vFlags & 16) != 0 && uTiles > 0 && vTile != 65535){
+    vec2 ts = vec2(textureSize(uAtlas, 0)); float tw = ts.x / float(uTiles); vec2 cell = vec2(tw) / ts;
+    vec2 t = vec2(float(vTile % uTiles), float(vTile / uTiles)); vec2 f = fract(vUv); f.y = 1.0 - f.y;
+    if(texture(uAtlas, (t + f) * cell).a < 0.5) discard; } })";
 static const char* ID_FS = R"(#version 330 core
 uniform vec4 uColor; out vec4 frag; void main(){ frag = uColor; })";
 
@@ -152,7 +163,7 @@ static void V3(unsigned p, const char* n, const glm::vec3& v) { glUniform3f(U(p,
 
 bool Renderer::init() {
   std::string litFs = std::string(LIT_FS_HEAD) + LIGHT_LIB + LIT_FS_MAIN, voxFs = std::string(VOX_FS_HEAD) + LIGHT_LIB + VOX_FS_MAIN, watFs = std::string(VOX_FS_HEAD) + LIGHT_LIB + WAT_FS_MAIN;
-  lit_ = compile(LIT_VS, litFs.c_str(), "lit"); vox_ = compile(VOX_VS, voxFs.c_str(), "voxels"); wat_ = compile(VOX_VS, watFs.c_str(), "water"); flat_ = compile(FLAT_VS, FLAT_FS, "flat"); depth_ = compile(DEPTH_VS, DEPTH_FS, "depth"); idp_ = compile(DEPTH_VS, ID_FS, "id"); text_ = compile(TEXT_VS, TEXT_FS, "text");
+  lit_ = compile(LIT_VS, litFs.c_str(), "lit"); vox_ = compile(VOX_VS, voxFs.c_str(), "voxels"); wat_ = compile(VOX_VS, watFs.c_str(), "water"); flat_ = compile(FLAT_VS, FLAT_FS, "flat"); depth_ = compile(DEPTH_VS, DEPTH_FS, "depth"); vdepth_ = compile(VDEPTH_VS, VDEPTH_FS, "voxel depth"); idp_ = compile(DEPTH_VS, ID_FS, "id"); text_ = compile(TEXT_VS, TEXT_FS, "text");
   glGenVertexArrays(1, &textVao_); glBindVertexArray(textVao_); glGenBuffers(1, &textVbo_); glBindBuffer(GL_ARRAY_BUFFER, textVbo_);
   glEnableVertexAttribArray(0); glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 20, (void*)0); glEnableVertexAttribArray(1); glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 20, (void*)12); glBindVertexArray(0);
   // shadow map
@@ -180,7 +191,7 @@ bool Renderer::init() {
   { for (int i = -50; i <= 50; i++) { L.push_back({(float)i, 0, -50}); L.push_back({(float)i, 0, 50}); L.push_back({-50, 0, (float)i}); L.push_back({50, 0, (float)i}); } grid_ = uploadLines(L); L.clear(); }
   return true;
 }
-void Renderer::shutdown() { glDeleteProgram(vox_); glDeleteProgram(wat_); glDeleteProgram(text_); glDeleteVertexArrays(1, &textVao_); glDeleteBuffers(1, &textVbo_); glDeleteProgram(lit_); glDeleteProgram(flat_); glDeleteProgram(depth_); glDeleteProgram(idp_); glDeleteFramebuffers(1, &shadowFbo_); glDeleteTextures(1, &shadowTex_);
+void Renderer::shutdown() { glDeleteProgram(vox_); glDeleteProgram(wat_); glDeleteProgram(text_); glDeleteVertexArrays(1, &textVao_); glDeleteBuffers(1, &textVbo_); glDeleteProgram(lit_); glDeleteProgram(flat_); glDeleteProgram(depth_); glDeleteProgram(vdepth_); glDeleteProgram(idp_); glDeleteFramebuffers(1, &shadowFbo_); glDeleteTextures(1, &shadowTex_);
   for (GpuMesh* m : {&wireBox_, &wireCapsule_, &arrow_, &axes_, &wireCam_, &grid_}) destroy(*m); releasePrimitives(); }
 
 // quads for each glyph of the ImGui font atlas (the big font, index 1 when loaded), centred on the origin, 1 unit = text size
@@ -239,7 +250,9 @@ void Renderer::shadowPass(const Frame& f, glm::mat4& lightVP, bool& has) {
   glEnable(GL_POLYGON_OFFSET_FILL); glPolygonOffset(1.5f, 2.f);
   glUseProgram(depth_); M4(depth_, "uVP", lightVP);
   for (auto& it : f.draws) { if (!it.castShadow || !it.mesh || it.opacity < 0.5f || it.pickOnly || it.unlit) continue; M4(depth_, "uModel", it.model); glBindVertexArray(it.mesh->vao); glDrawElements(GL_TRIANGLES, it.mesh->count, GL_UNSIGNED_INT, nullptr); }
-  for (auto& v : f.voxels) { M4(depth_, "uModel", glm::translate(glm::mat4(1), v.offset)); glBindVertexArray(v.vao); glDrawElements(GL_TRIANGLES, v.count, GL_UNSIGNED_INT, nullptr); }
+  if (!f.voxels.empty()) { glUseProgram(vdepth_); M4(vdepth_, "uVP", lightVP);
+    glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, f.voxelAtlas); glUniform1i(U(vdepth_, "uAtlas"), 1); glUniform1i(U(vdepth_, "uTiles"), f.voxelAtlas ? f.voxelTiles : 0); glActiveTexture(GL_TEXTURE0);
+    for (auto& v : f.voxels) { M4(vdepth_, "uModel", glm::translate(glm::mat4(1), v.offset)); glBindVertexArray(v.vao); glDrawElements(GL_TRIANGLES, v.count, GL_UNSIGNED_INT, nullptr); } }
   glDisable(GL_POLYGON_OFFSET_FILL); has = true;
 }
 

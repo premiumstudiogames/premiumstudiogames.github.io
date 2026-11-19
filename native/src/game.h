@@ -12,6 +12,7 @@
 #include "physics.h"
 #include "script.h"
 #include "voxel.h"
+#include "ui.h"
 
 struct ImDrawList;
 namespace pge {
@@ -34,7 +35,10 @@ public:
   void buildFrame(Frame& f, Camera& cam, float aspect) const;
   void drawHud(ImDrawList* dl, float x, float y, float w, float h) const;
   void releaseInput();                              // forget held keys (focus lost)
-  bool wantsMouseLock() const { return mode_ != "Spectator"; }
+  bool wantsMouseLock() const { return mode_ != "Spectator" && !(ui_ && ui_->modal()); }   // a menu that is open frees the mouse
+  bool ownsEscape() const { return ui_ && ui_->ownsEscape(); }   // the game's own menus use Escape (ui.escape = true)
+  bool uiTyping() const { return ui_ && ui_->typing(); }
+  bool paused() const { return ui_ && ui_->pausing(); }
   const std::string& mode() const { return mode_; }
   double gameTime() const { return time_; }
   int actorCount() const;
@@ -78,6 +82,7 @@ public:
   bool playerSwimming() override { return swimming_; }
   std::string savePath(const std::string& name) override;
   void trophy(const std::string& id) override;
+  Ui* ui() override { return ui_.get(); }
 
 private:
   struct Obj {
@@ -91,7 +96,7 @@ private:
   std::string mode_; uint32_t player_ = NO_BODY; float yaw_ = 0, pitch_ = 0; glm::vec3 specPos_{0, 2, 5}, moveDir_{0};
   double time_ = 0; bool restartRequested_ = false, started_ = false;
   std::set<std::string> keys_, pressed_; glm::vec4 mouseState_{0}; float lookDx_ = 0, lookDy_ = 0;
-  std::set<std::string> trophies_;
+  std::set<std::string> trophies_; std::unique_ptr<Ui> ui_; bool wasModal_ = false;
   std::string msg_; double msgUntil_ = 0; std::vector<std::pair<std::string, std::string>> hud_;
   std::vector<std::pair<std::string, std::string>> pendingKeys_;
 

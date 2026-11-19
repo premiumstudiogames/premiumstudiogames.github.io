@@ -7,7 +7,7 @@
 #include <glm/glm.hpp>
 
 namespace pge {
-class VoxelWorld;
+class VoxelWorld; class Ui;
 // what scripts can do to the game (implemented by Game)
 class ScriptWorld {
 public:
@@ -49,6 +49,7 @@ public:
   virtual std::string savePath(const std::string& name) { return name; }   // Documents/PremiumEngine/Saves/<game>/<name>
   // Premium Games: a trophy for the player's account (only when the game was started from the Premium Games store)
   virtual void trophy(const std::string& id) { log("[trophy] " + id); }
+  virtual Ui* ui() { return nullptr; }                                       // the game's menus and HUD (ui.*)
 };
 
 enum ScriptEvent { EV_Start = 0, EV_Update, EV_Overlap, EV_Hit, EV_Key, EV_COUNT };
@@ -68,6 +69,7 @@ public:
   const std::string& actorOf(int b) const;
   int count() const;
   void runJobs();
+  void uiDispatch(const std::string& eventsJson);       // clicks, drops, typing ... to the handlers scripts gave (ui node.on)
   // syntax check for the editor; returns "" when fine
   static std::string check(const std::string& code);
   struct Impl;

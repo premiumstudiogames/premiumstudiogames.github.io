@@ -59,6 +59,36 @@ input
 
 world.camera                     .position, .forward (the direction the player looks)
 
+GAME UI (ui) - menus, HUD, inventory, settings, made from scripts (like Unreal's UMG)
+The screen is 1080 units tall (1920 wide at 16:9) at any resolution: sizes and positions are in these units.
+  const w = ui.create('window', { title: 'Inventory', w: 700, h: 500, modal: true, pause: true, visible: false })
+  w.add('button', { text: 'Craft', on: { click: e => ... } })      node.add(type, props) = ui.create with parent
+  ui.get('id')  node.set({ ... })  node.on('click', fn)  node.off('click')  node.remove()  node.clear()
+  node.show({ anim: 'slide', from: 'bottom', time: 0.25 })   node.hide(...)   node.toggle()   node.visible
+  node.value  node.text  node.data  node.rect (x, y, w, h)  node.children  node.parent  node.focus()
+  ui.rtl = true          rows and grids from the right (Arabic menus);  ui.scale = 1.2 (bigger UI)
+  ui.escape = true       Escape goes to your script (onKey('Escape')), not the engine's pause menu
+  ui.open / ui.paused / ui.typing     a menu that frees the mouse is open / the game is paused / a text field has the keys
+types: panel, text, image, button, grid, list (scrolling column), input, slider, tabs, window
+props (all optional):
+  id, parent, x, y, w, h ('fill', 'fill:2', '50%', 'auto' or units), minW, maxW, minH, maxH
+  anchor: 'center' | 'top' | 'bottom' | 'left' | 'right' | 'top-left' | 'bottom-right' ...  (x, y move from there)
+  layout: 'free' | 'row' | 'column' | 'grid',  gap, pad (n, [v, h] or [t, r, b, l]), align: 'start' | 'center' | 'end' | 'stretch',
+  justify: 'start' | 'center' | 'end' | 'between',  cols, cell (n or [w, h]),  dir: 'rtl' | 'ltr',  scroll: true,  clip: true
+  bg ('#rrggbbaa', 'rgba(...)', or ['#top', '#bottom'] gradient), radius, border (width or { width, color }), opacity, shadow
+  hover: { bg, color, border }, press: { bg },  z (drawing order),  visible
+  text, size, color, align ('left' | 'center' | 'right' | 'auto'), valign, wrap, bold, lineHeight   (Arabic is joined, right to left)
+  image: 'icons/sword.png', fit: 'contain' | 'cover' | 'stretch', tint;  block: 5 or { id: 5, face: 'top', cube: true } (from the atlas)
+  input: value, placeholder, maxLength, password    slider: min, max, step, value    tabs: labels, value (children are the pages)
+  window: title, closable, movable
+  modal: true (frees the mouse, the game doesn't look around)   pause: true (the game stands still while it is shown)
+  draggable / droppable / data   drag and drop between nodes (inventory)
+  disabled, pass (the mouse goes through it),  anim: { anim, from, time } (default for show / hide)
+  animations: fade, slide (from left / right / top / bottom), pop, garage (comes down like a garage door), reveal
+events (node.on): click, dblclick, rightclick, down, up, enter, leave, change, input, submit, focus, blur, close,
+  dragstart, dragend, drop.  e.target (where it happened), e.current (the node whose handler runs), e.value,
+  e.from / e.to / e.data (drag and drop), e.shift / e.ctrl / e.alt, e.stop()  - clicks and drops bubble up to the parents
+
 BLOCK WORLD (voxels)
 The ground is split into 16 x 16 m chunks. Near the ground (the near layer) blocks can be 20, 40, 60, 80 or 100 cm
 wide and 20 - 100 cm tall; above and below it everything is 1 m blocks. Chunks are generated and built on background
@@ -71,7 +101,8 @@ BLOCKFALL's world fits: voxels.create({ bottom: -98, top: 302, nearLayer: [-2, 2
   voxels.enabled                 is there a block world?
   voxels.defineBlock(1, { name: 'Grass', color: '#5a9c3c', tile: 0, ... })    options:
       color: '#rrggbb', 'rgb(r,g,b)', [r, g, b] (0..1) or { top, side, bottom }     tile: number or { top, side, bottom } (atlas)
-      solid: false            no collision (plants)          transparent: true    see-through (glass): does not hide faces
+      solid: false            no collision (plants)          transparent: true    see-through: does not hide faces;
+                              textured see-through blocks are cut out (clear pixels are holes: leaves, flowers), cutout: false turns it off
       liquid: true            water: moving see-through surface, no collision, the player swims; opacity: 0.75
       biome: 'top' | 'side' | 'bottom' | ['top', 'side'] | true    those faces take the chunk's biome colour (chunk.tint)
       vary: 0.08              every block its own shade (0 .. 0.5), like BLOCKFALL

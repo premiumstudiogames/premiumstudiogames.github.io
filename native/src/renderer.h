@@ -39,7 +39,7 @@ public:
   const GpuMesh& gridMesh() const { return grid_; }
   int drawCalls = 0, triangles = 0;
 private:
-  unsigned lit_ = 0, vox_ = 0, wat_ = 0, flat_ = 0, depth_ = 0, idp_ = 0, text_ = 0, shadowFbo_ = 0, shadowTex_ = 0, textVao_ = 0, textVbo_ = 0;
+  unsigned lit_ = 0, vox_ = 0, wat_ = 0, flat_ = 0, depth_ = 0, vdepth_ = 0, idp_ = 0, text_ = 0, shadowFbo_ = 0, shadowTex_ = 0, textVao_ = 0, textVbo_ = 0;
   int buildText(const TextItem& t);   // fills textVbo_, returns vertex count
   GpuMesh wireBox_, wireCapsule_, arrow_, axes_, wireCam_, grid_, grid10_;
   void shadowPass(const Frame& f, glm::mat4& lightVP, bool& has);

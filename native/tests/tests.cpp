@@ -6,11 +6,14 @@
 #include "voxel.h"
 #include "physics.h"
 #include "arabic.h"
+#include "ui.h"
+#include <imgui.h>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <cmath>
 #include <thread>
+#include <array>
 #include <filesystem>
 
 using namespace pge;
@@ -322,6 +325,90 @@ function onUpdate() { world.vars.swim = world.player.swimming; })";
           ("400 m tall world: " + std::to_string(st.meshed) + " chunks in " + std::to_string((int)ms) + " ms (gen " + std::to_string(st.genMs) + ", mesh " + std::to_string(st.meshMs) + " ms each, " + std::to_string((int)(st.memory >> 20)) + " MB)").c_str());
     CHECK(st.meshMs < 120, "a chunk of the tall world meshes fast enough");
   }
+  std::printf("cut-out blocks (leaves, flowers)\n");
+  {
+    Physics ph; ph.init(-9.81f);
+    VoxelConfig cfg; cfg.minY = -8; cfg.maxY = 24; cfg.fineLo = -4; cfg.fineHi = 8; cfg.viewDistance = 1; cfg.threads = 2;
+    VoxelWorld w(cfg, &ph); BlockType rock; w.defineBlock(3, rock);
+    BlockType leaves; leaves.opaque = false; leaves.cutout = true; leaves.tile[0] = leaves.tile[1] = leaves.tile[2] = 0; w.defineBlock(6, leaves);
+    BlockType glass; glass.opaque = false; w.defineBlock(9, glass);
+    w.setBuiltinGenerator("flat", R"({"ground": 0, "top": 3, "dirt": 3, "stone": 3})"); w.update({8, 0, 8}); w.waitIdle();
+    int t0 = w.stats().triangles;
+    w.setBlock({4, 10, 4}, 6, 1.f); w.setBlock({5, 10, 4}, 6, 1.f); w.update({8, 0, 8}); w.waitIdle(); int t1 = w.stats().triangles;
+    CHECK(t1 - t0 == 16, ("two leaves side by side keep the faces between them, like the game: " + std::to_string(t1 - t0) + " triangles").c_str());
+    w.removeBlock({4.5f, 10.5f, 4.5f}); w.removeBlock({5.5f, 10.5f, 4.5f});
+    w.setBlock({4, 10, 4}, 9, 1.f); w.setBlock({5, 10, 4}, 9, 1.f); w.update({8, 0, 8}); w.waitIdle(); int t2 = w.stats().triangles;
+    CHECK(t2 - t0 == 12, ("two glass blocks hide the face between them: " + std::to_string(t2 - t0) + " triangles").c_str());
+  }
+
+  std::printf("game UI\n");
+  {
+    ImGui::CreateContext(); ImGuiIO& io = ImGui::GetIO(); io.Fonts->AddFontDefault(); { ImFontConfig b; b.SizePixels = 39; io.Fonts->AddFontDefault(&b); }
+    unsigned char* px; int fw, fh; io.Fonts->GetTexDataAsRGBA32(&px, &fw, &fh); io.DisplaySize = ImVec2(1920, 1080); io.DeltaTime = 1.f / 60;
+    Project q = makeTemplate("Blank", "T");
+    q.scripts["SC_UI"] = {"SC_UI", R"JS(
+let clicks = 0;
+function onStart() {
+  ui.rtl = true;
+  const win = ui.create('window', { id: 'inv', title: 'المخزون', w: 600, h: 500, modal: true, pause: true, visible: false, anim: { anim: 'garage', time: 0.2 } });
+  const grid = win.add('grid', { id: 'slots', cols: 3, cell: 80, gap: 10 });
+  for (let i = 0; i < 6; i++) grid.add('panel', { id: 's' + i, bg: '#ffffff20', radius: 6, draggable: true, droppable: true, data: { slot: i } });
+  grid.on('drop', e => { ui.get('label').text = 'drop ' + e.from + ' > ' + e.target.id + ' ' + e.data.slot; });
+  grid.on('click', e => { ui.get('label').text = 'slot ' + e.target.id + (e.shift ? ' shift' : ''); });
+  win.add('text', { id: 'label', text: '-' });
+  win.add('input', { id: 'name', placeholder: 'اسم العالم', on: { submit: e => { ui.get('label').text = 'name ' + e.value; } } });
+  win.add('slider', { id: 'vol', min: 0, max: 10, step: 1, value: 5, on: { change: e => { ui.get('label').text = 'vol ' + e.value; } } });
+  const tabs = win.add('tabs', { id: 'tabs', labels: ['أ', 'ب'], h: 120, on: { change: e => { ui.get('label').text = 'tab ' + e.value; } } });
+  tabs.add('text', { id: 'page0', text: 'one' }); tabs.add('text', { id: 'page1', text: 'two' });
+  const btn = ui.create('button', { id: 'open', text: 'افتح', anchor: 'bottom', y: -40, on: { click: () => { clicks++; win.show(); } } });
+  ui.create('button', { id: 'bad', text: 'x', anchor: 'top-left', x: 10, y: 10, on: { click: () => { null.x = 1; } } });
+  const list = ui.create('list', { id: 'list', w: 200, h: 100, anchor: 'top-right', y: 10, x: -10 });
+  for (let i = 0; i < 20; i++) list.add('text', { text: 'row ' + i });
+  world.vars.ok = true;
+}
+)JS"};
+    Actor a = newActor("Empty", "UI"); a.script = "SC_UI"; q.levels[0].second.actors.push_back(a);
+    Game g(q, q.startLevel); logClear(); CHECK(g.start(), "a game with UI starts");
+    Ui& U = *g.ui();
+    auto frame = [&] { ImGui::NewFrame(); g.drawHud(ImGui::GetBackgroundDrawList(), 0, 0, 1920, 1080); ImGui::EndFrame(); };
+    auto rect = [&](const char* id) { auto r = U.get(id)["rect"]; return std::array<float, 4>{r["x"].get<float>(), r["y"].get<float>(), r["w"].get<float>(), r["h"].get<float>()}; };
+    auto mouse = [&](float x, float y, int what, Uint16 mod = 0) { SDL_Event e{}; if (what == 0) { e.type = SDL_MOUSEMOTION; e.motion.x = (int)x; e.motion.y = (int)y; }
+      else { e.type = what == 1 ? SDL_MOUSEBUTTONDOWN : SDL_MOUSEBUTTONUP; e.button.button = SDL_BUTTON_LEFT; e.button.x = (int)x; e.button.y = (int)y; } SDL_SetModState((SDL_Keymod)mod); g.event(e); SDL_SetModState(KMOD_NONE); };
+    auto clickAt = [&](const char* id, Uint16 mod = 0) { frame(); auto r = rect(id); float x = r[0] + r[2] / 2, y = r[1] + r[3] / 2; mouse(x, y, 0); mouse(x, y, 1, mod); mouse(x, y, 2, mod); g.update(1.f / 60); frame(); };
+    auto label = [&] { return U.get("label")["text"].get<std::string>(); };
+    frame(); frame();
+    CHECK(!g.paused() && !U.modal(), "no menu open: the game runs and has the mouse");
+    auto br = rect("open"); CHECK(std::abs(br[0] + br[2] / 2 - 960) < 1 && std::abs(br[1] + br[3] - 1040) < 1, "button anchored at the bottom centre, 40 units up");
+    clickAt("open"); CHECK(U.get("inv")["visible"].get<bool>(), "clicking the button opens the window (handler ran)");
+    run(g, 0.3f); frame();
+    CHECK(g.paused() && !g.wantsMouseLock(), "an open menu pauses the game and frees the mouse");
+    auto s0 = rect("s0"), s1 = rect("s1"), s3 = rect("s3");
+    CHECK(s1[0] < s0[0] && std::abs(s0[0] - s1[0] - 90) < 0.5f && std::abs(s3[1] - s0[1] - 90) < 0.5f && std::abs(s0[2] - 80) < 0.5f, "grid: 80 cells, 10 gap, right to left (ui.rtl)");
+    clickAt("s4", KMOD_LSHIFT); CHECK(label() == "slot s4 shift", ("click bubbles to the grid with the slot and Shift: " + label()).c_str());
+    { frame(); auto a0 = rect("s0"), a2 = rect("s2"); mouse(a0[0] + 20, a0[1] + 20, 0); mouse(a0[0] + 20, a0[1] + 20, 1);
+      for (int i = 1; i <= 5; i++) { mouse(a0[0] + 20 + (a2[0] - a0[0]) * i / 5, a0[1] + 20, 0); frame(); }
+      mouse(a2[0] + 20, a2[1] + 20, 2); g.update(1.f / 60); frame(); }
+    CHECK(label() == "drop s0 > s2 0", ("drag and drop: " + label()).c_str());
+    clickAt("name"); CHECK(g.uiTyping(), "clicking a text field gives it the keyboard");
+    { SDL_Event t{}; t.type = SDL_TEXTINPUT; std::strcpy(t.text.text, "\xd8\xb9\xd8\xa7\xd9\x84\xd9\x85x"); g.event(t);
+      SDL_Event k{}; k.type = SDL_KEYDOWN; k.key.keysym.sym = SDLK_BACKSPACE; g.event(k); k.key.keysym.sym = SDLK_RETURN; g.event(k);
+      SDL_Event w = keyEv(SDL_KEYDOWN, SDL_SCANCODE_W); w.key.keysym.sym = SDLK_w; g.event(w); g.update(1.f / 60); }
+    CHECK(label() == "name \xd8\xb9\xd8\xa7\xd9\x84\xd9\x85", ("typing Arabic, backspace, Enter: " + label()).c_str());
+    CHECK(!g.key("KeyW"), "keys typed in a text field don't reach the game");
+    { frame(); auto r = rect("vol"); mouse(r[0] + 5, r[1] + r[3] / 2, 0); mouse(r[0] + 5, r[1] + r[3] / 2, 1); mouse(r[0] + r[2] - 2, r[1] + r[3] / 2, 0); mouse(r[0] + r[2] - 2, r[1] + r[3] / 2, 2); g.update(1.f / 60); }
+    CHECK(label() == "vol 10" || label() == "vol 0", ("slider dragged to an end: " + label()).c_str());
+    { frame(); auto r = rect("tabs"); float hx = r[0] + r[2] * 0.25f, hy = r[1] + 10; mouse(hx, hy, 0); mouse(hx, hy, 1); mouse(hx, hy, 2); g.update(1.f / 60); frame(); }
+    CHECK(label() == "tab 1" && U.get("page1")["visible"].get<bool>() && !U.get("page0")["visible"].get<bool>(), ("tabs (right to left: the left tab is the second): " + label()).c_str());
+    U.hide("inv", nlohmann::json::object()); run(g, 0.3f);
+    { frame(); auto r = rect("list"); SDL_Event wv{}; wv.type = SDL_MOUSEWHEEL; wv.wheel.y = -2; wv.wheel.preciseY = -2; wv.wheel.mouseX = (int)(r[0] + 50); wv.wheel.mouseY = (int)(r[1] + 50); g.event(wv);
+      for (int i = 0; i < 3; i++) frame(); float sc = U.get("list")["scroll"].get<float>(); CHECK(sc > 50 && sc < 2000, ("a list scrolls with the wheel: " + std::to_string(sc)).c_str()); }
+    U.show("inv", nlohmann::json::object()); run(g, 0.3f); frame();
+    U.hide("inv", nlohmann::json::object()); run(g, 0.3f); frame();
+    CHECK(!g.paused() && !U.modal() && !U.get("inv")["visible"].get<bool>(), "closing the menu (garage animation) gives the game back");
+    clickAt("bad"); CHECK(hasLog("ui \"click\" on bad"), "an error in a UI handler is in the Output Log");
+    ImGui::DestroyContext();
+  }
+
   std::printf("\n%d passed, %d failed\n", passes, fails);
   return fails ? 1 : 0;
 }

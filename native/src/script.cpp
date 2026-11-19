@@ -7,6 +7,7 @@
 #include <map>
 #include <cmath>
 #include "voxel.h"
+#include "ui.h"
 #include "project.h"
 #include <nlohmann/json.hpp>
 
@@ -144,6 +145,62 @@ globalThis.__make = function (fn, id, name) {
   return fn(__api(id), world, input, log, THREE, math);
 };
 globalThis.__api = __api;
+// ---- game UI: ui.create(type, props) → a node; node.on('click', e => ...); node.show({anim: 'slide'}) ...
+const __uiH = new Map();
+const __uiJ = p => JSON.stringify(p === undefined ? {} : p);
+class UiNode {
+  constructor(id) { this.id = id; }
+  set(p) { const e = __n.uiSet(this.id, __uiJ(p)); if (e) __n.log('warning: ui: ' + e); if (p && p.on) for (const ev in p.on) this.on(ev, p.on[ev]); return this; }
+  add(type, p) { return ui.create(type, Object.assign({}, p || {}, { parent: this.id })); }
+  on(ev, fn) { if (typeof fn !== 'function') return this; let h = __uiH.get(this.id); if (!h) __uiH.set(this.id, h = {}); (h[ev] = h[ev] || []).push(fn); __n.uiListen(this.id, String(ev), true); return this; }
+  off(ev, fn) { const h = __uiH.get(this.id); if (!h || !h[ev]) return this; h[ev] = fn ? h[ev].filter(f => f !== fn) : []; if (!h[ev].length) { delete h[ev]; __n.uiListen(this.id, String(ev), false); } return this; }
+  show(a) { __n.uiShow(this.id, __uiJ(a)); return this; }
+  hide(a) { __n.uiHide(this.id, __uiJ(a)); return this; }
+  toggle(a) { return this.visible ? this.hide(a) : this.show(a); }
+  focus() { __n.uiFocus(this.id); return this; }
+  blur() { __n.uiFocus(''); return this; }
+  remove() { __uiForget(this.id); __n.uiRemove(this.id); }
+  clear() { for (const k of JSON.parse(__n.uiKids(this.id))) __uiForget(k); __n.uiClear(this.id); return this; }
+  get info() { return JSON.parse(__n.uiGet(this.id)); }
+  get exists() { return __n.uiExists(this.id); }
+  get visible() { const i = this.info; return !!i && i.visible; }
+  get focused() { const i = this.info; return !!i && i.focused; }
+  get value() { const i = this.info; return i ? i.value : undefined; } set value(v) { this.set({ value: v }); }
+  get text() { const i = this.info; return i ? i.text : ''; } set text(v) { this.set({ text: String(v) }); }
+  get data() { const i = this.info; return i ? i.data : undefined; } set data(v) { this.set({ data: v }); }
+  get rect() { const i = this.info; return i ? i.rect : null; }
+  get parent() { const i = this.info; return i && i.parent ? new UiNode(i.parent) : null; }
+  get children() { return JSON.parse(__n.uiKids(this.id)).map(id => new UiNode(id)); }
+}
+function __uiForget(id) { for (const k of JSON.parse(__n.uiKids(id))) __uiForget(k); __uiH.delete(id); }
+const ui = {
+  create(type, p) { p = p || {}; const r = __n.uiCreate(String(type), __uiJ(Object.assign({}, p, { on: undefined }))); if (r === undefined) throw new Error('ui: not available here');
+    if (r[0] === '!') throw new Error('ui.create: ' + r.slice(1)); const n = new UiNode(r); if (p.on) for (const ev in p.on) n.on(ev, p.on[ev]); return n; },
+  get(id) { return __n.uiExists(String(id)) ? new UiNode(String(id)) : null; },
+  get roots() { return JSON.parse(__n.uiKids('')).map(id => new UiNode(id)); },
+  set scale(v) { __n.uiScale(+v); },
+  set rtl(v) { __n.uiDir(!!v); },
+  set escape(v) { __n.uiEscape(!!v); },
+  get open() { return __n.uiState()[0]; },
+  get paused() { return __n.uiState()[1]; },
+  get typing() { return __n.uiState()[2]; },
+  blur() { __n.uiFocus(''); }
+};
+globalThis.ui = ui;
+globalThis.__uiDispatch = function (json) {
+  for (const e of JSON.parse(json)) {
+    let stopped = false; const target = new UiNode(e.id);
+    const ev = Object.assign({}, e.data, { type: e.type, target, stop() { stopped = true; } });
+    const own = e.type === 'enter' || e.type === 'leave' || e.type === 'focus' || e.type === 'blur';
+    for (const id of own ? [e.id] : [e.id, ...e.path]) {
+      const h = __uiH.get(id), fs = h && h[e.type];
+      if (fs) { ev.current = new UiNode(id);
+        for (const f of fs.slice()) { try { f(ev); } catch (err) { const st = err && err.stack ? String(err.stack).split('\n').find(l => l.indexOf(':') > 0) : '';
+          __n.uiError('ui "' + e.type + '" on ' + id + ': ' + (err && err.message || err) + (st ? ' (' + st.trim() + ')' : '')); } } }
+      if (stopped) break;
+    }
+  }
+};
 )JS";
 
 static const char* EVENTS[EV_COUNT] = {"onStart", "onUpdate", "onOverlap", "onHit", "onKey"};
@@ -201,6 +258,31 @@ static void bindNatives(JSContext* c) {
   FN("mouse", 0, { glm::vec4 m = W(c)->mouse(); JSValue r = JS_NewArray(c); for (int i = 0; i < 4; i++) JS_SetPropertyUint32(c, r, i, JS_NewFloat64(c, m[i])); return r; });
   FN("log", 1, W(c)->log(S(c, a[0])); return JS_UNDEFINED;);
   FN("trophy", 1, W(c)->trophy(S(c, a[0])); return JS_UNDEFINED;);
+  // game UI
+#define UIP(c) Ui* U = W(c)->ui(); if (!U) return JS_UNDEFINED;
+  auto js = [](JSContext* c, JSValueConst v) { nlohmann::json j = nlohmann::json::object(); try { j = nlohmann::json::parse(S(c, v)); } catch (...) {} return j; };
+  (void)js;
+  FN("uiCreate", 2, { UIP(c) nlohmann::json p = nlohmann::json::object(); try { p = nlohmann::json::parse(S(c, a[1])); } catch (...) {}
+    std::string id = p.is_object() && p.contains("id") && p["id"].is_string() ? p["id"].get<std::string>() : "";
+    std::string e = U->create(S(c, a[0]), id, p); if (!e.empty()) { std::string r = "!" + e; return JS_NewStringLen(c, r.data(), r.size()); }
+    id = U->lastId();
+    return JS_NewStringLen(c, id.data(), id.size()); });
+  FN("uiSet", 2, { UIP(c) nlohmann::json p = nlohmann::json::object(); try { p = nlohmann::json::parse(S(c, a[1])); } catch (...) {} std::string e = U->set(S(c, a[0]), p); return JS_NewStringLen(c, e.data(), e.size()); });
+  FN("uiGet", 1, { UIP(c) std::string r = U->get(S(c, a[0])).dump(); return JS_NewStringLen(c, r.data(), r.size()); });
+  FN("uiExists", 1, { UIP(c) return JS_NewBool(c, U->exists(S(c, a[0]))); });
+  FN("uiKids", 1, { UIP(c) std::string r = nlohmann::json(U->children(S(c, a[0]))).dump(); return JS_NewStringLen(c, r.data(), r.size()); });
+  FN("uiRemove", 1, { UIP(c) U->remove(S(c, a[0])); return JS_UNDEFINED; });
+  FN("uiClear", 1, { UIP(c) U->clear(S(c, a[0])); return JS_UNDEFINED; });
+  FN("uiShow", 2, { UIP(c) nlohmann::json p = nlohmann::json::object(); try { p = nlohmann::json::parse(S(c, a[1])); } catch (...) {} U->show(S(c, a[0]), p); return JS_UNDEFINED; });
+  FN("uiHide", 2, { UIP(c) nlohmann::json p = nlohmann::json::object(); try { p = nlohmann::json::parse(S(c, a[1])); } catch (...) {} U->hide(S(c, a[0]), p); return JS_UNDEFINED; });
+  FN("uiFocus", 1, { UIP(c) U->focus(S(c, a[0])); return JS_UNDEFINED; });
+  FN("uiListen", 3, { UIP(c) U->listen(S(c, a[0]), S(c, a[1]), JS_ToBool(c, a[2])); return JS_UNDEFINED; });
+  FN("uiScale", 1, { UIP(c) U->setScale((float)D(c, a[0])); return JS_UNDEFINED; });
+  FN("uiDir", 1, { UIP(c) U->setDir(JS_ToBool(c, a[0])); return JS_UNDEFINED; });
+  FN("uiEscape", 1, { UIP(c) U->setEscape(JS_ToBool(c, a[0])); return JS_UNDEFINED; });
+  FN("uiState", 0, { UIP(c) JSValue r = JS_NewArray(c); JS_SetPropertyUint32(c, r, 0, JS_NewBool(c, U->modal())); JS_SetPropertyUint32(c, r, 1, JS_NewBool(c, U->pausing())); JS_SetPropertyUint32(c, r, 2, JS_NewBool(c, U->typing())); return r; });
+  FN("uiError", 1, { logMsg("error: " + S(c, a[0]), LogKind::Error); return JS_UNDEFINED; });
+#undef UIP
   FN("psEnv", 1, { const char* v = std::getenv(S(c, a[0]).c_str()); return JS_NewBool(c, v && *v && std::string(v) != "0"); });
   FN("camera", 0, { glm::vec3 p = W(c)->cameraPos(), f = W(c)->cameraDir(); JSValue r = JS_NewArray(c); float v[6] = {p.x, p.y, p.z, f.x, f.y, f.z}; for (int i = 0; i < 6; i++) JS_SetPropertyUint32(c, r, i, JS_NewFloat64(c, v[i])); return r; });
   // block world
@@ -221,6 +303,7 @@ static void bindNatives(JSContext* c) {
       else if (tl.is_array()) for (int i = 0; i < 3; i++) { const auto& e = tl.size() > (size_t)i ? tl[i] : tl.back(); if (e.is_number()) t.tile[i] = e.get<int>(); }
       else if (tl.is_object()) { t.tile[0] = tl.value("top", -1); t.tile[1] = tl.value("side", t.tile[0]); t.tile[2] = tl.value("bottom", t.tile[1]); } }
     t.solid = o.value("solid", true); t.opaque = !o.value("transparent", false); t.liquid = o.value("liquid", false);
+    t.cutout = o.value("cutout", !t.opaque && !t.liquid && (t.tile[0] >= 0 || t.tile[1] >= 0 || t.tile[2] >= 0));
     t.vary = glm::clamp(o.value("vary", 0.f), 0.f, 0.5f); t.opacity = glm::clamp(o.value("opacity", 0.75f), 0.05f, 1.f);
     if (o.contains("glow")) { auto& gl = o["glow"]; t.glow = gl.is_boolean() ? (gl.get<bool>() ? 1.f : 0.f) : gl.is_number() ? glm::clamp(gl.get<float>(), 0.f, 2.f) : 0.f; }
     if (o.contains("biome")) { auto& bi = o["biome"]; auto bit = [](const std::string& s) -> uint8_t { return s == "top" ? 1 : s == "side" || s == "sides" ? 2 : s == "bottom" ? 4 : s == "all" ? 7 : 0; };
@@ -361,6 +444,13 @@ void ScriptHost::call(int i, ScriptEvent e, double num, const std::string& arg) 
 void ScriptHost::drop(int i) { if (i >= 0 && i < (int)d->b.size()) d->b[i].alive = false; }
 const std::string& ScriptHost::actorOf(int i) const { return d->b[i].actor; }
 int ScriptHost::count() const { return (int)d->b.size(); }
+void ScriptHost::uiDispatch(const std::string& events) {
+  if (!d->ctx) return; JSContext* c = d->ctx; JSValue g = JS_GetGlobalObject(c), fn = JS_GetPropertyStr(c, g, "__uiDispatch");
+  JSValue arg = JS_NewStringLen(c, events.data(), events.size()); d->deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  JSValue r = JS_Call(c, fn, JS_UNDEFINED, 1, &arg);
+  if (JS_IsException(r)) logMsg("error: ui: " + errorText(c), LogKind::Error);
+  JS_FreeValue(c, r); JS_FreeValue(c, arg); JS_FreeValue(c, fn); JS_FreeValue(c, g);
+}
 void ScriptHost::runJobs() { if (!d->ctx) return; JSContext* c2; for (int k = 0; k < 64 && JS_ExecutePendingJob(d->rt, &c2) > 0; k++) {} }
 
 std::string ScriptHost::check(const std::string& code) {

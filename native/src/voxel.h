@@ -80,6 +80,7 @@ struct BlockType {
   float vary = 0;                    // every block gets its own shade: 0 .. 0.5 (BLOCKFALL changes each block a little)
   float glow = 0;                    // light of its own (0 .. 2)
   float opacity = 0.75f;             // liquids
+  bool cutout = false;               // see-through pixels of its texture are holes (leaves, flowers, glass): on by default for see-through textured blocks
 };
 
 struct BlockInfo { int id = 0; glm::ivec3 origin{0}; int size = 0, sizeY = 0; BlockExtra extra; };   // origin and sizes in cells (fine units)
@@ -118,6 +119,9 @@ public:
   void setScriptGenerator(const std::string& source, const std::string& paramsJson);   // JavaScript function source, one engine per thread
   bool setAtlas(const std::string& pngPath, int tilesPerRow);
   bool setAtlasPixels(const uint8_t* rgba, int width, int height, int tilesPerRow, std::string* why = nullptr);   // made by the game's code
+  unsigned atlasTexture() const;                    // OpenGL texture (0 = none); for UI icons of blocks
+  int atlasTiles() const;
+  glm::ivec2 atlasSize() const;
 
   // called every frame on the main thread: loads / unloads chunks around `focus`, takes finished work, uploads meshes
   void update(const glm::vec3& focus);

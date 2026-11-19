@@ -372,13 +372,16 @@ void Editor::event(const SDL_Event& e) {
   if (e.type == SDL_DROPFILE) { std::string f = e.drop.file; SDL_free(e.drop.file); if (f.size() > 9 && f.substr(f.size() - 9) == ".pge.json") { if (hasProject && dirty) save(); openProjectFile(f); } return; }
   if (e.type == SDL_MOUSEMOTION) { g_flyDx += e.motion.xrel; g_flyDy += e.motion.yrel; }
   if (playing && game) {
-    if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) { stopPlay(); return; }
+    // Escape stops playing; when the game's own menus use Escape (ui.escape = true), Shift+Escape does
+    if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE && (!game->ownsEscape() || (e.key.keysym.mod & KMOD_SHIFT))) { stopPlay(); return; }
     if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_F1 && (e.key.keysym.mod & KMOD_SHIFT)) { mouseFree = true; SDL_SetRelativeMouseMode(SDL_FALSE); game->releaseInput(); return; }
     if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) { game->releaseInput(); mouseFree = true; SDL_SetRelativeMouseMode(SDL_FALSE); }
     if (captured) { game->event(e); return; }   // the game owns keyboard and mouse
     ImGui_ImplSDL2_ProcessEvent(&e);
     bool typing = ImGui::GetIO().WantTextInput;
     if (vpFocused && !typing && (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP)) game->event(e);
+    if (vpFocused && !typing && e.type == SDL_TEXTINPUT && game->uiTyping()) game->event(e);   // typing in the game's text fields
+    if (vpHovered && e.type == SDL_MOUSEWHEEL) game->event(e);
     if (e.type == SDL_KEYUP) game->event(e);   // never leave a key stuck
     if (vpHovered && (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP || e.type == SDL_MOUSEMOTION)) {
       if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT && game->wantsMouseLock()) { mouseFree = false; SDL_SetRelativeMouseMode(SDL_TRUE); }
@@ -393,6 +396,7 @@ void Editor::frame() {
   Uint64 now = SDL_GetPerformanceCounter(); dt_ = (float)((now - lastTick_) / (double)SDL_GetPerformanceFrequency()); lastTick_ = now; dt_ = std::min(dt_, 0.25f);
   fps_ = fps_ * 0.95f + (dt_ > 0 ? 1.f / dt_ : 0) * 0.05f;
   if (playing && game) { game->update(dt_); if (!game) playing = false; }
+  if (playing && game && !mouseFree && SDL_GetRelativeMouseMode() && !game->wantsMouseLock()) { mouseFree = true; SDL_SetRelativeMouseMode(SDL_FALSE); }   // the game opened a menu
   beginFrame(); ImGuizmo::BeginFrame();
   { auto q = std::move(queued_); queued_.clear(); for (auto& c : q) run(c); }
   if (!hasProject) { drawProjectBrowser(); drawDialogs(); }

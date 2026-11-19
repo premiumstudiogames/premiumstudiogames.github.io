@@ -523,7 +523,8 @@ struct Mesher {
   // is the face from cell p towards neighbour q hidden?
   bool hidden(Cell p, Cell q) const {
     if (!q) return false; if (opaqueCell(T, q)) return true;
-    return cellId(q) == cellId(p) && !special(T, q) && !opaqueId(cellId(p));   // water next to water, glass next to glass
+    // water next to water, see-through colour blocks next to their own kind; cut-out blocks (leaves) keep the faces between them, like the game
+    return cellId(q) == cellId(p) && !special(T, q) && !opaqueId(cellId(p)) && !typeOf(T, cellId(p)).cutout;
   }
   // ambient occlusion of the 4 corners of a face (0 = darkest .. 3 = open)
   template <class Op> uint8_t aoPack(glm::ivec3 p, int d, Op op) const {
@@ -535,7 +536,8 @@ struct Mesher {
     return pack;   // corners: (-u,-v), (+u,-v), (-u,+v), (+u,+v)
   }
   static void putColor(VVert& v, glm::vec3 col) { col = glm::clamp(col * 0.5f, 0.f, 1.f); v.r = (uint8_t)std::lround(col.r * 255); v.g = (uint8_t)std::lround(col.g * 255); v.b = (uint8_t)std::lround(col.b * 255); }
-  uint8_t glowFlags(int id) const { return (uint8_t)std::lround(glm::clamp(typeOf(T, id).glow / 2.f, 0.f, 1.f) * 15); }
+  // vertex flags: glow 0-15, bit 4 = cutout (see-through texture pixels are holes)
+  uint8_t glowFlags(int id) const { const BlockType& bt = typeOf(T, id); return (uint8_t)(std::lround(glm::clamp(bt.glow / 2.f, 0.f, 1.f) * 15) | (bt.cutout && !bt.liquid ? 16 : 0)); }
   void quad(int d, glm::vec3 base, float du, float dv, int ua, int va, int id, uint8_t aoP, float u0, float v0, float uScale, float vScale, glm::vec3 mul) {
     const BlockType& bt = typeOf(T, id); bool liq = isLiquid(T, id); MeshPart& M = liq ? out.water : out.solid;
     glm::ivec3 n = DIRS[d]; int face = d == 2 ? 0 : d == 3 ? 2 : 1; glm::vec3 col = bt.color[face] * mul; int tile = bt.tile[face];
@@ -730,7 +732,7 @@ struct VoxelWorld::Impl {
   std::vector<std::thread> workers; std::mutex jm; std::condition_variable jcv; std::deque<Job> jobs; bool quit = false; std::atomic<int> busy{0};
   std::mutex rm; std::vector<std::function<void()>> results; std::vector<std::string> logs;
   glm::vec3 focus{0}; int inflightGen = 0, inflightMesh = 0; double genMs = 0, meshMs = 0; int genCount = 0, meshCount = 0;
-  unsigned atlas = 0; int atlasTiles = 0;
+  unsigned atlas = 0; int atlasTiles = 0, atlasW = 0, atlasH = 0;
   explicit Impl(const VoxelConfig& c) : cfg(c), g(c) {}
   Chunk* get(int cx, int cz) { auto it = chunks.find(ckey(cx, cz)); return it == chunks.end() ? nullptr : it->second.get(); }
   const Chunk* get(int cx, int cz) const { auto it = chunks.find(ckey(cx, cz)); return it == chunks.end() ? nullptr : it->second.get(); }
@@ -810,8 +812,11 @@ static bool uploadAtlas(VoxelWorld::Impl& D, const uint8_t* px, int w, int h, in
   glBindTexture(GL_TEXTURE_2D, D.atlas); glPixelStorei(GL_UNPACK_ALIGNMENT, 1); glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, px);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-  D.atlasTiles = std::max(1, tiles); return true;
+  D.atlasTiles = std::max(1, tiles); D.atlasW = w; D.atlasH = h; return true;
 }
+unsigned VoxelWorld::atlasTexture() const { return d->atlas; }
+int VoxelWorld::atlasTiles() const { return d->atlasTiles; }
+glm::ivec2 VoxelWorld::atlasSize() const { return {d->atlasW, d->atlasH}; }
 bool VoxelWorld::setAtlas(const std::string& path, int tilesPerRow) {
   int w = 0, h = 0, n = 0; unsigned char* px = stbi_load(path.c_str(), &w, &h, &n, 4);
   if (!px) { d->log("error: voxels.setAtlas: can't read " + path + (stbi_failure_reason() ? std::string(" (") + stbi_failure_reason() + ")" : "")); return false; }

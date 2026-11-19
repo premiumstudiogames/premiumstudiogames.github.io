@@ -84,6 +84,7 @@ Game::Game(const Project& p, const std::string& ln) : levelName(ln), project_(p)
 Game::~Game() { clear(); }
 
 void Game::clear() {
+  if (ui_) { ui_->setVoxels(nullptr); ui_->reset(); }
   if (scripts_) scripts_->shutdown();
   scripts_.reset();
   vox_.reset();   // before the physics world: chunk bodies live there
@@ -109,6 +110,7 @@ bool Game::start() {
   float yawDeg = 0; glm::vec3 ps = playerStart(&yawDeg); yaw_ = glm::radians(yawDeg); pitch_ = 0;
   if (mode_ == "Spectator") specPos_ = ps + glm::vec3(0, 1.6f, 0); else player_ = phys_->addPlayer(ps);
   // scripts
+  if (!ui_) ui_.reset(new Ui()); ui_->reset(); ui_->setAssets([this](const std::string& p) { return assetPath(p); });
   scripts_.reset(new ScriptHost()); scripts_->init(this);
   for (auto& op : objs_) { Obj& o = *op; if (o.a.script.empty()) continue;
     auto it = project_.scripts.find(o.a.script); if (it == project_.scripts.end()) { logMsg("warning: " + o.a.name + ": script \"" + o.a.script + "\" not found", LogKind::Warn); continue; }
@@ -139,6 +141,9 @@ void Game::addBody(Obj& o) {
 
 void Game::event(const SDL_Event& e) {
   if (!started_) return;
+  // the game's menus first: what they use, the game doesn't see (key ups always go through, so nothing stays held)
+  if (ui_ && e.type != SDL_KEYUP && ui_->event(e)) return;
+  if (ui_ && ui_->modal() && (e.type == SDL_MOUSEMOTION || e.type == SDL_MOUSEWHEEL)) return;
   switch (e.type) {
     case SDL_KEYDOWN: { std::string k = keyCode(e.key.keysym.scancode);
       if (!keys_.count(k)) pressed_.insert(k); keys_.insert(k);
@@ -158,9 +163,17 @@ void Game::releaseInput() { keys_.clear(); pressed_.clear(); mouseState_ = glm::
 
 void Game::update(float dt) {
   if (!started_) return;
-  dt = std::min(dt, 0.05f); time_ += dt;
+  dt = std::min(dt, 0.05f);
+  // the game's menus: animations, then what the player did in them goes to the scripts' handlers
+  if (ui_) { ui_->update(dt); auto ev = ui_->takeEvents();
+    if (!ev.empty()) { json a = json::array(); for (auto& e : ev) a.push_back({{"id", e.id}, {"type", e.type}, {"data", e.data}, {"path", e.path}}); scripts_->uiDispatch(a.dump()); scripts_->runJobs(); }
+    bool m = ui_->modal(); if (m && !wasModal_) releaseInput(); wasModal_ = m;   // a menu opened: stop walking
+    if (ui_->pausing()) { if (vox_) vox_->update(playerPos()); pressed_.clear(); lookDx_ = lookDy_ = 0; if (restartRequested_) { logMsg("Restarting the level"); start(); } return; }   // the game stands still under the menu
+  }
+  time_ += dt;
   if (vox_) { vox_->update(playerPos()); for (auto& l : vox_->takeLogs()) logMsg(l, l.rfind("error", 0) == 0 ? LogKind::Error : l.rfind("warning", 0) == 0 ? LogKind::Warn : LogKind::Info); }
   // look
+  if (ui_ && ui_->modal()) lookDx_ = lookDy_ = 0;
   const float sens = 0.0022f; mouseState_.x = lookDx_; mouseState_.y = lookDy_;
   yaw_ -= lookDx_ * sens; pitch_ = glm::clamp(pitch_ - lookDy_ * sens, -1.45f, 1.45f); lookDx_ = lookDy_ = 0;
   glm::vec3 fwd(-std::sin(yaw_), 0, -std::cos(yaw_)), right(-fwd.z, 0, fwd.x), mv(0);
@@ -274,7 +287,8 @@ void Game::drawHud(ImDrawList* dl, float x, float y, float w, float h) const {
   }
   if (loading()) { const char* t = "Loading world..."; ImVec2 s = big->CalcTextSizeA(30, 1e9f, 0, t); ImVec2 p(x + (w - s.x) / 2, y + h * 0.45f);
     dl->AddRectFilled({p.x - 24, p.y - 14}, {p.x + s.x + 24, p.y + s.y + 14}, IM_COL32(0, 0, 0, 150), 12); dl->AddText(big, 30, p, IM_COL32_WHITE, t); }
-  if (mode_ == "FirstPerson") { ImVec2 c(x + w / 2, y + h / 2); dl->AddCircleFilled(c, 3.5f, IM_COL32(0, 0, 0, 120)); dl->AddCircleFilled(c, 2.2f, IM_COL32(255, 255, 255, 230)); }
+  if (mode_ == "FirstPerson" && !(ui_ && ui_->modal())) { ImVec2 c(x + w / 2, y + h / 2); dl->AddCircleFilled(c, 3.5f, IM_COL32(0, 0, 0, 120)); dl->AddCircleFilled(c, 2.2f, IM_COL32(255, 255, 255, 230)); }
+  if (ui_) ui_->draw(dl, x, y, w, h);   // the game's own UI on top
 }
 
 int Game::actorCount() const { int n = 0; for (auto& o : objs_) n += o->alive; return n; }
@@ -357,7 +371,7 @@ std::string Game::createVoxels(const std::string& opts) {
   json o = json::object(); try { o = json::parse(opts); if (!o.is_object()) o = json::object(); } catch (...) { return "voxels.create: options are not valid"; }
   VoxelConfig c; c.minY = o.value("bottom", c.minY); c.maxY = o.value("top", c.maxY); c.viewDistance = o.value("viewDistance", c.viewDistance); c.seed = o.value("seed", c.seed); c.threads = o.value("threads", 0);
   if (o.contains("nearLayer") && o["nearLayer"].is_array() && o["nearLayer"].size() == 2) { c.fineLo = o["nearLayer"][0].get<int>(); c.fineHi = o["nearLayer"][1].get<int>(); }
-  vox_.reset(new VoxelWorld(c, phys_.get())); return "";
+  vox_.reset(new VoxelWorld(c, phys_.get())); if (ui_) ui_->setVoxels(vox_.get()); return "";
 }
 std::string Game::assetPath(const std::string& p) {
   namespace fs = std::filesystem; fs::path f = fs::u8path(p); if (f.is_absolute()) return p;
