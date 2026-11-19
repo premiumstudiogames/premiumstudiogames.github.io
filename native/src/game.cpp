@@ -85,6 +85,7 @@ Game::Game(const Project& p, const std::string& ln) : levelName(ln), project_(p)
 Game::~Game() { clear(); }
 
 void Game::clear() {
+  if (audio_) audio_->stopAll();
   if (scripts_ && started_) for (int b = 0; b < scripts_->count(); b++) scripts_->call(b, EV_Stop);   // last chance to save
   if (ui_) { ui_->setVoxels(nullptr); ui_->reset(); }
   if (scripts_) scripts_->shutdown();
@@ -172,7 +173,7 @@ void Game::update(float dt) {
   if (ui_) { ui_->update(dt); auto ev = ui_->takeEvents();
     if (!ev.empty()) { json a = json::array(); for (auto& e : ev) a.push_back({{"id", e.id}, {"type", e.type}, {"data", e.data}, {"path", e.path}}); scripts_->uiDispatch(a.dump()); scripts_->runJobs(); }
     bool m = ui_->modal(); if (m && !wasModal_) releaseInput(); wasModal_ = m;   // a menu opened: stop walking
-    if (ui_->pausing()) { if (vox_) vox_->update(playerPos()); pressed_.clear(); lookDx_ = lookDy_ = 0; if (restartRequested_) { logMsg("Restarting the level"); start(); } return; }   // the game stands still under the menu
+    if (ui_->pausing()) { soundFrame(); if (vox_) vox_->update(playerPos()); pressed_.clear(); lookDx_ = lookDy_ = 0; if (restartRequested_) { logMsg("Restarting the level"); start(); } return; }   // the game stands still under the menu
   }
   time_ += dt;
   if (vox_) { vox_->update(playerPos()); for (auto& l : vox_->takeLogs()) logMsg(l, l.rfind("error", 0) == 0 ? LogKind::Error : l.rfind("warning", 0) == 0 ? LogKind::Warn : LogKind::Info); }
@@ -247,6 +248,7 @@ void Game::update(float dt) {
     if (glm::any(glm::greaterThan(glm::abs(sc - o.bodyScale), glm::vec3(1e-4f)))) { phys_->setShape(o.body, o.a.mesh, sc); o.bodyScale = sc; }
     if (o.motion == Motion::Kinematic) phys_->moveKinematic(o.body, pos, q); else phys_->teleport(o.body, pos, q);
     o.lastWorld = W; }
+  soundFrame();
   pressed_.clear(); scripts_->runJobs();
   if (restartRequested_) { logMsg("Restarting the level"); start(); }
 }
@@ -404,6 +406,16 @@ std::string Game::createVoxels(const std::string& opts) {
   VoxelConfig c; c.minY = o.value("bottom", c.minY); c.maxY = o.value("top", c.maxY); c.viewDistance = o.value("viewDistance", c.viewDistance); c.seed = o.value("seed", c.seed); c.threads = o.value("threads", 0);
   if (o.contains("nearLayer") && o["nearLayer"].is_array() && o["nearLayer"].size() == 2) { c.fineLo = o["nearLayer"][0].get<int>(); c.fineHi = o["nearLayer"][1].get<int>(); }
   vox_.reset(new VoxelWorld(c, phys_.get())); if (ui_) ui_->setVoxels(vox_.get()); return "";
+}
+// the ear is the camera; sounds that follow an actor move with it (and stop when it is gone)
+void Game::soundFrame() {
+  if (!audio_) return;
+  audio_->update(cameraPos(), cameraDir(), [this](const std::string& id, glm::vec3& p) {
+    if (id == "@player") { p = playerPos(); return true; } Obj* o = get(id); if (!o || !o->alive) return false; p = worldPos(id); return true; });
+}
+Audio* Game::audio() {
+  if (!audio_) { audio_.reset(new Audio(g_headlessAudio)); audio_->setFiles([this](const std::string& p) { return assetPath(p); }); if (!audio_->ok()) { audio_.reset(); return nullptr; } }
+  return audio_.get();
 }
 std::string Game::assetPath(const std::string& p) {
   namespace fs = std::filesystem; fs::path f = fs::u8path(p); if (f.is_absolute()) return p;

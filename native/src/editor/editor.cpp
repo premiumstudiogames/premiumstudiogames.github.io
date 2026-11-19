@@ -244,6 +244,19 @@ void Editor::packageProject() {
   fs::copy_file(player, exe, fs::copy_options::overwrite_existing, ec);
   if (ec) { packageResult = "Could not copy the game program: " + ec.message(); wPackage = true; return; }
   fs::copy(fs::u8path(exeDir()) / "assets", out / "assets", fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
+  // the game's own files next to its project (textures, sounds, fonts, models, data): the packaged game finds them the same way
+  int own = 0;
+  if (!P.path.empty()) { fs::path root = fs::u8path(P.path).parent_path(), builds = fs::u8path(buildsDir());
+    static const std::set<std::string> media = {".png", ".jpg", ".jpeg", ".bmp", ".tga", ".wav", ".ogg", ".mp3", ".flac", ".ttf", ".otf", ".glb", ".gltf", ".bin", ".json", ".txt", ".csv"};
+    static const std::set<std::string> skipDirs = {"Builds", "Saved", "dist", "reference", "node_modules", "Intermediate"};
+    for (auto it = fs::recursive_directory_iterator(root, fs::directory_options::skip_permission_denied, ec); it != fs::recursive_directory_iterator(); it.increment(ec)) {
+      if (ec) break; const fs::path& f = it->path(); std::string nm = f.filename().u8string();
+      if (it->is_directory(ec)) { if (skipDirs.count(nm) || (!nm.empty() && nm[0] == '.') || f == builds) it.disable_recursion_pending(); continue; }
+      std::string ext = f.extension().u8string(); for (char& ch : ext) ch = (char)std::tolower((unsigned char)ch);
+      if (!media.count(ext) || nm.size() > 9 && nm.substr(nm.size() - 9) == ".pge.json" || it->file_size(ec) > (512ull << 20)) continue;
+      fs::path rel = fs::relative(f, root, ec); if (ec || rel.empty() || rel.u8string().rfind("..", 0) == 0) continue;
+      fs::create_directories((out / rel).parent_path(), ec); fs::copy_file(f, out / rel, fs::copy_options::overwrite_existing, ec); if (!ec) own++; }
+    if (own) logMsg("Package: " + std::to_string(own) + " file(s) of the game copied (textures, sounds, ...)"); }
   Project q = P; q.path.clear(); std::string err;
   if (!saveProjectFile(q, (out / "game.pge.json").u8string(), &err)) { packageResult = "Could not write the game data: " + err; wPackage = true; return; }
 #ifndef _WIN32

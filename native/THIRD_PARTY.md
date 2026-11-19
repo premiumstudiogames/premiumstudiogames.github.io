@@ -15,3 +15,4 @@
 | Noto Sans Arabic font | SIL Open Font License 1.1 |
 | stb_image | MIT / public domain |
 | Khronos OpenGL headers | MIT / Apache 2.0 |
+| miniaudio 0.11.21 (+ stb_vorbis) | public domain / MIT-0 (stb_vorbis: MIT / public domain) |

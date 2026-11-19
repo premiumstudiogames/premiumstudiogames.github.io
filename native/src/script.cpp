@@ -9,6 +9,7 @@
 #include <cmath>
 #include "voxel.h"
 #include "ui.h"
+#include "audio.h"
 #include "project.h"
 #include <nlohmann/json.hpp>
 
@@ -201,6 +202,28 @@ const ui = {
   blur() { __n.uiFocus(''); }
 };
 globalThis.ui = ui;
+// ---- sound: sound.play('sounds/step.ogg', { volume, pitch, position, loop, bus }) → a handle; sounds made by code
+const __sndErr = r => { if (typeof r === 'string') { sound.lastError = r; __n.log('warning: sound: ' + r); return 0; } sound.lastError = ''; return r; };
+const sound = {
+  lastError: '',
+  make(name, def) { const r = (def instanceof Float32Array) ? __n.sndSamples(String(name), def, 1, 44100) : __n.sndMake(String(name), JSON.stringify(def)); if (r) { sound.lastError = r; __n.log('warning: sound.make: ' + r); return false; } return true; },
+  samples(name, data, opts) { opts = opts || {}; const r = __n.sndSamples(String(name), data, opts.channels || 1, opts.sampleRate || 44100); if (r) { sound.lastError = r; __n.log('warning: sound.samples: ' + r); return false; } return true; },
+  play(src, opts) {
+    if (opts && opts.follow && typeof opts.follow === 'object') opts = Object.assign({}, opts, { follow: opts.follow.id });
+    if (opts && opts.position && typeof opts.position === 'object' && !Array.isArray(opts.position)) opts = Object.assign({}, opts, { position: [opts.position.x, opts.position.y, opts.position.z] });
+    if (src instanceof Float32Array) { const h = __n.sndSamples('', src, (opts && opts.channels) || 1, (opts && opts.sampleRate) || 44100); if (typeof h === 'number' && opts) __n.sndSet(h, JSON.stringify(opts)); return __sndErr(h); }
+    if (src !== null && typeof src === 'object') return __sndErr(__n.sndPlay(JSON.stringify(src), true, JSON.stringify(opts || {})));
+    return __sndErr(__n.sndPlay(String(src), false, JSON.stringify(opts || {}))); },
+  set(h, opts) { if (opts && opts.position && !Array.isArray(opts.position) && typeof opts.position === 'object') opts = Object.assign({}, opts, { position: [opts.position.x, opts.position.y, opts.position.z] }); __n.sndSet(+h || 0, JSON.stringify(opts || {})); },
+  stop(h, fade) { __n.sndStop(+h || 0, +fade || 0); },
+  stopAll(bus) { __n.sndStopAll(bus ? String(bus) : ''); },
+  playing(h) { return __n.sndPlaying(+h || 0); },
+  has(name) { return __n.sndHas(String(name)); },
+  get volume() { return __n.sndVolume('master', undefined); }, set volume(v) { __n.sndVolume('master', +v); },
+  setVolume(bus, v) { __n.sndVolume(String(bus), +v); },
+  getVolume(bus) { return __n.sndVolume(String(bus), undefined); }
+};
+globalThis.sound = sound;
 globalThis.__uiDispatch = function (json) {
   for (const e of JSON.parse(json)) {
     let stopped = false; const target = new UiNode(e.id);
@@ -295,6 +318,28 @@ static void bindNatives(JSContext* c) {
   FN("uiDir", 1, { UIP(c) U->setDir(JS_ToBool(c, a[0])); return JS_UNDEFINED; });
   FN("uiEscape", 1, { UIP(c) U->setEscape(JS_ToBool(c, a[0])); return JS_UNDEFINED; });
   FN("uiState", 0, { UIP(c) JSValue r = JS_NewArray(c); JS_SetPropertyUint32(c, r, 0, JS_NewBool(c, U->modal())); JS_SetPropertyUint32(c, r, 1, JS_NewBool(c, U->pausing())); JS_SetPropertyUint32(c, r, 2, JS_NewBool(c, U->typing())); return r; });
+  // sound
+#define SNDP(c) Audio* A = W(c)->audio(); if (!A) return JS_NewString(c, "no sound here");
+  FN("sndMake", 2, { SNDP(c) nlohmann::json d; try { d = nlohmann::json::parse(S(c, a[1])); } catch (...) { return JS_NewString(c, "the description is not valid"); }
+    std::string e = A->make(S(c, a[0]), d); return JS_NewStringLen(c, e.data(), e.size()); });
+  FN("sndSamples", 4, { SNDP(c) size_t off = 0, bl = 0, bpe = 0; JSValue buf = JS_GetTypedArrayBuffer(c, a[1], &off, &bl, &bpe);
+    if (JS_IsException(buf) || bpe != 4) { if (JS_IsException(buf)) JS_FreeValue(c, JS_GetException(c)); else JS_FreeValue(c, buf); return JS_NewString(c, "samples must be a Float32Array (-1 .. 1)"); }
+    size_t sz = 0; uint8_t* base = JS_GetArrayBuffer(c, &sz, buf); JS_FreeValue(c, buf); if (!base) return JS_NewString(c, "samples must be a Float32Array (-1 .. 1)");
+    std::vector<float> v((const float*)(base + off), (const float*)(base + off) + bl / 4);
+    std::string name = S(c, a[0]); int ch = (int)D(c, a[2]), rate = (int)D(c, a[3]);
+    if (name.empty()) { std::string why; int h = A->playSamples(std::move(v), ch, rate, nlohmann::json::object(), &why); if (!h) return JS_NewStringLen(c, why.data(), why.size()); return JS_NewInt32(c, h); }
+    std::string e = A->makeSamples(name, std::move(v), ch, rate); return JS_NewStringLen(c, e.data(), e.size()); });
+  FN("sndPlay", 3, { SNDP(c) nlohmann::json o = nlohmann::json::object(); try { o = nlohmann::json::parse(S(c, a[2])); } catch (...) {} std::string why; int h;
+    if (JS_ToBool(c, a[1])) { nlohmann::json d; try { d = nlohmann::json::parse(S(c, a[0])); } catch (...) { return JS_NewString(c, "the description is not valid"); } h = A->playDef(d, o, &why); }
+    else h = A->play(S(c, a[0]), o, &why);
+    if (!h) return JS_NewStringLen(c, why.data(), why.size()); return JS_NewInt32(c, h); });
+  FN("sndSet", 2, { SNDP(c) nlohmann::json o = nlohmann::json::object(); try { o = nlohmann::json::parse(S(c, a[1])); } catch (...) {} A->set((int)D(c, a[0]), o); return JS_UNDEFINED; });
+  FN("sndStop", 2, { SNDP(c) A->stop((int)D(c, a[0]), (float)D(c, a[1])); return JS_UNDEFINED; });
+  FN("sndStopAll", 1, { SNDP(c) A->stopAll(S(c, a[0])); return JS_UNDEFINED; });
+  FN("sndPlaying", 1, { SNDP(c) return JS_NewBool(c, A->playing((int)D(c, a[0]))); });
+  FN("sndHas", 1, { SNDP(c) return JS_NewBool(c, A->has(S(c, a[0]))); });
+  FN("sndVolume", 2, { SNDP(c) std::string b = S(c, a[0]); if (JS_IsNumber(a[1])) A->setVolume(b, (float)D(c, a[1])); return JS_NewFloat64(c, A->volume(b)); });
+#undef SNDP
   FN("uiError", 1, { logMsg("error: " + S(c, a[0]), LogKind::Error); return JS_UNDEFINED; });
 #undef UIP
   FN("psEnv", 1, { const char* v = std::getenv(S(c, a[0]).c_str()); return JS_NewBool(c, v && *v && std::string(v) != "0"); });

@@ -7,6 +7,7 @@
 #include "physics.h"
 #include "arabic.h"
 #include "ui.h"
+#include "audio.h"
 #include <imgui.h>
 #include <chrono>
 #include <cstdio>
@@ -17,6 +18,7 @@
 #include <filesystem>
 
 using namespace pge;
+using json = nlohmann::json;
 static int fails = 0, passes = 0;
 #define CHECK(c, msg) do { if (c) { passes++; std::printf("  ok   %s\n", msg); } else { fails++; std::printf("  FAIL %s  (%s:%d)\n", msg, __FILE__, __LINE__); } } while (0)
 
@@ -429,6 +431,71 @@ function onStart() {
     std::string st; for (auto& [id, t] : g.hudLines()) if (id == "st") st = t; CHECK(st.rfind("true ", 0) == 0, ("storage round trip, keys, missing = null: " + st).c_str());
     g.storage("remove", "stopped", ""); g.start(); CHECK(g.storage("get", "stopped", "") == "yes", "onStop runs when the game stops or restarts");
     g.storage("remove", "stopped", ""); g.storage("remove", "t", "");
+  }
+
+  std::printf("sound\n");
+  {
+    auto rms = [](const std::vector<float>& v, size_t a = 0, size_t b = 0) { if (!b) b = v.size(); double s = 0; for (size_t i = a; i < b; i++) s += v[i] * v[i]; return std::sqrt(s / std::max<size_t>(1, b - a)); };
+    std::vector<float> out; std::string e = synthRender({{"type", "sine"}, {"freq", 440}, {"duration", 0.5}}, out);
+    int zc = 0; for (size_t i = 1; i < out.size(); i++) zc += (out[i - 1] < 0) != (out[i] < 0);
+    CHECK(e.empty() && out.size() == 22050 && std::abs(rms(out) - 0.7071) < 0.01 && std::abs(zc - 440) <= 2, ("a 440 Hz sine made by code: " + std::to_string(zc) + " crossings, rms " + std::to_string(rms(out))).c_str());
+    synthRender({{"type", "square"}, {"freq", json::array({880, 110})}, {"duration", 0.4}, {"gain", {{"attack", 0.01}, {"decay", 0.1}, {"sustain", 0.3}, {"release", 0.1}}}}, out);
+    CHECK(rms(out, 0, 400) < rms(out, 2000, 3000) && rms(out, 17000, 17400) < rms(out, 9000, 9400) + 1e-6 && std::abs(out.back()) < 0.02, "envelope: attack, decay, sustain, release");
+    std::vector<float> raw, low; synthRender({{"type", "noise"}, {"duration", 0.3}, {"seed", 7}}, raw);
+    synthRender({{"type", "noise"}, {"duration", 0.3}, {"seed", 7}, {"filter", {{"type", "lowpass"}, {"freq", 400}}}}, low);
+    CHECK(rms(low) < rms(raw) * 0.4, ("noise through a 400 Hz lowpass is much quieter: " + std::to_string(rms(low) / rms(raw))).c_str());
+    std::vector<float> mixd; synthRender({{"voices", json::array({json{{"type", "sine"}, {"freq", 220}, {"length", 0.2}}, json{{"type", "triangle"}, {"freq", 330}, {"start", 0.2}, {"length", 0.2}}})}, {"echo", {{"time", 0.1}}}}, mixd);
+    CHECK(mixd.size() > (size_t)(0.4 * 44100) && rms(mixd, 0, 8000) > 0.3 && rms(mixd, 9500, 17000) > 0.3, "voices one after the other, with an echo tail");
+    CHECK(!synthRender({{"type", "kazoo"}}, out).empty() && !synthRender({{"type", "sine"}, {"duration", 99}}, out).empty(), "a bad sound description says what is wrong");
+
+    Audio au(true); CHECK(au.ok(), "the mixer starts without a sound card (tests)");
+    CHECK(au.make("beep", {{"type", "sine"}, {"freq", 500}, {"duration", 1}}).empty(), "sound.make keeps a sound by name");
+    std::vector<float> st(2 * 4800); int h = au.play("beep", json::object()); au.mix(st.data(), 4800);
+    auto chan = [&](int c) { double s = 0; for (size_t i = c; i < st.size(); i += 2) s += st[i] * st[i]; return std::sqrt(s / (st.size() / 2)); };
+    CHECK(h > 0 && chan(0) > 0.3 && std::abs(chan(0) - chan(1)) < 0.05, "it plays (both ears the same)");
+    au.setVolume("sfx", 0); au.mix(st.data(), 4800); CHECK(chan(0) < 1e-4, "a group's volume (sfx = 0) mutes it"); au.setVolume("sfx", 1);
+    au.setVolume("master", 0.5f); au.mix(st.data(), 4800); double half = chan(0); au.setVolume("master", 1); au.mix(st.data(), 4800);
+    CHECK(std::abs(half / chan(0) - 0.5) < 0.05, "the game's volume");
+    au.pause(true); au.mix(st.data(), 4800); double ps = chan(0); au.pause(false); au.mix(st.data(), 4800);
+    CHECK(ps < 0.01 && chan(0) > 0.3, ("pause stops it where it is, resume goes on: " + std::to_string(ps) + " / " + std::to_string(chan(0))).c_str());
+    au.stop(h); CHECK(!au.playing(h) && au.count() == 0, "stop");
+    // 3D: the ear at the origin looking down -Z, the sound 4 m to the right
+    au.update({0, 0, 0}, {0, 0, -1}, nullptr); int h3 = au.play("beep", {{"position", {4, 0, 0}}}); au.mix(st.data(), 4800);
+    double l = chan(0), r = chan(1); CHECK(h3 > 0 && r > l * 1.5, ("a sound on the right is louder in the right ear: " + std::to_string(l) + " / " + std::to_string(r)).c_str());
+    au.set(h3, {{"position", {40, 0, 0}}}); au.mix(st.data(), 4800); CHECK(chan(1) < r * 0.5, "and quieter far away");
+    au.stop(h3, 0.05f); for (int i = 0; i < 4; i++) { au.mix(st.data(), 4800); au.update({0, 0, 0}, {0, 0, -1}, nullptr); } CHECK(au.count() == 0, "stop with a fade, then it is gone");
+    // a .wav file
+    std::string wav = (std::filesystem::temp_directory_path() / "pge-test.wav").string();
+    { FILE* f = std::fopen(wav.c_str(), "wb"); int n = 22050, rate = 22050; auto w32 = [&](uint32_t v) { std::fwrite(&v, 4, 1, f); }; auto w16 = [&](uint16_t v) { std::fwrite(&v, 2, 1, f); };
+      std::fwrite("RIFF", 1, 4, f); w32(36 + n * 2); std::fwrite("WAVEfmt ", 1, 8, f); w32(16); w16(1); w16(1); w32(rate); w32(rate * 2); w16(2); w16(16); std::fwrite("data", 1, 4, f); w32(n * 2);
+      for (int i = 0; i < n; i++) { int16_t v = (int16_t)(std::sin(i * 0.1) * 12000); std::fwrite(&v, 2, 1, f); } std::fclose(f); }
+    int hw = au.play(wav, json::object()); au.mix(st.data(), 4800); CHECK(hw > 0 && chan(0) > 0.15, "plays a .wav file");
+    { int ho = au.play(std::string(PGE_TEST_DATA) + "/tone.ogg", json::object()); au.mix(st.data(), 4800); CHECK(ho > 0 && chan(0) > 0.2, ("plays an .ogg file (Vorbis): " + std::to_string(chan(0))).c_str()); au.stop(ho); }
+    std::string why; CHECK(au.play("nope.ogg", json::object(), &why) == 0 && !why.empty(), ("a missing file: " + why).c_str());
+    au.stopAll(); std::filesystem::remove(wav);
+
+    g_headlessAudio = true;
+    Project q = makeTemplate("Blank", "T");
+    q.scripts["SC_SND"] = {"SC_SND", R"JS(
+function onStart() {
+  world.vars.made = sound.make('jump', { type: 'square', freq: [300, 900], duration: 0.2, gain: { attack: 0.005, release: 0.1 }, filter: { type: 'lowpass', freq: 3000 } });
+  world.vars.h = sound.play('jump', { volume: 0.8, follow: self });
+  world.vars.loop = sound.play({ voices: [{ type: 'brown', duration: 1 }] }, { loop: true, bus: 'music', position: { x: 1, y: 0, z: 0 } });
+  const s = new Float32Array(4410); for (let i = 0; i < s.length; i++) s[i] = Math.sin(i * 0.2) * 0.5;
+  world.vars.raw = sound.play(s);
+  world.vars.bad = sound.play('missing.ogg');
+  sound.setVolume('music', 0.3); world.vars.vol = sound.getVolume('music');
+}
+)JS"};
+    Actor sa = newActor("Empty", "Speaker"); sa.script = "SC_SND"; q.levels[0].second.actors.push_back(sa);
+    Game g(q, q.startLevel); logClear(); CHECK(g.start(), "a game with sound starts");
+    Audio* A = g.audio(); run(g, 0.05f);
+    CHECK(A && A->count() == 3, ("sound.play: made, follows its actor, loops, samples from a Float32Array: " + std::to_string(A ? A->count() : -1) + " playing").c_str());
+    CHECK(hasLog("sound: can't play 'missing.ogg'"), "a sound that isn't there is a warning");
+    { std::vector<float> buf(2 * 800); for (int i = 0; i < 40; i++) { A->mix(buf.data(), 800); g.update(1.f / 60); } }
+    CHECK(A->count() == 1, ("finished sounds go; the loop stays: " + std::to_string(A->count())).c_str());
+    g.start(); run(g, 0.02f); CHECK(g.audio()->count() == 3, "restarting the level stops the old sounds (the new ones play)");
+    g_headlessAudio = false;
   }
 
   std::printf("\n%d passed, %d failed\n", passes, fails);

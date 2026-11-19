@@ -7,7 +7,7 @@
 #include <glm/glm.hpp>
 
 namespace pge {
-class VoxelWorld; class Ui;
+class VoxelWorld; class Ui; class Audio;
 // what scripts can do to the game (implemented by Game)
 class ScriptWorld {
 public:
@@ -49,6 +49,7 @@ public:
   virtual std::string savePath(const std::string& name) { return name; }   // Documents/PremiumEngine/Saves/<game>/<name>
   // Premium Games: a trophy for the player's account (only when the game was started from the Premium Games store)
   virtual void trophy(const std::string& id) { log("[trophy] " + id); }
+  virtual Audio* audio() { return nullptr; }                                 // sound.* (made the first time a script uses it)
   virtual Ui* ui() { return nullptr; }                                       // the game's menus and HUD (ui.*)
   // the player's movement settings and state as JSON (fly, speeds, keys, yaw / pitch, grounded); playerSet merges a JSON object
   virtual std::string playerGet() { return "{}"; }

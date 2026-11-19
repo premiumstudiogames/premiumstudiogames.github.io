@@ -66,6 +66,28 @@ input
   input.pressed('WheelUp')       the mouse wheel turned this frame ('WheelUp' / 'WheelDown'; onKey gets them too)
 
 world.camera                     .position, .forward (the direction the player looks)
+)"   // (MSVC: one string literal piece is at most 16 KB)
+R"(
+SOUND (sound) - files (wav, ogg, mp3, flac) next to the project, or sounds made by code; 3D: the ear is the camera
+  const h = sound.play('sounds/step.ogg', { volume: 0.8, pitch: 1.1 })      returns a handle (0 + sound.lastError if not)
+  sound.play('music/menu.ogg', { bus: 'music', loop: true, stream: true, fadeIn: 2 })
+  sound.play('fire.wav', { position: [x, y, z], minDistance: 2, maxDistance: 80, rolloff: 1 })   heard from there
+  sound.play('engine.ogg', { follow: self, loop: true })     moves with an actor (stops when it is destroyed)
+  options: volume, pitch, pan (-1 .. 1), loop, bus ('sfx' default, 'music', 'ui' or any name), delay (s), fadeIn (s), stream
+  sound.set(h, { volume, pitch, pan, position, loop })    sound.stop(h, fadeSeconds)    sound.playing(h)    sound.stopAll('music')
+  sound.volume = 0.8   (the whole game)       sound.setVolume('music', 0.5)   sound.getVolume('music')
+  sound.make('jump', description)   keep a sound made by code under a name, then sound.play('jump')
+  sound.play(description, options)  make and play at once;   sound.play(float32Array, { sampleRate: 44100 })  your own samples
+  sound.samples('name', float32Array, { sampleRate: 44100, channels: 1 })
+  a description (like Web Audio: oscillator -> filter -> gain):
+    { type: 'square', freq: [300, 900], duration: 0.2, gain: { attack: 0.005, decay: 0.05, sustain: 0.6, release: 0.1 },
+      filter: { type: 'lowpass', freq: 2000, q: 1 }, detune: 0, vibrato: { rate: 6, depth: 20 }, volume: 0.5 }
+    type: sine, square, sawtooth, triangle, noise (white), pink, brown     duty: 0.5 (square)
+    freq / gain / filter freq: a number, [from, to] (exponential), or points [[0, 440], [0.1, 880, 'exp'], [0.3, 220]] (seconds)
+    gain envelope: attack, decay, sustain (level), hold, release, peak, curve: 'exp'
+    filter: lowpass, highpass, bandpass, notch (Q like Web Audio's BiquadFilterNode); a list of filters works too
+    several voices: { voices: [ { ..., start: 0 }, { ..., start: 0.1, length: 0.2 } ], echo: { time: 0.25, feedback: 0.35, mix: 0.35 }, volume: 0.8 }
+  The game's sounds pause with the pause menu. Packaging copies the project's sounds and pictures with the game.
 
 GAME UI (ui) - menus, HUD, inventory, settings, made from scripts (like Unreal's UMG)
 The screen is 1080 units tall (1920 wide at 16:9) at any resolution: sizes and positions are in these units.

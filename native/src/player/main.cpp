@@ -53,6 +53,7 @@ int main(int argc, char** argv) {
     Uint64 now = SDL_GetPerformanceCounter(); float dt = (float)((now - last) / (double)SDL_GetPerformanceFrequency()); last = now;
     if (!selftest.empty()) dt = 1.f / 60;
     if (!paused) G.update(dt);
+    G.pauseSound(paused);   // the pause menu (or another window in front) stops the game's sounds where they are
     // the game's menus free the mouse while they are open, and take it back when they close
     if (selftest.empty()) { bool want = !paused && focused && G.wantsMouseLock(); if (want != (bool)SDL_GetRelativeMouseMode()) {
         SDL_SetRelativeMouseMode(want ? SDL_TRUE : SDL_FALSE); if (!want) { int ww, wh; SDL_GetWindowSize(W.win, &ww, &wh); SDL_WarpMouseInWindow(W.win, ww / 2, wh / 2); } } }
