@@ -150,6 +150,7 @@ const voxels = { lastError: '',
   save(name = 'world') { const r = __n.voxSave(String(name)); this.lastError = r === true ? '' : String(r); return r === true; },
   deleteSave(name = 'world') { return __n.voxDelete(String(name)); },
   load(name = 'world') { const r = __n.voxLoad(String(name)); this.lastError = r === true ? '' : String(r); return r === true; },
+  items(list) { __n.voxItems(list instanceof Float32Array ? list : new Float32Array(list || [])); },
   get stats() { return JSON.parse(__n.voxStats()); } };
 const input = { key(k) { return __n.key(String(k)); }, pressed(k) { return __n.pressed(String(k)); },
   get mouse() { const m = __n.mouse(); return { dx: m[0], dy: m[1], left: !!m[2], right: !!m[3] }; } };
@@ -428,6 +429,9 @@ static void bindNatives(JSContext* c) {
   FN("playerGet", 0, { std::string s = W(c)->playerGet(); return JS_NewStringLen(c, s.data(), s.size()); });
   FN("playerSet", 1, { W(c)->playerSet(S(c, a[0])); return JS_UNDEFINED; });
   FN("storage", 3, { std::string s = W(c)->storage(S(c, a[0]), S(c, a[1]), S(c, a[2])); return JS_NewStringLen(c, s.data(), s.size()); });
+  FN("voxItems", 1, { VoxelWorld* v = W(c)->voxels(); if (!v) return JS_UNDEFINED; size_t off = 0, len = 0, bpe = 0; JSValue buf = JS_GetTypedArrayBuffer(c, a[0], &off, &len, &bpe);
+    if (JS_IsException(buf)) return JS_EXCEPTION; size_t sz = 0; uint8_t* p = JS_GetArrayBuffer(c, &sz, buf); JS_FreeValue(c, buf); std::vector<float> r;
+    if (p && bpe == 4) { r.resize(len / 4); std::memcpy(r.data(), p + off, r.size() * 4); } v->setItems(r); return JS_UNDEFINED; });
   FN("voxReady", 3, { VoxelWorld* v = W(c)->voxels(); return JS_NewBool(c, v && v->ready({(float)D(c, a[0]), (float)D(c, a[1]), (float)D(c, a[2])})); });
   FN("voxTop", 2, { VoxelWorld* v = W(c)->voxels(); return JS_NewFloat64(c, v ? v->topY((float)D(c, a[0]), (float)D(c, a[1])) : NAN); });
   FN("voxStats", 0, { VoxelWorld* v = W(c)->voxels(); std::string s = "{}";

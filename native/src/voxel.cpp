@@ -733,6 +733,7 @@ struct VoxelWorld::Impl {
   std::mutex rm; std::vector<std::function<void()>> results; std::vector<std::string> logs;
   glm::vec3 focus{0}; int inflightGen = 0, inflightMesh = 0; double genMs = 0, meshMs = 0; int genCount = 0, meshCount = 0;
   unsigned atlas = 0; int atlasTiles = 0, atlasW = 0, atlasH = 0;
+  GpuPart items;   // voxels.items(): small blocks drawn with the world
   explicit Impl(const VoxelConfig& c) : cfg(c), g(c) {}
   Chunk* get(int cx, int cz) { auto it = chunks.find(ckey(cx, cz)); return it == chunks.end() ? nullptr : it->second.get(); }
   const Chunk* get(int cx, int cz) const { auto it = chunks.find(ckey(cx, cz)); return it == chunks.end() ? nullptr : it->second.get(); }
@@ -766,6 +767,7 @@ VoxelWorld::~VoxelWorld() {
   for (auto& t : d->workers) t.join();
   for (auto& [k, c] : d->chunks) { d->freeGpu(*c); d->freeBody(*c); }
   if (d->atlas && glDeleteTextures) glDeleteTextures(1, &d->atlas);
+  Impl::freePart(d->items);
 }
 
 void VoxelWorld::defineBlock(int id, const BlockType& bt) {
@@ -1012,7 +1014,36 @@ void VoxelWorld::draw(Frame& f, const Camera& cam) const {
     if (c.water.vao && c.water.count) { glm::vec3 mn = org + c.water.bmin - glm::vec3(0, 0.1f, 0), mx = org + c.water.bmax;
       if (!outside(mn, mx)) { VoxelDraw v; v.vao = c.water.vao; v.count = c.water.count; v.offset = org; v.mn = mn; v.mx = mx; f.voxelWater.push_back(v); } }
   }
+  if (d->items.vao && d->items.count) { VoxelDraw v; v.vao = d->items.vao; v.count = d->items.count; v.offset = glm::vec3(0); v.mn = d->items.bmin; v.mx = d->items.bmax; v.visible = true; f.voxels.push_back(v); }
   f.voxelAtlas = d->atlas; f.voxelTiles = d->atlasTiles;
+}
+int VoxelWorld::itemIndices() const { return d->items.count; }
+void VoxelWorld::setItems(const std::vector<float>& r) {
+  MeshPart M; const BlockTable& T = *d->table;
+  for (size_t i = 0; i + 13 <= r.size(); i += 13) {
+    int id = (int)r[i]; const BlockType& bt = typeOf(T, id); glm::vec3 c(r[i + 1], r[i + 2], r[i + 3]), sz(r[i + 4], r[i + 5], r[i + 6]); float yaw = r[i + 7], pitch = r[i + 8]; int tile = (int)r[i + 9];
+    glm::vec3 mul(r[i + 10], r[i + 11], r[i + 12]); if (!std::isfinite(c.x + c.y + c.z + sz.x + sz.y + sz.z)) continue;
+    glm::mat3 R = glm::mat3(glm::rotate(glm::mat4(1), yaw, glm::vec3(0, 1, 0)) * glm::rotate(glm::mat4(1), pitch, glm::vec3(1, 0, 0)));
+    uint8_t fl = (uint8_t)(std::lround(glm::clamp(bt.glow / 2.f, 0.f, 1.f) * 15) | ((tile >= 0 || bt.cutout) ? 16 : 0));
+    auto quad = [&](glm::vec3 p0, glm::vec3 eu, glm::vec3 ev, glm::vec3 n, int face) {   // p0 + u*eu + v*ev, u, v in 0..1 (local, -0.5 .. 0.5 box)
+      glm::vec3 col = (tile >= 0 ? glm::vec3(1) : bt.color[face]) * mul; int t = tile >= 0 ? tile : bt.tile[face]; glm::vec3 wn = glm::normalize(R * n);
+      uint32_t b = (uint32_t)M.v.size(); const float U[4] = {0, 1, 0, 1}, V[4] = {0, 0, 1, 1};
+      for (int k = 0; k < 4; k++) { glm::vec3 P = c + R * ((p0 + eu * U[k] + ev * V[k]) * sz); VVert v{}; v.x = P.x; v.y = P.y; v.z = P.z; v.u = U[k]; v.v = V[k];
+        glm::vec3 cc = glm::clamp(col * 0.5f, 0.f, 1.f); v.r = (uint8_t)std::lround(cc.r * 255); v.g = (uint8_t)std::lround(cc.g * 255); v.b = (uint8_t)std::lround(cc.b * 255); v.ao = 255;
+        v.nx = (int8_t)std::lround(wn.x * 127); v.ny = (int8_t)std::lround(wn.y * 127); v.nz = (int8_t)std::lround(wn.z * 127); v.tile = t < 0 ? 0xffff : (uint16_t)t; v.flags = fl;
+        M.v.push_back(v); M.bmin = glm::min(M.bmin, P); M.bmax = glm::max(M.bmax, P); }
+      bool flip = glm::dot(glm::cross(eu, ev), n) < 0; uint32_t tri[6] = {0, 1, 3, 0, 3, 2}; if (flip) { std::swap(tri[1], tri[2]); std::swap(tri[4], tri[5]); }
+      for (uint32_t t2 : tri) M.i.push_back(b + t2); };
+    if (bt.shape == SH_Cross && tile < 0) {   // flowers, grass, items: two crossed pictures seen from both sides
+      const float h = 0.3535534f; glm::vec3 a(-h, -0.5f, -h), b2(h, -0.5f, h), e(-h, -0.5f, h), f2(h, -0.5f, -h), up(0, 1, 0);
+      quad(a, b2 - a, up, glm::normalize(glm::cross(b2 - a, up)), 1); quad(b2, a - b2, up, glm::normalize(glm::cross(a - b2, up)), 1);
+      quad(e, f2 - e, up, glm::normalize(glm::cross(f2 - e, up)), 1); quad(f2, e - f2, up, glm::normalize(glm::cross(e - f2, up)), 1);
+      continue; }
+    for (int dd = 0; dd < 6; dd++) { glm::ivec3 n = DIRS[dd]; int ua, va; faceAxes(dd, ua, va); glm::vec3 eu(0), ev(0); eu[ua] = 1; ev[va] = 1;
+      glm::vec3 p0(-0.5f); if (n.x > 0) p0.x = 0.5f; if (n.y > 0) p0.y = 0.5f; if (n.z > 0) p0.z = 0.5f;
+      quad(p0, eu, ev, glm::vec3(n), dd == 2 ? 0 : dd == 3 ? 2 : 1); }
+  }
+  uploadPart(d->items, M);
 }
 
 /* ---- blocks */

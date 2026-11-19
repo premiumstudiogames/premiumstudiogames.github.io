@@ -430,6 +430,10 @@ function onStart() {
     int errs = 0; for (auto& l : logLines()) errs += l.kind == LogKind::Error; CHECK(errs == 0, "no script errors");
     std::string st; for (auto& [id, t] : g.hudLines()) if (id == "st") st = t; CHECK(st.rfind("true ", 0) == 0, ("storage round trip, keys, missing = null: " + st).c_str());
     g.storage("remove", "stopped", ""); g.start(); CHECK(g.storage("get", "stopped", "") == "yes", "onStop runs when the game stops or restarts");
+    { g.voxels()->defineBlock(9, [] { BlockType t; t.defined = true; t.shape = SH_Cross; return t; }());
+      g.voxels()->setItems({1, 0, 1, 0, .2f, .2f, .2f, .5f, 0, -1, 1, 1, 1,   9, 1, 1, 0, .3f, .3f, .3f, 0, 0, -1, 1, 1, 1,   1, 0, 1, 0, .4f, .4f, .4f, 0, 0, 5, 1, 1, 1});
+      CHECK(g.voxels()->itemIndices() == 36 + 24 + 36, ("voxels.items: two boxes and a crossed picture (" + std::to_string(g.voxels()->itemIndices()) + " indices)").c_str());
+      g.voxels()->setItems({}); CHECK(g.voxels()->itemIndices() == 0, "voxels.items([]) clears them"); }
     g.storage("remove", "stopped", ""); g.storage("remove", "t", "");
   }
 

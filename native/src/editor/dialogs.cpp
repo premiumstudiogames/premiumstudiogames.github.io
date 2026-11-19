@@ -184,6 +184,8 @@ BLOCKFALL's world fits: voxels.create({ bottom: -98, top: 302, nearLayer: [-2, 2
   voxels.save(name)              the player's changes (only changed chunks) -> Documents\PremiumEngine\Saves\<game>\<name>.pgworld
   voxels.load(name)              puts them back over the generated world (after voxels.create and defineBlock). false + lastError
   voxels.deleteSave(name)        deletes that saved world file (true if there was one)
+  voxels.items([id, x, y, z, sx, sy, sz, yaw, pitch, tile, r, g, b, ...])   small blocks drawn with the world until the next call (items on the ground,
+                                 pieces flying off, a crack: tile = an atlas tile on every face, -1 = the block's own; 13 numbers each, Float32Array is fastest)
   voxels.stats                   { chunks, meshed, generating, meshing, triangles, bricks, generateMs, meshMs, memoryMB, changedChunks }
   world.voxels                   the same object
   world.player.swimming          true while the player is in a liquid (Space swims up)

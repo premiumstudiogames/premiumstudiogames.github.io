@@ -128,6 +128,10 @@ public:
   bool ready(const glm::vec3& p, float radius = 2.f) const;   // the chunks around p are loaded and collide
   void waitIdle(int maxMs = 20000);                         // tests: until everything near the focus is built
   void draw(Frame& f, const Camera& cam) const;
+  // small blocks drawn this frame and after, until the next call: items lying on the ground, pieces flying off, a crack over a block
+  // 13 numbers each: id, x, y, z (centre, m), sx, sy, sz (m), yaw, pitch (radians), tile (-1 = the block's own, else this atlas tile on every face, see-through pixels are holes), r, g, b (colour multiplier)
+  void setItems(const std::vector<float>& rec);
+  int itemIndices() const;   // tests
 
   // blocks (main thread). Positions in metres.
   BlockInfo getBlock(const glm::vec3& p) const;
