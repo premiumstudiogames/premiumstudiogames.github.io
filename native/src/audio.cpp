@@ -36,7 +36,7 @@ static float polyBlep(float t, float dt) { if (t < dt) { t /= dt; return t + t -
 struct Biquad {
   int type = 0; float q = 1; Curve f; double b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0, x1 = 0, x2 = 0, y1 = 0, y2 = 0;
   void coeffs(float fc, int sr) {   // Web Audio's BiquadFilterNode (Q in dB for lowpass / highpass)
-    fc = std::clamp(fc, 10.f, sr * 0.49f); double w = 2 * M_PI * fc / sr, c = std::cos(w), s = std::sin(w);
+    fc = std::clamp(fc, 10.f, sr * 0.49f); double w = 6.283185307179586 * fc / sr, c = std::cos(w), s = std::sin(w);
     double al = type <= 1 ? s / (2 * std::pow(10.0, q / 20.0)) : s / (2 * std::max(1e-4f, q)), a0 = 1 + al;
     if (type == 0) { b0 = (1 - c) / 2; b1 = 1 - c; b2 = (1 - c) / 2; }
     else if (type == 1) { b0 = (1 + c) / 2; b1 = -(1 + c); b2 = (1 + c) / 2; }
