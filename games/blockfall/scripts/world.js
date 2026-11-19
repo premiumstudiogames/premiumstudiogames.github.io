@@ -131,6 +131,7 @@ const MODES = { c: ['إبداع', 'كل البلوكات بلا حدود، وت�
 const SHAPES_W = { deep: ['عالم عميق', 'جبال وكهوف ودنجن وبوابة نجمية، من −98 إلى +302 متر.', 5], flat1: ['عالم مسطح', 'أرض مسطحة للبناء.', 'flat1'] };
 const ar = n => String(n).replace(/\d/g, d => '٠١٢٣٤٥٦٧٨٩'[d]);
 const C = { bg: '#0f1115ee', card: '#171a21f2', line: '#2c313c', pri: '#e0a02a', priT: '#1a1206', txt: '#e8e6e1', dim: '#9aa0aa', bad: '#c0473d', sel: '#ffd36a' };
+let stepD = 0, wasG = true, lastVy = 0;
 let WL = storage.getJSON('worlds', []), CUR = null, HOT = DEFHOT.slice(), sel = 0, size = 0.2, shape = 0, saveIn = 0, lastSpace = -1, spawned = false, menuWorld = false, selW = null, nwMode = 'c', nwShape = 'deep', autoT = 0;
 const S = storage.getJSON('settings', { last: null });
 
@@ -284,6 +285,47 @@ function drawBuild() {
   bShapes.clear(); SHAPES.forEach((n, i) => bShapes.add('button', { id: 'sh' + i, text: n, size: 19, radius: 6, bg: shape === i ? C.pri : C.card, color: shape === i ? C.priT : C.txt, on: { click: () => { shape = i; drawBuild(); drawHot(); } } }));
 }
 
+const PLANT_IDS = {}; for (const p of PLANTS) PLANT_IDS[p[0]] = 1;
+// ---------- the game's sounds: the same Web Audio recipes as BLOCKFALL (noise grains, tones, filters, envelopes), rendered to samples
+// each voice becomes one voice of the engine's sound maker (made in C++: fast), with the game's envelope (exponential up, hold, exponential down)
+let SNDV = []; const sndFlush = pos => { if (!SNDV.length) return;
+  const voices = SNDV.map(v => { const hold = v.hold == null ? v.a : v.hold, o = { type: v.noise === 'white' ? 'noise' : v.noise || v.wave, start: v.delay, duration: v.dur + 0.02,
+      gain: { attack: v.a, hold: Math.max(0, hold - v.a), decay: Math.max(0.001, v.dur - hold), sustain: 0, release: 0.01, peak: v.gain, curve: 'exp' } };
+    if (!v.noise) o.freq = v.f1 ? [v.f0, v.f1] : v.f0; else if (v.rate && v.rate !== 1) o.rate = v.rate;
+    if (v.filter) o.filter = { type: v.filter.type, freq: v.filter.f1 ? [v.filter.f, v.filter.f1] : v.filter.f, q: v.filter.q };
+    return o; });
+  SNDV = []; sound.play({ voices, volume: 0.8 }, pos ? { position: pos, minDistance: 2, maxDistance: 24 } : {}); };
+const s2Noise = o => SNDV.push({ noise: o.brown ? 'brown' : o.white ? 'white' : 'pink', rate: o.rate || 1, dur: o.dur || .06, delay: o.delay || 0, a: o.a || .002, gain: o.gain || .2, filter: { type: o.type || 'bandpass', f: o.freq || 1200, f1: o.freq2, q: o.q == null ? 1 : o.q } });
+const s2Tone = o => { const dur = o.dur || .1, a = o.a || .005, rel = o.rel || dur * .5; SNDV.push({ wave: o.wave || 'sine', f0: o.f0, f1: o.f1, dur, delay: o.delay || 0, a, hold: Math.max(a, dur - rel), gain: o.gain || .1, filter: o.lp ? { type: 'lowpass', f: o.lp, q: o.lpq || 4 } : null }); };
+const tone = o => SNDV.push({ wave: o.type || 'sine', f0: o.f0, f1: o.f1, dur: o.dur, delay: o.delay || 0, a: o.a || .004, gain: o.gain || .2 });
+const burst = o => SNDV.push({ noise: 'white', rate: o.rate || 1, dur: o.dur || .1, delay: o.delay || 0, a: o.a || .003, gain: o.gain || .3, filter: { type: o.type || 'lowpass', f: o.freq || 800, f1: o.freq2, q: o.q || .7 } });
+const MATK = m => { const n = NAME[m] || ''; if (m === 1 || m === 17) return 'grass'; if (m === 2 || m === 20) return 'dirt'; if (m === 4) return 'sand'; if (m === 6 || m === 27 || LEAVES[m]) return 'leaf';
+  if (PLANT_IDS[m]) return 'plant'; if ([5, 7, 26, 59].includes(m) || /خشب|ألواح|جذع|صندوق/.test(n)) return 'wood'; if (m === 9 || /حديد|معدن/.test(n)) return 'metal'; if (/صوف/.test(n)) return 'wool'; return 'stone'; };
+function s2Crunch(k, amp, len) { len = len || 1; const r = Math.random;
+  const G = (n, span, f0, f1, q, dur, g, o) => { for (let i = 0; i < n; i++) s2Noise(Object.assign({ delay: r() * span, freq: f0 + r() * (f1 - f0), q, dur: dur * (.7 + r() * .6), gain: g * amp * (.6 + r() * .5) }, o || {})); };
+  if (k === 'stone') { G(5 * len, .05 * len, 1800, 3600, 2.2, .045, .35); G(2, .02, 500, 800, 1.2, .07, .28, { brown: false }); s2Tone({ f0: 160 + r() * 40, f1: 90, dur: .07, gain: .12 * amp, wave: 'triangle' }); }
+  else if (k === 'wood') { G(3 * len, .04 * len, 350, 520, 7, .09, .45); G(3 * len, .05 * len, 1400, 2600, 2, .035, .14); s2Tone({ f0: 230 + r() * 50, f1: 150, dur: .09, gain: .14 * amp, wave: 'triangle' }); }
+  else if (k === 'dirt') { G(6 * len, .07 * len, 500, 1400, 1.1, .05, .32); G(1, .01, 180, 260, 1, .08, .22, { brown: true }); }
+  else if (k === 'grass') { G(5 * len, .07 * len, 600, 1500, 1, .05, .28); G(5 * len, .08 * len, 3000, 6000, .8, .04, .12, { white: true }); }
+  else if (k === 'sand') { G(8 * len, .1 * len, 1500, 3200, .7, .07, .16, { white: true }); G(2, .05, 500, 800, .8, .07, .12); }
+  else if (k === 'leaf' || k === 'plant') { G(7 * len, .1 * len, 2500, 6000, .9, .06, .13, { white: true, type: 'highpass' }); }
+  else if (k === 'metal') { for (const [f, g] of [[620, .12], [1003, .08], [1517, .06], [2310, .04]]) s2Tone({ f0: f * (1 + r() * .03), dur: .35 * len, gain: g * amp, rel: .3 * len }); G(2, .01, 3000, 5000, 2, .03, .2); }
+  else { G(6 * len, .08 * len, 800, 1800, .9, .06, .2); } }
+let stepAlt = 1;
+const snd = {
+  place(s, m, pos) { const k = MATK(m); s2Crunch(k, .85 + s * .05, .8); s2Tone({ f0: (k === 'wood' ? 200 : k === 'stone' ? 150 : 110) * (1 - s * .06), f1: 60, dur: .08, gain: .18, wave: 'sine' }); sndFlush(pos); },
+  brk(m, pos) { const k = MATK(m); s2Crunch(k, 1.1, 1.6); if (k === 'stone') for (let i = 0; i < 4; i++) s2Noise({ freq: 3000 + Math.random() * 2500, q: 4, dur: .025, gain: .12, delay: .06 + i * .05 + Math.random() * .04 }); sndFlush(pos); },
+  step(m) { const k = MATK(m); stepAlt = -stepAlt;
+    if (k === 'stone') { s2Noise({ freq: 2400 + Math.random() * 900, q: 2, dur: .035, gain: .22 }); s2Noise({ freq: 600, q: 1, dur: .05, gain: .15 }); }
+    else if (k === 'wood') { s2Noise({ freq: 420, q: 6, dur: .07, gain: .3 }); s2Tone({ f0: 190, f1: 140, dur: .06, gain: .06, wave: 'triangle' }); }
+    else s2Crunch(k, .55, .6);
+    for (const v of SNDV) v.gain *= .55; sndFlush(); },
+  land() { tone({ f0: 130, f1: 55, dur: .14, gain: .3 }); burst({ freq: 400, dur: .1, gain: .22 }); sndFlush(); },
+  jump() { burst({ type: 'bandpass', freq: 900, freq2: 1800, q: .8, dur: .12, gain: .07 }); sndFlush(); },
+  click() { tone({ f0: 900, dur: .03, gain: .06, type: 'square' }); sndFlush(); },
+  pop() { tone({ f0: 480, f1: 960, dur: .09, gain: .16 }); sndFlush(); },
+};
+
 // ---------- start: the menu over a live world
 function onStart() {
   showMenuWorld(); show(mainMenu); mInfo.set({ text: 'BLOCKFALL 3001 · Premium Engine' });
@@ -323,12 +365,18 @@ function onUpdate(dt) {
   if (hotNameT > 0 && (hotNameT -= dt) <= 0) hotName.set({ visible: false });
   if (open) return;
   const cam = world.camera, hit = voxels.raycast(cam.position, cam.forward, CUR.mode === 'c' ? 8 : 5);
-  if (hit && input.pressed('MouseLeft') && voxels.removeBlock(hit.point.clone().addScaledVector(hit.normal, -0.05))) saveIn = 1;
+  if (hit && input.pressed('MouseLeft')) { const at = hit.point.clone().addScaledVector(hit.normal, -0.05), m = voxels.removeBlock(at); if (m) { saveIn = 1; snd.brk(m, [at.x, at.y, at.z]); } }
   if (input.pressed('MouseMiddle') && hit) { const b = voxels.getBlock(hit.point.clone().addScaledVector(hit.normal, -0.05)); if (b) { const base = ALL.find(a => a[0] === b.id); HOT[sel] = b.id; shape = base ? base[5] : 0; size = Math.min(1, Math.max(0.2, b.size)); drawHot(); } }
   if (hit && input.pressed('MouseRight') && heldId()) {
     const p = hit.placePosition(size);
-    if (!voxels.setBlock(p, heldId(), size)) world.message(voxels.lastError, 1.5); else saveIn = 1;
+    if (!voxels.setBlock(p, heldId(), size)) world.message(voxels.lastError, 1.5); else { saveIn = 1; snd.place(Math.round(size * 5) - 1, heldId(), [p.x + size / 2, p.y + size / 2, p.z + size / 2]); }
   }
+  // footsteps, jumping and landing (as in the game: a step every 60 cm on the ground)
+  { const pl = world.player, st = pl.settings, v = st.velocity || [0, 0, 0];
+    if (st.grounded && !st.fly) { stepD += Math.hypot(v[0], v[2]) * dt; if (stepD > 0.6) { stepD = 0; const p = pl.position, b = voxels.getBlock(p.x, p.y - 0.95, p.z); if (b) snd.step(b.id); } }
+    if (st.grounded && !wasG && lastVy < -7) snd.land();
+    if (input.pressed('Space') && st.grounded && !st.fly && !st.sneaking) snd.jump();
+    wasG = st.grounded; lastVy = v[1]; }
   if (saveIn > 0 && (saveIn -= dt) <= 0) saveNow();   // a second after a change (only the chunks you changed)
   if ((autoT += dt) > 30) { autoT = 0; saveNow(); }
 }
