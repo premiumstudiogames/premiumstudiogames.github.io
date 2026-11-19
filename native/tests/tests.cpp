@@ -409,6 +409,28 @@ function onStart() {
     ImGui::DestroyContext();
   }
 
+  {   // player movement settings (fly, speeds), the game's saved values (storage) and onStop
+    Project q = makeTemplate("Blocks", "StorageTest"); q.scripts["SC_BlockWorld"].code =
+      "function onStart() { voxels.create({ bottom: -8, top: 16, nearLayer: [-2, 8], viewDistance: 2, seed: 3 }); voxels.defineBlock(1, { color: '#888' }); voxels.setGenerator('flat', { ground: 0, top: 1, dirt: 1, stone: 1 });\n"
+      "  storage.remove('t'); storage.setJSON('t', { a: [1, 2], s: '\\u0639\\u0627\\u0644\\u0645' }); world.vars.st = storage.getJSON('t').a[1] === 2 && storage.getJSON('t').s.length === 4 && storage.keys('t').indexOf('t') >= 0 && storage.get('nope') === null;\n"
+      "  world.player.set({ walkSpeed: 4.317, sneakSpeed: 1.31, runKey: 'Control', sneakKey: 'Shift', jumpSpeed: 8.4, gravity: -32 }); world.player.fly = true; }\n"
+      "function onUpdate() { world.hud('st', String(world.vars.st) + ' ' + world.player.fly + ' ' + world.player.settings.walkSpeed); }\n"
+      "function onStop() { storage.set('stopped', 'yes'); }";
+    Game g(q, "Main"); logClear(); CHECK(g.start(), "storage test starts");
+    for (int i = 0; i < 600 && !(g.voxels() && g.voxels()->ready(g.playerPos())); i++) { g.update(1.f / 60); std::this_thread::sleep_for(std::chrono::milliseconds(5)); }
+    run(g, 0.5f); glm::vec3 a = g.playerPos(); run(g, 1.0f); glm::vec3 b = g.playerPos();
+    CHECK(std::abs(b.y - a.y) < 0.05f, ("flying: the player doesn't fall (" + std::to_string(a.y) + " -> " + std::to_string(b.y) + ")").c_str());
+    { SDL_Event k{}; k.type = SDL_KEYDOWN; k.key.keysym.scancode = SDL_SCANCODE_SPACE; g.event(k); run(g, 0.5f); k.type = SDL_KEYUP; g.event(k); g.update(1.f / 60); }
+    glm::vec3 c = g.playerPos(); CHECK(c.y > b.y + 2.f, ("flying: Space goes up (" + std::to_string(c.y - b.y) + " m)").c_str());
+    std::string hud = g.playerGet(); CHECK(hud.find("\"fly\":true") != std::string::npos && hud.find("4.31") != std::string::npos, "world.player.set and .fly");
+    CHECK(g.storage("get", "t", "").find("[1,2]") != std::string::npos, "storage.setJSON writes the game's file");
+    g.playerSet("{\"fly\":false}"); run(g, 1.5f); CHECK(g.playerPos().y < c.y - 1.f, "fly off: the player falls again");
+    int errs = 0; for (auto& l : logLines()) errs += l.kind == LogKind::Error; CHECK(errs == 0, "no script errors");
+    std::string st; for (auto& [id, t] : g.hudLines()) if (id == "st") st = t; CHECK(st.rfind("true ", 0) == 0, ("storage round trip, keys, missing = null: " + st).c_str());
+    g.storage("remove", "stopped", ""); g.start(); CHECK(g.storage("get", "stopped", "") == "yes", "onStop runs when the game stops or restarts");
+    g.storage("remove", "stopped", ""); g.storage("remove", "t", "");
+  }
+
   std::printf("\n%d passed, %d failed\n", passes, fails);
   return fails ? 1 : 0;
 }

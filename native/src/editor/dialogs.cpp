@@ -40,6 +40,13 @@ world
   world.time                     seconds since the game started
   world.vars                     an object to keep your own values (score, ...)
   world.player                   .position, .teleport(x, y, z), .launch(x, y, z)
+  world.player.fly = true        flying: no falling, Space goes up, the sneak key (or Shift) down
+  world.player.set({ walkSpeed: 4.3, runSpeed: 5.6, sneakSpeed: 1.3, jumpSpeed: 8.4, gravity: -32, accel: 46, runKey: 'Control', sneakKey: 'Shift',
+                     doubleTapRun: true, flySpeed: 8, flyRun: 1.6, flyClimb: 6, yaw: 0, pitch: 0 })   how the player moves (any of them)
+  world.player.settings          all of them, and .grounded .running .sneaking .velocity .yaw .pitch
+  storage.set('key', 'text')  storage.get('key')  storage.setJSON('key', obj)  storage.getJSON('key', default)  storage.remove('key')  storage.keys('prefix')
+                                 the game's own saved values (settings, world list, inventories), in Documents\PremiumEngine\Saves\<game>\store
+  function onStop() { ... }      runs when the game stops or restarts (save here)
   world.find('Name')             an actor by name (or null)
   world.findAll('tag')           actors with a tag (or that name)
   world.spawn('Cube', { position: [0, 5, 0], scale: [1, 1, 1], color: '#ff0000', physics: true, name: 'Box', script: 'SC_Name' })
@@ -56,6 +63,7 @@ input
   input.pressed('space')         pressed this frame?
   input.mouse                    .dx, .dy, .left, .right
   input.pressed('MouseLeft')     mouse buttons work like keys: 'MouseLeft', 'MouseRight', 'MouseMiddle'
+  input.pressed('WheelUp')       the mouse wheel turned this frame ('WheelUp' / 'WheelDown'; onKey gets them too)
 
 world.camera                     .position, .forward (the direction the player looks)
 
@@ -153,6 +161,7 @@ BLOCKFALL's world fits: voxels.create({ bottom: -98, top: 302, nearLayer: [-2, 2
   voxels.topY(x, z)              top of the highest block (NaN while not loaded)
   voxels.save(name)              the player's changes (only changed chunks) -> Documents\PremiumEngine\Saves\<game>\<name>.pgworld
   voxels.load(name)              puts them back over the generated world (after voxels.create and defineBlock). false + lastError
+  voxels.deleteSave(name)        deletes that saved world file (true if there was one)
   voxels.stats                   { chunks, meshed, generating, meshing, triangles, bricks, generateMs, meshMs, memoryMB, changedChunks }
   world.voxels                   the same object
   world.player.swimming          true while the player is in a liquid (Space swims up)

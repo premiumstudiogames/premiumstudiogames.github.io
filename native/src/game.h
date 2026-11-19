@@ -83,6 +83,10 @@ public:
   std::string savePath(const std::string& name) override;
   void trophy(const std::string& id) override;
   Ui* ui() override { return ui_.get(); }
+  std::string playerGet() override;
+  const std::vector<std::pair<std::string, std::string>>& hudLines() const { return hud_; }
+  void playerSet(const std::string& json) override;
+  std::string storage(const std::string& op, const std::string& key, const std::string& val) override;
 
 private:
   struct Obj {
@@ -97,6 +101,9 @@ private:
   double time_ = 0; bool restartRequested_ = false, started_ = false;
   std::set<std::string> keys_, pressed_; glm::vec4 mouseState_{0}; float lookDx_ = 0, lookDy_ = 0;
   std::set<std::string> trophies_; std::unique_ptr<Ui> ui_; bool wasModal_ = false;
+  // player movement (scripts can change it: world.player.set); the defaults are the engine's usual ones
+  struct Tune { bool fly = false, doubleTapRun = false; float walk = 5, run = 9, sneak = 2, jump = 5.2f, flySpeed = 10, flyRun = 1.6f, flyClimb = 6, gravity = 0, accel = 0;
+    std::string runKey = "Shift", sneakKey = ""; } tune_; bool grounded_ = false, running_ = false, sneaking_ = false, wHeld_ = false, tapRun_ = false; double wTap_ = -1;
   std::string msg_; double msgUntil_ = 0; std::vector<std::pair<std::string, std::string>> hud_;
   std::vector<std::pair<std::string, std::string>> pendingKeys_;
 

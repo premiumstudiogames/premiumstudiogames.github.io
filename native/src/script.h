@@ -50,9 +50,14 @@ public:
   // Premium Games: a trophy for the player's account (only when the game was started from the Premium Games store)
   virtual void trophy(const std::string& id) { log("[trophy] " + id); }
   virtual Ui* ui() { return nullptr; }                                       // the game's menus and HUD (ui.*)
+  // the player's movement settings and state as JSON (fly, speeds, keys, yaw / pitch, grounded); playerSet merges a JSON object
+  virtual std::string playerGet() { return "{}"; }
+  virtual void playerSet(const std::string& json) { (void)json; }
+  // the game's own small saved values (settings, world list, inventories): op = get / set / remove / keys; get gives "\x01" when missing
+  virtual std::string storage(const std::string& op, const std::string& key, const std::string& val) { (void)op; (void)key; (void)val; return "\x01"; }
 };
 
-enum ScriptEvent { EV_Start = 0, EV_Update, EV_Overlap, EV_Hit, EV_Key, EV_COUNT };
+enum ScriptEvent { EV_Start = 0, EV_Update, EV_Overlap, EV_Hit, EV_Key, EV_Stop, EV_COUNT };
 
 class ScriptHost {
 public:

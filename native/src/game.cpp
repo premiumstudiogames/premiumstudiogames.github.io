@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <functional>
 #include <filesystem>
+#include <fstream>
 
 using json = nlohmann::json;
 namespace pge {
@@ -84,6 +85,7 @@ Game::Game(const Project& p, const std::string& ln) : levelName(ln), project_(p)
 Game::~Game() { clear(); }
 
 void Game::clear() {
+  if (scripts_ && started_) for (int b = 0; b < scripts_->count(); b++) scripts_->call(b, EV_Stop);   // last chance to save
   if (ui_) { ui_->setVoxels(nullptr); ui_->reset(); }
   if (scripts_) scripts_->shutdown();
   scripts_.reset();
@@ -101,7 +103,7 @@ glm::mat4 Game::world(const Obj& o) const {
 bool Game::start() {
   clear();
   const Level* L = project_.level(levelName); if (!L) { logMsg("error: level \"" + levelName + "\" not found", LogKind::Error); return false; }
-  level_ = *L; time_ = 0; restartRequested_ = false;
+  level_ = *L; time_ = 0; restartRequested_ = false; tune_ = Tune(); grounded_ = running_ = sneaking_ = tapRun_ = false;
   for (auto& a : level_.actors) { auto o = std::make_unique<Obj>(); o->a = a; o->p = a.p; o->r = glm::radians(a.r); o->s = a.s; o->visible = a.visible; byId_[a.id] = o.get(); objs_.push_back(std::move(o)); }
   phys_.reset(new Physics()); phys_->init(level_.world.gravity); gravity_ = level_.world.gravity; swimming_ = false;
   for (size_t i = 0; i < objs_.size(); i++) { Obj& o = *objs_[i]; if (o.a.type == "StaticMesh" && (o.a.physics.collision || o.a.physics.simulate)) addBody(o); }
@@ -150,6 +152,8 @@ void Game::event(const SDL_Event& e) {
       if (!e.key.repeat) for (int b = 0; b < scripts_->count(); b++) scripts_->call(b, EV_Key, 0, k);
       break; }
     case SDL_KEYUP: keys_.erase(keyCode(e.key.keysym.scancode)); break;
+    case SDL_MOUSEWHEEL: { float y = e.wheel.preciseY != 0 ? e.wheel.preciseY : (float)e.wheel.y; if (e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) y = -y;   // input.pressed('WheelUp' / 'WheelDown'), onKey too
+      if (y != 0) { const char* k = y > 0 ? "WheelUp" : "WheelDown"; pressed_.insert(k); for (int b = 0; b < scripts_->count(); b++) scripts_->call(b, EV_Key, 0, k); } break; }
     case SDL_MOUSEMOTION: if (SDL_GetRelativeMouseMode() || mouseState_.w > 0) { lookDx_ += e.motion.xrel; lookDy_ += e.motion.yrel; } break;
     case SDL_MOUSEBUTTONDOWN: case SDL_MOUSEBUTTONUP: {
       bool down = e.type == SDL_MOUSEBUTTONDOWN; const char* k = e.button.button == SDL_BUTTON_LEFT ? "MouseLeft" : e.button.button == SDL_BUTTON_RIGHT ? "MouseRight" : e.button.button == SDL_BUTTON_MIDDLE ? "MouseMiddle" : nullptr;
@@ -180,22 +184,28 @@ void Game::update(float dt) {
   auto k = [&](const char* c) { return keys_.count(c) > 0; };
   if (k("KeyW") || k("ArrowUp")) mv += fwd; if (k("KeyS") || k("ArrowDown")) mv -= fwd; if (k("KeyD") || k("ArrowRight")) mv += right; if (k("KeyA") || k("ArrowLeft")) mv -= right;
   if (glm::dot(mv, mv) > 0) mv = glm::normalize(mv);
-  float speed = (k("ShiftLeft") || k("ShiftRight")) ? 9.f : 5.f; moveDir_ = mv;
+  auto held = [&](const std::string& n) { return !n.empty() && (k((n + "Left").c_str()) || k((n + "Right").c_str()) || k(n.c_str())); };
+  { bool w = k("KeyW"); if (tune_.doubleTapRun) { if (w && !wHeld_) { if (time_ - wTap_ < 0.3) tapRun_ = true; wTap_ = time_; } if (!w) tapRun_ = false; } wHeld_ = w; }
+  sneaking_ = !tune_.fly && held(tune_.sneakKey); running_ = glm::dot(mv, mv) > 0 && !sneaking_ && (held(tune_.runKey) || tapRun_);
+  float speed = tune_.fly ? tune_.flySpeed * (running_ ? tune_.flyRun : 1.f) : sneaking_ ? tune_.sneak : running_ ? tune_.run : tune_.walk; moveDir_ = mv;
   if (mode_ == "Spectator") { if (k("KeyE")) mv.y += 1; if (k("KeyQ")) mv.y -= 1; specPos_ += mv * speed * 1.6f * dt; }
   else if (player_ != NO_BODY) {
-    glm::vec3 c = phys_->position(player_), v = phys_->velocity(player_); v.x = mv.x * speed; v.z = mv.z * speed;
+    glm::vec3 c = phys_->position(player_), v = phys_->velocity(player_);
+    if (tune_.accel > 0) { float a = tune_.accel * dt; v.x += glm::clamp(mv.x * speed - v.x, -a, a); v.z += glm::clamp(mv.z * speed - v.z, -a, a); } else { v.x = mv.x * speed; v.z = mv.z * speed; }
     glm::vec3 feet = c - glm::vec3(0, 0.9f, 0); bool grounded = false;
     const glm::vec2 offs[5] = {{0, 0}, {0.25f, 0}, {-0.25f, 0}, {0, 0.25f}, {0, -0.25f}};
     for (auto& o : offs) if (phys_->rayHit(feet + glm::vec3(o.x, 0.1f, o.y), feet + glm::vec3(o.x, -0.15f, o.y), player_)) { grounded = true; break; }
     // block world liquids: swim (slower, Space goes up, otherwise sink slowly; climb out at the edge)
-    swimming_ = false;
-    if (vox_) { bool body = vox_->liquidAt(feet + glm::vec3(0, 0.45f, 0)) || vox_->liquidAt(c), head = vox_->liquidAt(c + glm::vec3(0, 0.7f, 0));
+    grounded_ = grounded; swimming_ = false;
+    if (tune_.fly) { v.y = ((k("Space") ? 1.f : 0.f) - (held(tune_.sneakKey.empty() ? "Shift" : tune_.sneakKey) ? 1.f : 0.f)) * tune_.flyClimb - gravity_ * dt; }   // flying: Space up, sneak key down, no falling
+    else if (tune_.gravity != 0) v.y += (tune_.gravity - gravity_) * dt;   // the player's own gravity
+    if (!tune_.fly && vox_) { bool body = vox_->liquidAt(feet + glm::vec3(0, 0.45f, 0)) || vox_->liquidAt(c), head = vox_->liquidAt(c + glm::vec3(0, 0.7f, 0));
       if (body) { swimming_ = true; v.x *= 0.55f; v.z *= 0.55f;
         float target = k("Space") ? (head ? 2.4f : 3.4f) : head ? -0.7f : -0.25f;
         v.y = v.y + (target - v.y) * std::min(1.f, dt * 5.f) - gravity_ * dt; } }
-    if (grounded && !swimming_ && pressed_.count("Space")) v.y = 5.2f;
+    if (!tune_.fly && grounded && !swimming_ && !sneaking_ && pressed_.count("Space")) v.y = tune_.jump;
     // block world: walk up 20 - 40 cm steps without jumping
-    if (vox_ && grounded && glm::dot(mv, mv) > 0 && v.y <= 0.5f) {
+    if (!tune_.fly && vox_ && grounded && glm::dot(mv, mv) > 0 && v.y <= 0.5f) {
       glm::vec3 ahead = feet + mv * 0.5f; auto solid = [&](float h) { return vox_->solidAt(ahead + glm::vec3(0, h, 0)); };
       if (solid(0.1f) && !solid(0.5f) && !solid(1.1f) && !solid(1.7f)) v.y = solid(0.3f) ? 3.6f : 2.6f;
     }
@@ -365,9 +375,31 @@ void Game::setGravity(float y) { phys_->setGravity(y); gravity_ = y; }
 glm::vec3 Game::playerPos() { return player_ != NO_BODY ? phys_->position(player_) : specPos_; }
 void Game::playerTeleport(const glm::vec3& p) { if (player_ != NO_BODY) { phys_->teleport(player_, p, glm::quat(1, 0, 0, 0)); phys_->setVelocity(player_, glm::vec3(0)); } else specPos_ = p; }
 void Game::playerLaunch(const glm::vec3& v) { if (player_ != NO_BODY) phys_->setVelocity(player_, v); }
+std::string Game::playerGet() { const Tune& t = tune_; glm::vec3 v = player_ != NO_BODY && phys_ ? phys_->velocity(player_) : glm::vec3(0);
+  return json{{"fly", t.fly}, {"walkSpeed", t.walk}, {"runSpeed", t.run}, {"sneakSpeed", t.sneak}, {"jumpSpeed", t.jump}, {"flySpeed", t.flySpeed}, {"flyRun", t.flyRun}, {"flyClimb", t.flyClimb},
+    {"gravity", t.gravity}, {"accel", t.accel}, {"runKey", t.runKey}, {"sneakKey", t.sneakKey}, {"doubleTapRun", t.doubleTapRun}, {"yaw", yaw_}, {"pitch", pitch_},
+    {"grounded", grounded_}, {"running", running_}, {"sneaking", sneaking_}, {"velocity", {v.x, v.y, v.z}}}.dump(); }
+void Game::playerSet(const std::string& js) { json o = json::parse(js, nullptr, false); if (!o.is_object()) return; Tune& t = tune_;
+  auto f = [&](const char* k, float& d) { if (o.contains(k) && o[k].is_number()) d = o[k].get<float>(); };
+  auto b = [&](const char* k, bool& d) { if (o.contains(k) && o[k].is_boolean()) d = o[k].get<bool>(); };
+  auto s = [&](const char* k, std::string& d) { if (o.contains(k) && o[k].is_string()) d = o[k].get<std::string>(); };
+  b("fly", t.fly); b("doubleTapRun", t.doubleTapRun); f("walkSpeed", t.walk); f("runSpeed", t.run); f("sneakSpeed", t.sneak); f("jumpSpeed", t.jump); f("flySpeed", t.flySpeed);
+  f("flyRun", t.flyRun); f("flyClimb", t.flyClimb); f("gravity", t.gravity); f("accel", t.accel); s("runKey", t.runKey); s("sneakKey", t.sneakKey);
+  if (o.contains("yaw") && o["yaw"].is_number()) yaw_ = o["yaw"].get<float>(); if (o.contains("pitch") && o["pitch"].is_number()) pitch_ = glm::clamp(o["pitch"].get<float>(), -1.45f, 1.45f); }
+// the game's own saved values: one file per name in Documents/PremiumEngine/Saves/<game>/store
+std::string Game::storage(const std::string& op, const std::string& key, const std::string& val) {
+  namespace fs = std::filesystem; fs::path dir = fs::u8path(savePath("x")).parent_path() / "store";
+  auto file = [&](const std::string& k) { std::string n; for (unsigned char ch : k) { if (std::isalnum(ch) || ch == '-' || ch == '_' || ch == '.') n += (char)ch; else { char h[4]; std::snprintf(h, sizeof h, "%%%02X", ch); n += h; } } return dir / fs::u8path(n + ".txt"); };
+  auto unname = [](const std::string& n) { std::string k; for (size_t i = 0; i < n.size(); i++) { if (n[i] == '%' && i + 2 < n.size()) { k += (char)std::stoi(n.substr(i + 1, 2), nullptr, 16); i += 2; } else k += n[i]; } return k; };
+  std::error_code ec;
+  if (op == "get") { std::ifstream f(file(key), std::ios::binary); if (!f) return "\x01"; return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()); }
+  if (op == "set") { fs::create_directories(dir, ec); fs::path p = file(key), tmp = p; tmp += ".tmp"; { std::ofstream f(tmp, std::ios::binary | std::ios::trunc); f << val; } fs::rename(tmp, p, ec); if (ec) { fs::remove(p, ec); fs::rename(tmp, p, ec); } return ""; }
+  if (op == "remove") { fs::remove(file(key), ec); return ""; }
+  if (op == "keys") { json a = json::array(); for (auto& e : fs::directory_iterator(dir, ec)) { std::string n = e.path().filename().u8string(); if (n.size() < 5 || n.substr(n.size() - 4) != ".txt") continue; std::string k = unname(n.substr(0, n.size() - 4)); if (k.rfind(key, 0) == 0) a.push_back(k); } return a.dump(); }
+  return ""; }
 void Game::log(const std::string& t) { logMsg(t); }
 std::string Game::createVoxels(const std::string& opts) {
-  if (vox_) return "the block world already exists";
+  if (vox_) { if (ui_) ui_->setVoxels(nullptr); vox_.reset(); voxHold_ = false; }   // a new block world replaces the old one (another saved world)
   json o = json::object(); try { o = json::parse(opts); if (!o.is_object()) o = json::object(); } catch (...) { return "voxels.create: options are not valid"; }
   VoxelConfig c; c.minY = o.value("bottom", c.minY); c.maxY = o.value("top", c.maxY); c.viewDistance = o.value("viewDistance", c.viewDistance); c.seed = o.value("seed", c.seed); c.threads = o.value("threads", 0);
   if (o.contains("nearLayer") && o["nearLayer"].is_array() && o["nearLayer"].size() == 2) { c.fineLo = o["nearLayer"][0].get<int>(); c.fineHi = o["nearLayer"][1].get<int>(); }

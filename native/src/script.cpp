@@ -1,3 +1,4 @@
+#include <filesystem>
 #include "script.h"
 #include "log.h"
 #include <quickjs.h>
@@ -70,7 +71,19 @@ const __player = { name: 'Player', isPlayer: true, tags: [],
   get position() { const a = __n.playerPos(); return new Vec3(a[0], a[1], a[2]); },
   teleport(x, y, z) { __n.teleport(...__xyz(x, y, z)); },
   launch(x, y, z) { __n.launch(...__xyz(x, y, z)); },
-  get swimming() { return __n.swimming(); } };
+  get swimming() { return __n.swimming(); },
+  // movement: fly, walkSpeed, runSpeed, sneakSpeed, jumpSpeed, flySpeed, flyRun, flyClimb, gravity, accel, runKey, sneakKey, doubleTapRun; and yaw, pitch, grounded, running, sneaking
+  get settings() { return JSON.parse(__n.playerGet()); }, set(o) { __n.playerSet(JSON.stringify(o || {})); },
+  get fly() { return !!this.settings.fly; }, set fly(v) { this.set({ fly: !!v }); },
+  get yaw() { return this.settings.yaw; }, set yaw(v) { this.set({ yaw: +v }); }, get pitch() { return this.settings.pitch; }, set pitch(v) { this.set({ pitch: +v }); },
+  get grounded() { return !!this.settings.grounded; }, get running() { return !!this.settings.running; }, get sneaking() { return !!this.settings.sneaking; },
+  get velocity() { const v = this.settings.velocity || [0, 0, 0]; return new Vec3(v[0], v[1], v[2]); } };
+// the game's own saved values (Documents/PremiumEngine/Saves/<game>/store): text or JSON by name
+const storage = { get(k) { const r = __n.storage('get', String(k), ''); return r === '\x01' ? null : r; }, set(k, v) { __n.storage('set', String(k), String(v)); },
+  remove(k) { __n.storage('remove', String(k), ''); }, keys(prefix) { return JSON.parse(__n.storage('keys', String(prefix || ''), '')); },
+  getJSON(k, d) { const r = this.get(k); if (r === null) return d === undefined ? null : d; try { return JSON.parse(r); } catch (e) { return d === undefined ? null : d; } },
+  setJSON(k, v) { this.set(k, JSON.stringify(v)); } };
+globalThis.storage = storage;
 function __api(id) {
   if (!id) return null; if (id === '@player') return __player;
   let a = __apis.get(id); if (a) return a;
@@ -134,6 +147,7 @@ const voxels = { lastError: '',
   topY(x, z) { return __n.voxTop(+x, +z); },
   // the player's changes, in Documents/PremiumEngine/Saves/<game>/<name>.pgworld
   save(name = 'world') { const r = __n.voxSave(String(name)); this.lastError = r === true ? '' : String(r); return r === true; },
+  deleteSave(name = 'world') { return __n.voxDelete(String(name)); },
   load(name = 'world') { const r = __n.voxLoad(String(name)); this.lastError = r === true ? '' : String(r); return r === true; },
   get stats() { return JSON.parse(__n.voxStats()); } };
 const input = { key(k) { return __n.key(String(k)); }, pressed(k) { return __n.pressed(String(k)); },
@@ -203,7 +217,7 @@ globalThis.__uiDispatch = function (json) {
 };
 )JS";
 
-static const char* EVENTS[EV_COUNT] = {"onStart", "onUpdate", "onOverlap", "onHit", "onKey"};
+static const char* EVENTS[EV_COUNT] = {"onStart", "onUpdate", "onOverlap", "onHit", "onKey", "onStop"};
 
 struct Behaviour { std::string actor, actorName, script; JSValue obj; bool ev[EV_COUNT]; bool alive = true; };
 struct ScriptHost::Impl {
@@ -365,6 +379,10 @@ static void bindNatives(JSContext* c) {
   FN("voxLoad", 1, { VoxelWorld* v = W(c)->voxels(); if (!v) return JS_NewString(c, "call voxels.create() first"); std::string why;
     return v->load(W(c)->savePath(S(c, a[0])), &why) ? JS_TRUE : JS_NewStringLen(c, why.data(), why.size()); });
   FN("swimming", 0, return JS_NewBool(c, W(c)->playerSwimming()););
+  FN("voxDelete", 1, { std::error_code ec; return JS_NewBool(c, std::filesystem::remove(std::filesystem::u8path(W(c)->savePath(S(c, a[0]))), ec)); });
+  FN("playerGet", 0, { std::string s = W(c)->playerGet(); return JS_NewStringLen(c, s.data(), s.size()); });
+  FN("playerSet", 1, { W(c)->playerSet(S(c, a[0])); return JS_UNDEFINED; });
+  FN("storage", 3, { std::string s = W(c)->storage(S(c, a[0]), S(c, a[1]), S(c, a[2])); return JS_NewStringLen(c, s.data(), s.size()); });
   FN("voxReady", 3, { VoxelWorld* v = W(c)->voxels(); return JS_NewBool(c, v && v->ready({(float)D(c, a[0]), (float)D(c, a[1]), (float)D(c, a[2])})); });
   FN("voxTop", 2, { VoxelWorld* v = W(c)->voxels(); return JS_NewFloat64(c, v ? v->topY((float)D(c, a[0]), (float)D(c, a[1])) : NAN); });
   FN("voxStats", 0, { VoxelWorld* v = W(c)->voxels(); std::string s = "{}";
@@ -403,7 +421,7 @@ static std::string wrap(const std::string& code) {
   // first user line stays line 1 so error lines match the editor
   return "(function (self, world, input, log, THREE, math) { \"use strict\"; " + code +
          "\n;return { onStart: typeof onStart === 'function' ? onStart : null, onUpdate: typeof onUpdate === 'function' ? onUpdate : null,"
-         " onOverlap: typeof onOverlap === 'function' ? onOverlap : null, onHit: typeof onHit === 'function' ? onHit : null, onKey: typeof onKey === 'function' ? onKey : null }; })";
+         " onOverlap: typeof onOverlap === 'function' ? onOverlap : null, onHit: typeof onHit === 'function' ? onHit : null, onKey: typeof onKey === 'function' ? onKey : null, onStop: typeof onStop === 'function' ? onStop : null }; })";
 }
 
 int ScriptHost::attach(const std::string& actorId, const std::string& actorName, const std::string& scriptName, const std::string& code) {
