@@ -94,8 +94,6 @@ app.whenReady().then(async () => {
     // ---- console mode with a game running (like a PS5): full screen, no launcher window, Home = Control Center over the game
     await call('ps:setConsole', true);
     const homeSent = []; { const mw = BrowserWindow.getAllWindows().find(w => /#bigpicture$/.test(w.webContents.getURL())); if (mw) { const orig = mw.webContents.send.bind(mw.webContents); mw.webContents.send = (ch, p) => { if (ch === 'bp:home') homeSent.push(p); return orig(ch, p); }; } }
-    { const gd = path.join(process.env.LOCALAPPDATA, 'PremiumStudio', 'games'); let r = {}; try { r = JSON.parse(fs.readFileSync(path.join(gd, 'installed.json'), 'utf8'))['last-recording--std']; } catch (e) {}
-      let ls = []; try { ls = fs.readdirSync(gd); } catch (e) {} console.log('DIAG reg', JSON.stringify(r), 'dirs', ls.join(','), 'entry?', r && fs.existsSync(path.join(gd, 'last-recording--std', r.entry || ''))); }
     await call('ps:launch', 'last-recording--std');
     ok('console: game runs', await waitFor(async () => !!(await call('ps:getRunning'))['last-recording--std'], 30000));
     const cgw = await (async () => { let w = null; await waitFor(() => (w = BrowserWindow.getAllWindows().find(x => !x.isDestroyed() && x.webContents.getURL().startsWith('psgame') && x.isVisible())), 15000); return w; })();
