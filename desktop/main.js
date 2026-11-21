@@ -731,7 +731,7 @@ async function launchWithUpdate(id, edition, opts) {
     try {
       const m = ((await fetchManifest()).games || {})[g.game];
       if (m && JSON.stringify(m.account || null) !== JSON.stringify(readReg()[id].account || null)) { const reg = readReg(); reg[id].account = m.account || undefined; await writeReg(reg); }
-      if (m) { const l = await latestOf(m); if (l.version && l.version !== g.version) { splashStatus('يحمّل التحديث ' + l.version + '…'); await install(id); } }
+      if (m) { const l = await latestOf(m); if (l.version && (!g.version || newerVersion(l.version, g.version))) { splashStatus('يحمّل التحديث ' + l.version + '…'); await install(id); } }
     } catch (e) { /* offline: play the copy we have */ }
   }
   if (g && g.type === 'bf-launcher' && !running.has(id)) { splashStatus('يتحقق من التحديثات…'); try { await Promise.race([bfAppUpdate(((await fetchManifest()).games || {})[g.game] || ((await fetchManifest()).games || {}).blockfall, g.game), new Promise(r => setTimeout(r, 15000))]); } catch (e) {} }
@@ -901,6 +901,22 @@ async function fetchJSON(url) {
 // (the end-to-end test can hand in the games list of the branch it tests)
 const fetchManifest = () => global.__psManifestFile ? Promise.resolve(JSON.parse(fs.readFileSync(global.__psManifestFile, 'utf8'))) : fetchJSON(SITE + 'games.json');
 
+// Puts a freshly unpacked folder in place of the installed one. Windows may still hold files of a game that just closed
+// (the old copy is moved aside, with retries): if the new copy can't go in, the old one goes back, so a failed update
+// never leaves the game missing.
+async function swapDir(from, to) {
+  const retry = async f => { for (let i = 0; ; i++) { try { return await f(); } catch (e) { if (i >= 20 || !['EPERM', 'EBUSY', 'EACCES', 'ENOTEMPTY'].includes(e.code)) throw e; await new Promise(r => setTimeout(r, 250 + i * 150)); } } };
+  const aside = to + '.old';
+  await fsp.rm(aside, { recursive: true, force: true }).catch(() => {});
+  const had = fs.existsSync(to);
+  if (had) await retry(() => fsp.rename(to, aside));
+  try { await retry(() => fsp.rename(from, to)); }
+  catch (e) { if (had) await retry(() => fsp.rename(aside, to)).catch(() => {}); throw e; }
+  if (had) fsp.rm(aside, { recursive: true, force: true }).catch(() => {});
+}
+// "00.01.02" > "00.01.01": an update is only a newer version (a stale copy of the update file never reinstalls an older one)
+const newerVersion = (a, b) => { const p = v => String(v || '').split(/[.\-]/).map(x => parseInt(x, 10) || 0); const x = p(a), y = p(b);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; };
 // Latest version each game's own update source offers right now.
 async function latestOf(m) {
   if (m.type === 'bf-launcher') { const p = await fetchJSON(m.parts); let game = ''; try { game = (await fetchJSON(m.gameManifest)).latest.release; } catch (e) {} return { version: p.version, game, size: p.size }; }
@@ -991,8 +1007,7 @@ async function install(id, opts) {
       }
       if (m.icon) await download(new URL(m.icon, SITE).toString(), () => {}, path.join(stage, 'icon.ico')).catch(() => {});
       send('ps:progress', { id, phase: 'extract', received, total: received });
-      await fsp.rm(gameDir(id), { recursive: true, force: true });
-      await fsp.rename(stage, gameDir(id)); stage = null;
+      await swapDir(stage, gameDir(id)); stage = null;
     } else if (m.type === 'pge') {
       // a game made with Premium Engine: version.json + one zip (checked with its sha256), unzipped into the game's folder.
       // Most come twice: the PC version and a console version (full controller play, console menus, at most 2 GB), which
@@ -1023,8 +1038,7 @@ async function install(id, opts) {
       if (j.console) await unpack(j.console, path.join(stage, 'console'));
       send('ps:progress', { id, phase: 'extract', received, total: received });
       const old = pgeProcs.get(id); if (old) await stopGame(id).catch(() => {});
-      await fsp.rm(gameDir(id), { recursive: true, force: true });
-      await fsp.rename(stage, gameDir(id)); stage = null;
+      await swapDir(stage, gameDir(id)); stage = null;
       entry = j.exe; consoleEntry = j.console ? 'console/' + j.console.exe : undefined;
     } else {
       throw new Error('نوع اللعبة غير معروف');
