@@ -352,9 +352,9 @@ void Renderer::shadowPass(const Frame& f, const Camera& cam, bool& has) {
   // the four corner rays of the view, scaled so that one unit = one metre along the view direction
   glm::vec3 ray[4]; { const float X[4] = {-1, 1, 1, -1}, Y[4] = {-1, -1, 1, 1};
     for (int k = 0; k < 4; k++) { glm::vec4 a = inv * glm::vec4(X[k], Y[k], -1, 1), b = inv * glm::vec4(X[k], Y[k], 1, 1); glm::vec3 r = glm::vec3(b) / b.w - glm::vec3(a) / a.w; ray[k] = r / std::max(1e-5f, glm::dot(r, fwd)); } }
-  float far = std::max(20.f, quality.shadowDistance); int n = 4;
-  float splits[5] = {0.05f, 0, 0, 0, far};
-  for (int i = 1; i < n; i++) { float t = i / (float)n; splits[i] = 0.75f * (0.05f * std::pow(far / 0.05f, t)) + 0.25f * (0.05f + (far - 0.05f) * t); }   // between log and even slices
+  float farD = std::max(20.f, quality.shadowDistance); int n = 4;
+  float splits[5] = {0.05f, 0, 0, 0, farD};
+  for (int i = 1; i < n; i++) { float t = i / (float)n; splits[i] = 0.75f * (0.05f * std::pow(farD / 0.05f, t)) + 0.25f * (0.05f + (farD - 0.05f) * t); }   // between log and even slices
   glBindFramebuffer(GL_FRAMEBUFFER, shadowFbo_); glViewport(0, 0, SHADOW_SIZE * 2, SHADOW_SIZE * 2); glClear(GL_DEPTH_BUFFER_BIT); glEnable(GL_DEPTH_TEST); glDisable(GL_CULL_FACE); glDisable(GL_BLEND);
   glEnable(GL_POLYGON_OFFSET_FILL); glPolygonOffset(1.6f, 2.f); glEnable(GL_SCISSOR_TEST);
   for (int i = 0; i < n; i++) {
