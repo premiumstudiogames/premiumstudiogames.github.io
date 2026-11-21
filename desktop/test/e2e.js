@@ -249,7 +249,9 @@ app.whenReady().then(async () => {
       const ecd = await call('cc:data');
       ok('engine game: Control Center knows it', ecd && ecd.key === ckey, ecd && ecd.name);
       await sleep(600); T.padPress();
-      ok('engine game: Home again brings the game back to the front', await waitFor(() => !ccW2() && /^focused \d+ 1$/.test(T.lastFocused()), 8000), T.lastFocused());
+      const backOk = await waitFor(() => !ccW2() && /^focused \d+ 1$/.test(T.lastFocused()), 8000);
+      let winInfo = ''; if (!backOk) try { winInfo = require('child_process').execSync(`powershell -NoProfile -Command "Get-Process -Id ${T.pgeProc(ckey).pid} | Select-Object MainWindowHandle,MainWindowTitle,Responding | ConvertTo-Json -Compress"`).toString().trim(); } catch (e) { winInfo = String(e.message).slice(0, 200); }
+      ok('engine game: Home again brings the game back to the front', backOk, T.lastFocused() + ' ' + winInfo);
       // a trophy the game writes goes to the account
       fs.appendFileSync(path.join(app.getPath('userData'), 'events', ckey + '.txt'), 'trophy e2e_trophy\nbad line\n');
       ok('engine game: its trophies are read', await waitFor(() => T.granted().some(g => g.endsWith(key + 'e2e_trophy')), 6000) || !T.granted().length, T.granted().join(','));
@@ -264,7 +266,7 @@ app.whenReady().then(async () => {
       await call('ps:install', key);
       // an update: the version in version.json changed → it's downloaded again before playing
       { const reg = path.join(process.env.LOCALAPPDATA, 'PremiumStudio', 'games', 'installed.json'), r = JSON.parse(fs.readFileSync(reg, 'utf8')); r[key].version = '00.00.00'; fs.writeFileSync(reg, JSON.stringify(r, null, 2)); }
-      await call('ps:launch', key);
+      const tu = Date.now(); await call('ps:launch', key); console.log('update+launch took', Date.now() - tu, 'ms');
       ok('engine game: updates when version.json changes, then starts', await waitFor(() => alive(key), 60000) && (await call('ps:getInstalled'))[key].version === vj.version, (await call('ps:getInstalled'))[key].version + ' · ' + JSON.stringify(T.pgeProc(key) ? { file: T.pgeProc(key).spawnfile, exit: T.pgeProc(key).exitCode, err: T.pgeProc(key).spawnError } : null));
       await call('ps:stop', key); await waitFor(() => !alive(key), 30000);
       await call('ps:uninstall', key);
