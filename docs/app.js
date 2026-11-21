@@ -74,7 +74,7 @@ $("#ver").textContent = "v" + SITE_VERSION + (PS ? " · App " + PS.version : "")
 
 /* ---------------- catalogue ---------------- */
 const GAMES = [
-  {id:"blockfall", title:"BLOCKFALL 3001", ar:false, sub:"بناء · نجاة · عالم مفتوح",
+  {id:"blockfall", title:"BLOCKFALL 3001", ar:false, pcOnly:true, sub:"بناء · نجاة · عالم مفتوح",
    tagline:"عالم ما بعد الحرب. اجمع، اصنع، ابنِ مركبتك، وانجُ.",
    about:["سنة 3001. ثلاث سنوات مرّت على الحرب النووية والبيولوجية اللي بدأت في 2998 ودمّرت العالم. اللي بقى: أنقاض، مرتزقة، وزومبي، وأنت.",
           "اجمع بلوكات بأحجام مختلفة من 20 سم إلى متر كامل، اصنع أدواتك وأسلحتك، وابنِ مركباتك فوق منصة الرفع."],
@@ -82,7 +82,7 @@ const GAMES = [
    tags:["بناء","نجاة","قصة","أكشن"],
    editions:[{id:"demo",name:"Demo",price:0,d:"جرّب أول العالم مجانًا"},{id:"std",name:"BLOCKFALL 3001",price:39.99,d:"اللعبة كاملة"},{id:"gold",name:"BLOCKFALL 3001 Gold",price:99.99,d:"الإصدار الذهبي",gold:true}]},
   // the Developer edition is its own program; it shows only for players who have it (the studio gives it)
-  {id:"blockfall-dev", title:"BLOCKFALL 3001 المطور", en:"BLOCKFALL 3001 DEV", ar:false, hidden:true, from:"blockfall", sub:"نسخة المطورين",
+  {id:"blockfall-dev", title:"BLOCKFALL 3001 المطور", en:"BLOCKFALL 3001 DEV", ar:false, pcOnly:true, hidden:true, from:"blockfall", sub:"نسخة المطورين",
    tagline:"نسخة المطورين من BLOCKFALL 3001: قائمة المطور وورشة المشاريع.",
    about:["برنامج مستقل عن BLOCKFALL 3001 العادية، له أيقونته وعوالمه وإعداداته.", "يعطيها الاستوديو للمطورين."],
    feat:["قائمة المطور","ورشة المشاريع","عوالم وإعدادات مستقلة"], tags:["مطورين"],
@@ -240,9 +240,10 @@ function autoInstall(){
 if (PS) {
   $("#tabDl").hidden = true; $("#tabDls").hidden = false;
   if (PS.engine) { const a = $(".navengine"); if (a) { a.href = "#engine"; a.dataset.v = "engine"; } PS.engine.onChanged(() => { ENG = null; if (curView === "engine") renderEngine(); }); }
-  PS.onProgress(p => { trackSpeed(p); PROGRESS[p.id] = p;
+  PS.onProgress(p => { if (p.phase === "clear") { delete PROGRESS[p.id]; updateProgressUI(); render(); return; }   // the other system's download (console / PC)
+    trackSpeed(p); PROGRESS[p.id] = p;
     if (p.phase === "done" || p.phase === "error") { delete PROGRESS[p.id];
-      if (p.phase === "error") toast("ما تم التثبيت: " + (p.error || "خطأ")); else { toast("تم التثبيت ✓ أيقونتها على سطح المكتب"); addDone(p.id); }
+      if (p.phase === "error") toast("ما تم التثبيت: " + (p.error || "خطأ")); else { toast(document.body.classList.contains("bp-on") ? "تم التثبيت ✓" : "تم التثبيت ✓ أيقونتها على سطح المكتب"); addDone(p.id); }
       refreshInstalled(); if (curView === "downloads") renderDownloads(); }
     updateProgressUI(); });
   PS.onInstalledChanged && PS.onInstalledChanged(() => refreshInstalled());

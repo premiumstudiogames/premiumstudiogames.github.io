@@ -23,6 +23,15 @@ const LOCAL = process.env.LOCALAPPDATA || app.getPath('userData');
 const GAMES_DIR = path.join(LOCAL, 'PremiumStudio', 'games');
 const REG_FILE = path.join(GAMES_DIR, 'installed.json');
 const validId = id => typeof id === 'string' && /^[a-z0-9-]{1,40}$/.test(id);
+// Console mode is its own system, like a PS5: what is installed from it lives in its own folder and list, shows only in
+// console mode, runs only from it (no desktop or Start-menu icons, nothing in the PC library or the tray) and is removed
+// only from it. Inside the app a console install's key ends in "--console"; the store page always sees plain keys,
+// for the system that is open (fromPage / plainKey).
+const CON_DIR = path.join(LOCAL, 'PremiumStudio', 'console', 'games');
+const CON_REG = path.join(CON_DIR, 'installed.json');
+const CON = '--console';
+const isCon = k => typeof k === 'string' && k.endsWith(CON);
+const plainKey = k => isCon(k) ? k.slice(0, -CON.length) : k;
 const EDITIONS = ['demo', 'std', 'gold', 'dev'];
 
 // Where each kind of game lives on disk.
@@ -36,21 +45,29 @@ const BFV = {
 function bfv(game) { const v = BFV[game] || BFV.blockfall, dir = path.join(LOCAL, 'Programs', v.dir);
   return { dir, exe: path.join(dir, v.exe), image: v.exe, data: path.join(app.getPath('appData'), v.data), name: v.name }; }
 // install keys from older versions ("blockfall--gold", "blockfall--dev") → the one install key
-function bfKey(k) { const [g, e] = String(k || '').split('--'); if (!BFV[g]) return k; return g === 'blockfall' && e === 'dev' ? 'blockfall-dev' : g; }
+function bfKey(k) { if (isCon(k)) return k; const [g, e] = String(k || '').split('--'); if (!BFV[g]) return k; return g === 'blockfall' && e === 'dev' ? 'blockfall-dev' : g; }
 const BF_DIR = bfv('blockfall').dir, BF_EXE = bfv('blockfall').exe, BF_DATA = bfv('blockfall').data;
-function gameDir(id, m) { return m && m.type === 'bf-launcher' ? bfv(m.game || bfKey(id)).dir : path.join(GAMES_DIR, id); }
+function gameDir(id, m) { if (isCon(id)) return path.join(CON_DIR, plainKey(id)); return m && m.type === 'bf-launcher' ? bfv(m.game || bfKey(id)).dir : path.join(GAMES_DIR, id); }
 // Every owned edition installs as its own game. Install key = "<game>--<edition>" (older installs keep the plain game id).
 const ED_LABEL = { demo: 'Demo', std: 'Standard', gold: 'Gold', dev: 'المبرمج' };
 const edTitle = (name, ed) => name + (ED_LABEL[ed] ? ' ' + ED_LABEL[ed] : '');
 function keyInfo(key) {
   const r = readReg()[key];
   if (r) return { game: r.game || key.split('--')[0], edition: r.edition };
-  const [game, edition] = key.split('--');
+  const [game, edition] = plainKey(key).split('--');
   return { game, edition: EDITIONS.includes(edition) ? edition : 'demo' };
 }
 
-function readReg() { try { return JSON.parse(fs.readFileSync(REG_FILE, 'utf8')); } catch (e) { return {}; } }
-async function writeReg(reg) { await fsp.mkdir(GAMES_DIR, { recursive: true }); await fsp.writeFile(REG_FILE, JSON.stringify(reg, null, 2)); }
+// one list for the app: the PC's installs, and the console's with "--console" keys (each system keeps its own file)
+const readJSON = f => { try { const o = JSON.parse(fs.readFileSync(f, 'utf8')); return o && typeof o === 'object' ? o : {}; } catch (e) { return {}; } };
+function readReg() { const reg = readJSON(REG_FILE); for (const [k, v] of Object.entries(readJSON(CON_REG))) reg[k + CON] = v; return reg; }
+function splitReg(reg) { const pc = {}, con = {}; for (const [k, v] of Object.entries(reg)) (isCon(k) ? con : pc)[plainKey(k)] = v; return { pc, con }; }
+async function writeReg(reg) { const { pc, con } = splitReg(reg);
+  await fsp.mkdir(GAMES_DIR, { recursive: true }); await fsp.writeFile(REG_FILE, JSON.stringify(pc, null, 2));
+  if (Object.keys(con).length || fs.existsSync(CON_REG)) { await fsp.mkdir(CON_DIR, { recursive: true }); await fsp.writeFile(CON_REG, JSON.stringify(con, null, 2)); } }
+function writeRegSync(reg) { const { pc, con } = splitReg(reg);
+  fs.mkdirSync(GAMES_DIR, { recursive: true }); fs.writeFileSync(REG_FILE, JSON.stringify(pc, null, 2));
+  if (Object.keys(con).length || fs.existsSync(CON_REG)) { fs.mkdirSync(CON_DIR, { recursive: true }); fs.writeFileSync(CON_REG, JSON.stringify(con, null, 2)); } }
 function installedNow() {
   const reg = readReg(), out = {};
   for (const [id, v] of Object.entries(reg)) {
@@ -59,6 +76,10 @@ function installedNow() {
   }
   return out;
 }
+// what one system has installed, with the keys its page uses
+function installedFor(con) { const out = {}; for (const [k, v] of Object.entries(installedNow())) if (isCon(k) === !!con) out[plainKey(k)] = v; return out; }
+// a key from the store page → the install key in the system that is open (the console's own, or the PC's)
+const fromPage = id => { if (typeof id !== 'string') return id; const k = bfKey(plainKey(id)); return consoleOn ? k + CON : k; };
 
 /* ---------------- the signed-in Premium Games account (games play under it) ---------------- */
 const USER_FILE = path.join(app.getPath('userData'), 'ps-user.json');
@@ -196,7 +217,7 @@ function addPlaytime(r, ms) {
   return fbCommit([{ update: { name: `${FB_DB}/users/${currentUser.uid}/play/${r.game}`, fields: { game: { stringValue: r.game } } }, updateMask: { fieldPaths: ['game'] },
     updateTransforms: [{ fieldPath: 'minutes', increment: { integerValue: String(min) } }, { fieldPath: 'last', setToServerValue: 'REQUEST_TIME' }] }]);
 }
-const runningList = () => Object.fromEntries([...running].map(([k, v]) => [k, { since: v.since, game: v.game, closing: stopping.has(k) || !!v.closing }]));
+const runningList = () => Object.fromEntries([...running].filter(([k]) => isCon(k) === consoleOn).map(([k, v]) => [plainKey(k), { since: v.since, game: v.game, closing: stopping.has(k) || !!v.closing }]));
 function runningChanged() {
   syncPadWatch();
   if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('ps:running', runningList());
@@ -205,13 +226,13 @@ function runningChanged() {
 function markRunning(key) {
   if (running.has(key)) return;
   const g = readReg()[key] || {};
-  running.set(key, { since: Date.now(), game: g.game || key.split('--')[0], name: g.name || key, console: consoleOn });
+  running.set(key, { since: Date.now(), game: g.game || key.split('--')[0], name: g.name || key, console: isCon(key) });
   pushPresence(); runningChanged();
   if (g.type === 'bf-launcher') { watchBf(); gameKeys(true); }
 }
 function markStopped(key) {
   const r = running.get(key); if (!r) return;
-  if (consoleOn || r.console) { const mins = Math.round((Date.now() - r.since) / 60000); csLog('game-stop', { game: r.game, key, minutes: mins }); csGame(r.game, x => ({ minutes: x.minutes + mins })); }
+  if (r.console) { const mins = Math.round((Date.now() - r.since) / 60000); csLog('game-stop', { game: r.game, key, minutes: mins }); csGame(r.game, x => ({ minutes: x.minutes + mins })); }
   running.delete(key);
   addPlaytime(r, Date.now() - r.since); pushPresence(); runningChanged();
   if (ovKey === key) closeOverlay();
@@ -342,7 +363,7 @@ async function quitApp() {
 let tray = null, quitting = false;
 function updateTray() {
   if (!tray) return;
-  const games = Object.entries(installedNow());
+  const games = Object.entries(installedFor(false));
   const items = [
     { label: 'المتجر', click: () => createMain('store') },
     { label: 'المكتبة', click: () => createMain('library') },
@@ -350,7 +371,7 @@ function updateTray() {
     { label: 'الشاشة الكبيرة', click: () => createMain('bigpicture') },
     { type: 'separator' }
   ];
-  if (running.size) for (const [k, r] of running) items.push({ label: `■ إغلاق ${r.name}`, click: () => stopGame(k) });
+  if (running.size) for (const [k, r] of [...running].filter(([k]) => !isCon(k))) items.push({ label: `■ إغلاق ${r.name}`, click: () => stopGame(k) });
   else for (const [k, v] of games.slice(0, 8)) items.push({ label: v.name, click: () => playFromOutside(k) });
   items.push({ type: 'separator' }, { label: 'خروج من Premium Games', click: () => quitApp() });
   tray.setContextMenu(Menu.buildFromTemplate(items));
@@ -366,6 +387,7 @@ function makeTray() {
 }
 // started from a desktop shortcut or the tray: play only if signed in, otherwise open the sign-in
 function playFromOutside(key) {
+  if (isCon(key)) { createMain('bigpicture'); return; }   // the console's games start only from console mode
   if (!currentUser || !currentUser.uid) { createMain(); return; }
   launchWithUpdate(key).catch(() => createMain());
 }
@@ -556,12 +578,18 @@ ipcMain.handle('ps:gameVersions', guard(async gid => { if (!validId(gid)) throw 
    Control Center over the game; held, it goes to the console's home screen while the game keeps running.
    A tiny always-on-top window reads the controller, so Home works over games in their own program too. */
 let consoleOn = false, ccWin = null, ccKey = '', padWin = null, lastHome = 0;
-ipcMain.handle('ps:setConsole', guard(async on => { if (consoleOn !== !!on) csLog(on ? 'console-open' : 'console-close', {}); consoleOn = !!on; syncPadWatch(); if (!consoleOn) closeCC(); return true; }));
+ipcMain.handle('ps:setConsole', guard(async on => { const was = consoleOn; if (was !== !!on) csLog(on ? 'console-open' : 'console-close', {}); consoleOn = !!on; syncPadWatch(); if (!consoleOn) closeCC();
+  if (was !== consoleOn) systemSwitched(); return true; }));
+// the page now shows the other system: its installs, its running games and its downloads
+function systemSwitched() {
+  for (const [k, p] of progNow) { if (isCon(k) !== consoleOn) send('ps:progress', { id: plainKey(k), phase: 'clear' }); else send('ps:progress', { ...p, id: plainKey(k) }); }
+  send('ps:installed-changed', {}); runningChanged();
+}
 function gameWindowOf(key) { const w = gameWins.get(key); return w && !w.isDestroyed() ? w : null; }
 // the game the player is in: the focused game window, else the newest running game
 function currentGame() {
   for (const [k, w] of gameWins) if (w && !w.isDestroyed() && w.isFocused()) return k;
-  const ks = [...running.keys()].filter(k => !stopping.has(k)); return ks[ks.length - 1] || '';
+  const ks = [...running.keys()].filter(k => !stopping.has(k) && isCon(k) === consoleOn); return ks[ks.length - 1] || '';
 }
 function homePressed(long, native) {
   const now = Date.now(); if (now - lastHome < 450) return; lastHome = now;
@@ -584,7 +612,7 @@ function focusGame(key) {
 function consoleHome(key, page) {
   const w = mainWin && !mainWin.isDestroyed() ? mainWin : createMain('bigpicture');
   if (w.isMinimized()) w.restore(); w.show(); w.setFullScreen(true); w.focus();
-  w.webContents.send('bp:home', { key: key || '', page: page || '' });
+  w.webContents.send('bp:home', { key: plainKey(key || ''), page: page || '' });
 }
 // the controller watcher: PremiumPad.exe (SDL, reads every controller in the background, also the real Xbox button),
 // or - when it's missing (development) - a 1 x 1 px see-through window that reads the controller through Chromium
@@ -633,7 +661,7 @@ async function ccData(key) {
   const got = Object.keys(defs).length ? await achievementsFor(r.game) : [];
   let con = null;   // notifications, friends and profile come from the console screen
   try { if (mainWin && !mainWin.isDestroyed()) con = await Promise.race([mainWin.webContents.executeJavaScript('window.__bpCC ? window.__bpCC() : null'), new Promise(res => setTimeout(() => res(null), 1200))]); } catch (e) {}
-  const games = [...running].map(([k, v]) => ({ key: k, name: v.name || k, cover: coverOf(v.game), since: v.since }));
+  const games = [...running].filter(([k]) => isCon(k) === isCon(key)).map(([k, v]) => ({ key: k, name: v.name || k, cover: coverOf(v.game), since: v.since }));
   return { key, name: r.name || g.name || key, game: r.game, cover: coverOf(r.game), since: r.since || Date.now(),
     trophies: { all: Object.keys(defs).length, got: got.filter(id => defs[id]).length, list: Object.entries(defs).map(([id, v]) => ({ name: v.name, tier: v.tier || 'bronze', got: got.includes(id) })).sort((a, b) => b.got - a.got).slice(0, 6) },
     running: games, muted: w ? w.webContents.isAudioMuted() : false, canMute: !!w, recording: recLive && recKey === key, con: con || {} };
@@ -726,7 +754,7 @@ ipcMain.handle('ps:setCover', guard(async (id, dataUrl) => {
 async function launchWithUpdate(id, edition, opts) {
   const g = installedNow()[id];
   const pb = g && parentalBlocks(g.game || id.split('--')[0]); if (pb) { flash('🔒 ' + pb); throw new Error(pb); }
-  if (g && !running.has(id) && !consoleOn) showSplash(id);
+  if (g && !running.has(id) && !isCon(id)) showSplash(id);
   if (g && (g.type === 'manifest' || g.type === 'pge') && !busy.has(id) && !running.has(id)) {
     try {
       const m = ((await fetchManifest()).games || {})[g.game];
@@ -765,7 +793,7 @@ function launchGame(id, edition, opts) {
   }
   if (g.type === 'pge') { launchPge(id, g); return; }
   if (gameWins.has(id) && !gameWins.get(id).isDestroyed()) { focusGame(id); return; }
-  const cm = consoleOn;   // started from console mode: full screen like a console game, no window frame
+  const cm = isCon(id);   // the console's own install: full screen like a console game, no window frame
   const w = new BrowserWindow({
     width: 1600, height: 900, backgroundColor: '#000000', title: g.name, icon: path.join(gameDir(id, g), g.icon || 'icon.ico'),
     autoHideMenuBar: true, show: false, frame: !cm, fullscreen: cm,
@@ -800,9 +828,8 @@ function launchPge(id, g) {
   const old = pgeProcs.get(id); if (old && old.exitCode === null) { focusGame(id); if (splashKey === id) closeSplash(); return; }
   const dir = gameDir(id, g), ev = PGE_EVENTS(id);
   try { fs.mkdirSync(path.dirname(ev), { recursive: true }); fs.writeFileSync(ev, ''); } catch (e) {}
-  const cm = consoleOn;
-  // on the console its console version (controller menus, lighter graphics) when the game has one
-  const exe = cm && g.consoleEntry && fs.existsSync(path.join(dir, g.consoleEntry)) ? path.join(dir, g.consoleEntry) : path.join(dir, g.entry);
+  const cm = isCon(id);   // the console's install is the game's console version (controller menus, lighter graphics)
+  const exe = path.join(dir, g.entry);
   const child = require('child_process').spawn(exe, [], { cwd: path.dirname(exe), stdio: 'ignore', windowsHide: false,
     env: { ...process.env, PREMIUM_GAMES: '1', PREMIUM_CONSOLE: cm ? '1' : '0', PREMIUM_GAMES_EVENTS: ev, PREMIUM_GAMES_USER: playerName() || '' } });
   pgeProcs.set(id, child);
@@ -832,7 +859,7 @@ function migrateReg() {
   try {
     const reg = readReg(); let changed = false;
     for (const [k, v] of Object.entries(reg)) {
-      if (v.type === 'bf-launcher') continue;
+      if (v.type === 'bf-launcher' || isCon(k)) continue;
       const base = v.base || (v.game ? String(v.name).replace(/ (Demo|Standard|Gold)$/, '') : v.name);
       const want = edTitle(base, v.edition);
       if (v.game && v.base && v.name === want) continue;
@@ -855,7 +882,7 @@ function migrateBf() {
     }
     for (const [k, v] of Object.entries(reg)) if (v.type === 'bf-launcher' && (v.name !== BFV[k].name || v.edition)) { removeShortcuts(v); v.name = v.base = BFV[k].name; delete v.edition; delete v.unlock; }
     try { const f = path.join(BF_DATA, 'license.json'); const L = JSON.parse(fs.readFileSync(f, 'utf8')); if (L.ps) fs.rmSync(f, { force: true }); } catch (e) {}
-    if (old.length || Object.values(reg).some(v => v.type === 'bf-launcher')) { fs.mkdirSync(GAMES_DIR, { recursive: true }); fs.writeFileSync(REG_FILE, JSON.stringify(reg, null, 2)); }
+    if (old.length || Object.values(reg).some(v => v.type === 'bf-launcher')) writeRegSync(reg);
     for (const k of Object.keys(BFV)) if (reg[k]) makeShortcuts(k, reg[k]);
   } catch (e) {}
 }
@@ -880,7 +907,7 @@ async function bfAppUpdate(m, game) {
 // The launcher's own icons (from installs made before Premium Games managed it) open the launcher directly:
 // ours (same name) replace them, so the game always starts through Premium Games, like Steam.
 function fixBfShortcuts() {
-  const own = Object.entries(installedNow()).filter(([, v]) => v.type === 'bf-launcher');
+  const own = Object.entries(installedNow()).filter(([k, v]) => v.type === 'bf-launcher' && !isCon(k));
   const menu = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs');
   for (const [k, v] of own) {
     for (const p of [path.join(menu, v.name + '.lnk'), path.join(app.getPath('desktop'), v.name + '.lnk')]) {
@@ -892,6 +919,10 @@ function fixBfShortcuts() {
 /* ---------------- install / uninstall ---------------- */
 const busy = new Set();
 function send(ch, payload) { if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send(ch, payload); }
+// a download's progress, shown by the system it belongs to (the page sees the plain key)
+const progNow = new Map();
+function sendProg(p) { const k = p.id; if (p.phase === 'done' || p.phase === 'error') progNow.delete(k); else progNow.set(k, p);
+  if (isCon(k) === consoleOn) send('ps:progress', { ...p, id: plainKey(k) }); }
 
 async function fetchJSON(url) {
   const r = await net.fetch(url + (url.includes('?') ? '&' : '?') + 't=' + Date.now(), { cache: 'no-store' });
@@ -907,6 +938,7 @@ const fetchManifest = () => global.__psManifestFile ? Promise.resolve(JSON.parse
 async function swapDir(from, to) {
   const retry = async f => { for (let i = 0; ; i++) { try { return await f(); } catch (e) { if (i >= 20 || !['EPERM', 'EBUSY', 'EACCES', 'ENOTEMPTY'].includes(e.code)) throw e; await new Promise(r => setTimeout(r, 250 + i * 150)); } } };
   const aside = to + '.old';
+  await fsp.mkdir(path.dirname(to), { recursive: true });
   await fsp.rm(aside, { recursive: true, force: true }).catch(() => {});
   const had = fs.existsSync(to);
   if (had) await retry(() => fsp.rename(to, aside));
@@ -960,10 +992,12 @@ async function install(id, opts) {
   try {
     const info = keyInfo(id), man = await fetchManifest(), m = man.games && man.games[info.game];
     if (!m) throw new Error('اللعبة مو موجودة في القائمة');
+    // BLOCKFALL's own launcher program has one fixed folder and save place on the PC: it can't be a second, separate copy
+    if (isCon(id) && m.type === 'bf-launcher') throw new Error('هذي اللعبة على البي سي بس');
     const edition = info.edition;
     let received = 0, last = 0, total = 0;
-    const tick = n => { received += n; const now = Date.now(); if (now - last > 150) { last = now; send('ps:progress', { id, phase: 'download', received, total: total || received }); } };
-    let entry = m.entry, version, consoleEntry;
+    const tick = n => { received += n; const now = Date.now(); if (now - last > 150) { last = now; sendProg({ id, phase: 'download', received, total: total || received }); } };
+    let entry = m.entry, version;
 
     const V = m.type === 'bf-launcher' ? bfv(info.game) : null;
     if (m.type === 'bf-launcher' && fs.existsSync(V.exe) && !readReg()[id] && !opts.force) {
@@ -974,11 +1008,11 @@ async function install(id, opts) {
       // BLOCKFALL's official launcher package: encrypted parts on its CDN, unlocked with the studio's access code.
       const P = await fetchJSON(m.parts);
       if (P.enc && !opts.code) throw new Error('تحميل اللانشر يحتاج كود، تواصل مع الاستوديو'); total = P.zipSize || P.size; version = P.version;
-      send('ps:progress', { id, phase: 'download', received: 0, total });
+      sendProg({ id, phase: 'download', received: 0, total });
       const base = m.site || new URL('..', m.parts).toString();   // part URLs are relative to the game's site root
       const chunks = [];
       for (const part of P.parts) chunks.push(await download(new URL(part.url, base).toString(), tick));
-      send('ps:progress', { id, phase: 'extract', received, total: received });
+      sendProg({ id, phase: 'extract', received, total: received });
       const zip = P.enc ? decryptBf(Buffer.concat(chunks), P, opts.code) : Buffer.concat(chunks);
       if (P.sha1 && crypto.createHash('sha1').update(zip).digest('hex') !== P.sha1) throw new Error('الملف وصل ناقص، جرّب مرة ثانية');
       tmpZip = path.join(app.getPath('temp'), `ps-${id}-${Date.now()}.zip`);
@@ -996,7 +1030,7 @@ async function install(id, opts) {
     } else if (m.type === 'manifest') {
       // The game's own update channel: a manifest plus loose files (same source the game's standalone app uses).
       const j = await fetchJSON(m.base + 'manifest.json'); version = j.version; total = m.installSize || 0;
-      send('ps:progress', { id, phase: 'download', received: 0, total });
+      sendProg({ id, phase: 'download', received: 0, total });
       stage = gameDir(id) + '.new';
       await fsp.rm(stage, { recursive: true, force: true });
       for (const f of j.files) {
@@ -1006,55 +1040,53 @@ async function install(id, opts) {
         await download(m.base + f.split('/').map(encodeURIComponent).join('/'), tick, dest);
       }
       if (m.icon) await download(new URL(m.icon, SITE).toString(), () => {}, path.join(stage, 'icon.ico')).catch(() => {});
-      send('ps:progress', { id, phase: 'extract', received, total: received });
+      sendProg({ id, phase: 'extract', received, total: received });
       await swapDir(stage, gameDir(id)); stage = null;
     } else if (m.type === 'pge') {
       // a game made with Premium Engine: version.json + one zip (checked with its sha256), unzipped into the game's folder.
       // Most come twice: the PC version and a console version (full controller play, console menus, at most 2 GB), which
       // goes into console\ inside the game's folder and is what runs in console mode.
+      // The console installs only the console version (or the game itself when it has none), the PC only the PC version.
       const j = await fetchJSON(m.dist + 'version.json'); version = j.version;
       const bad = x => !x || typeof x !== 'object' || !x.file || /[\\/]|\.\./.test(x.file) || !x.exe || /[\\/]|\.\./.test(x.exe) || !/^[0-9a-f]{64}$/.test(x.sha256 || '') || /\.\./.test(x.zipRoot || '');
-      if (bad(j) || (j.console && bad(j.console))) throw new Error('بيانات التحديث غير صالحة');
-      total = (+j.size || 0) + (j.console ? +j.console.size || 0 : 0);
-      send('ps:progress', { id, phase: 'download', received: 0, total });
+      const pick = isCon(id) && j.console ? j.console : j;
+      if (bad(pick)) throw new Error('بيانات التحديث غير صالحة');
+      total = +pick.size || 0;
+      sendProg({ id, phase: 'download', received: 0, total });
       stage = gameDir(id) + '.new';
+      await fsp.mkdir(path.dirname(stage), { recursive: true });
       await fsp.rm(stage, { recursive: true, force: true });
-      const unpack = async (x, into) => {
-        tmpZip = path.join(app.getPath('temp'), `ps-${id}-${Date.now()}.zip`);
-        await download(m.dist + encodeURIComponent(x.file), tick, tmpZip);
-        const h = crypto.createHash('sha256'); await new Promise((res, rej) => fs.createReadStream(tmpZip).on('data', d => h.update(d)).on('end', res).on('error', rej));
-        if (h.digest('hex') !== x.sha256) throw new Error('الملف وصل ناقص، جرّب مرة ثانية');
-        const raw = into + '.zip-out';
-        await fsp.rm(raw, { recursive: true, force: true });
-        await require('extract-zip')(tmpZip, { dir: raw });
-        await fsp.rm(tmpZip, { force: true }).catch(() => {}); tmpZip = null;
-        const inner = path.join(raw, x.zipRoot || '');
-        if (!(inner + path.sep).startsWith(raw + path.sep) || !fs.existsSync(path.join(inner, x.exe))) throw new Error('اللعبة ناقصة في الملف');
-        await fsp.rm(into, { recursive: true, force: true });
-        await fsp.rename(inner, into);
-        await fsp.rm(raw, { recursive: true, force: true });
-      };
-      await unpack(j, stage);
-      if (j.console) await unpack(j.console, path.join(stage, 'console'));
-      send('ps:progress', { id, phase: 'extract', received, total: received });
+      tmpZip = path.join(app.getPath('temp'), `ps-${id}-${Date.now()}.zip`);
+      await download(m.dist + encodeURIComponent(pick.file), tick, tmpZip);
+      const h = crypto.createHash('sha256'); await new Promise((res, rej) => fs.createReadStream(tmpZip).on('data', d => h.update(d)).on('end', res).on('error', rej));
+      if (h.digest('hex') !== pick.sha256) throw new Error('الملف وصل ناقص، جرّب مرة ثانية');
+      const raw = stage + '.zip-out';
+      await fsp.rm(raw, { recursive: true, force: true });
+      await require('extract-zip')(tmpZip, { dir: raw });
+      await fsp.rm(tmpZip, { force: true }).catch(() => {}); tmpZip = null;
+      const inner = path.join(raw, pick.zipRoot || '');
+      if (!(inner + path.sep).startsWith(raw + path.sep) || !fs.existsSync(path.join(inner, pick.exe))) { await fsp.rm(raw, { recursive: true, force: true }); throw new Error('اللعبة ناقصة في الملف'); }
+      await fsp.rename(inner, stage);
+      await fsp.rm(raw, { recursive: true, force: true });
+      sendProg({ id, phase: 'extract', received, total: received });
       const old = pgeProcs.get(id); if (old) await stopGame(id).catch(() => {});
       await swapDir(stage, gameDir(id)); stage = null;
-      entry = j.exe; consoleEntry = j.console ? 'console/' + j.console.exe : undefined;
+      entry = pick.exe;
     } else {
       throw new Error('نوع اللعبة غير معروف');
     }
 
     const reg = readReg(), bf = m.type === 'bf-launcher', one = bf || m.type === 'pge';   // one install for every edition
-    reg[id] = { type: m.type, game: info.game, base: m.name, name: one ? m.name : edTitle(m.name, edition), version, entry, demoPatch: Array.isArray(m.demoPatch) ? m.demoPatch : undefined, account: m.account || undefined, icon: bf ? 'resources/app/icon.ico' : m.type === 'pge' ? entry : 'icon.ico', edition: one ? undefined : edition, consoleEntry,
+    reg[id] = { type: m.type, game: info.game, base: m.name, name: one ? m.name : edTitle(m.name, edition), version, entry, demoPatch: Array.isArray(m.demoPatch) ? m.demoPatch : undefined, account: m.account || undefined, icon: bf ? 'resources/app/icon.ico' : m.type === 'pge' ? entry : 'icon.ico', edition: one ? undefined : edition,
       size: await dirSize(bf ? V.dir : gameDir(id, m)), installedAt: Date.now(), lastPlayed: (readReg()[id] || {}).lastPlayed };
     if (bf) writeBfAccount();
     await writeReg(reg);
     makeShortcuts(id, reg[id]);
-    send('ps:progress', { id, phase: 'done' });
-    send('ps:installed-changed', {}); updateTray();
+    sendProg({ id, phase: 'done' });
+    if (isCon(id) === consoleOn) send('ps:installed-changed', {}); updateTray();
   } catch (e) {
     if (stage) await fsp.rm(stage, { recursive: true, force: true }).catch(() => {});
-    send('ps:progress', { id, phase: 'error', error: e.message || String(e) });
+    sendProg({ id, phase: 'error', error: e.message || String(e) });
     throw e;
   } finally {
     busy.delete(id);
@@ -1093,7 +1125,7 @@ async function uninstall(id) {
   } else {
     await fsp.rm(gameDir(id), { recursive: true, force: true });
   }
-  if (g) removeShortcuts(g);
+  if (g && !isCon(id)) removeShortcuts(g);   // the PC's icons belong to the PC's copy
   delete reg[id]; await writeReg(reg);
   send('ps:installed-changed', {}); updateTray();
 }
@@ -1115,7 +1147,7 @@ function shortcutPaths(g) {
   ];
 }
 function makeShortcuts(id, g) {
-  if (process.platform !== 'win32') return;
+  if (process.platform !== 'win32' || isCon(id)) return;   // the console's games have no icons outside the console
   for (const p of shortcutPaths(g)) {
     try {
       fs.mkdirSync(path.dirname(p), { recursive: true });
@@ -1305,16 +1337,16 @@ ipcMain.handle('ps:disk', guard(async () => {
   let dir = path.join(LOCAL, 'PremiumStudio'); while (!fs.existsSync(dir) && path.dirname(dir) !== dir) dir = path.dirname(dir);
   const st = await fsp.statfs(dir); return { free: st.bavail * st.bsize, total: st.blocks * st.bsize };
 }));
-ipcMain.handle('ps:getInstalled', guard(async () => installedNow()));
-ipcMain.handle('ps:install', guard(async (id, opts) => { await install(id, opts); return true; }));
+ipcMain.handle('ps:getInstalled', guard(async () => installedFor(consoleOn)));
+ipcMain.handle('ps:install', guard(async (id, opts) => { await install(fromPage(id), opts); return true; }));
 ipcMain.handle('ps:getLatest', guard(async () => getLatest()));
-ipcMain.handle('ps:uninstall', guard(async id => { await uninstall(id); return true; }));
+ipcMain.handle('ps:uninstall', guard(async id => { await uninstall(fromPage(id)); return true; }));
 ipcMain.handle('ps:launch', guard(async (id, edition, opts) => { const ver = opts && typeof opts.version === 'string' && /^[\w.\-]{1,24}$/.test(opts.version) ? opts.version : '';
-  await launchWithUpdate(bfKey(id), EDITIONS.includes(edition) ? edition : undefined, { version: ver }); return true; }));
+  await launchWithUpdate(fromPage(id), EDITIONS.includes(edition) ? edition : undefined, { version: ver }); return true; }));
 ipcMain.handle('ps:features', guard(async () => ({ editions: true, running: true })));
 ipcMain.handle('ps:getRunning', guard(async () => runningList()));
-ipcMain.handle('ps:stop', guard(async id => { id = bfKey(id); if (!validId(id)) throw new Error('bad id'); stopGame(id); return true; }));
-ipcMain.handle('ps:showFolder', guard(async id => { if (validId(id)) shell.openPath(gameDir(id, readReg()[id])); return true; }));
+ipcMain.handle('ps:stop', guard(async id => { id = fromPage(id); if (!validId(id)) throw new Error('bad id'); stopGame(id); return true; }));
+ipcMain.handle('ps:showFolder', guard(async id => { id = fromPage(id); if (validId(id)) shell.openPath(gameDir(id, readReg()[id])); return true; }));
 ipcMain.handle('ps:setUser', guard(async u => { await setUser(u); return true; }));
 // the editions the player owns, per game (BLOCKFALL's launcher lets them pick among them)
 ipcMain.handle('ps:setOwned', guard(async o => {
@@ -1374,8 +1406,8 @@ async function power(what) {
 // back to the console screen when a game closes (like a console does)
 ipcMain.handle('ps:focusMain', guard(async () => { if (mainWin && !mainWin.isDestroyed()) { if (mainWin.isMinimized()) mainWin.restore(); mainWin.show(); mainWin.focus(); } return true; }));
 // game properties: check the files (download again what's wrong or missing), put the icon back on the desktop
-ipcMain.handle('ps:verify', guard(async id => { if (!validId(id) || !readReg()[id]) throw new Error('مو مثبتة'); if (running.has(id)) throw new Error('اقفل اللعبة أول'); await install(id, { force: true, edition: readReg()[id].edition }); return true; }));
-ipcMain.handle('ps:shortcut', guard(async id => { const g = readReg()[id]; if (!g) throw new Error('مو مثبتة'); makeShortcuts(id, g); return true; }));
+ipcMain.handle('ps:verify', guard(async id => { id = fromPage(id); if (!validId(id) || !readReg()[id]) throw new Error('مو مثبتة'); if (running.has(id)) throw new Error('اقفل اللعبة أول'); await install(id, { force: true, edition: readReg()[id].edition }); return true; }));
+ipcMain.handle('ps:shortcut', guard(async id => { id = fromPage(id); if (isCon(id)) throw new Error('ألعاب الكونسل تشتغل من الكونسل بس'); const g = readReg()[id]; if (!g) throw new Error('مو مثبتة'); makeShortcuts(id, g); return true; }));
 /* ---- Workshop: share BLOCKFALL worlds; subscribed ones go into your worlds next time you play ---- */
 ipcMain.handle('ps:myWorlds', guard(async () => {
   const dir = path.join(BF_DATA, 'worlds_export'); let files = []; try { files = (await fsp.readdir(dir)).filter(f => f.endsWith('.json')); } catch (e) { return []; }
@@ -1412,8 +1444,8 @@ ipcMain.handle('ps:workshopGet', guard(async (id, name, mode) => {
 
 // Remote Play Together: which game window the store may share, and the friend's keys/mouse for it
 let shareWin = '';
-ipcMain.handle('ps:shareGame', guard(async id => { if (!validId(id) || !gameWins.has(id)) throw new Error('شغّل اللعبة أول'); shareWin = id; return true; }));
-ipcMain.handle('ps:remoteInput', guard(async (id, ev) => {
+ipcMain.handle('ps:shareGame', guard(async id => { id = fromPage(id); if (!validId(id) || !gameWins.has(id)) throw new Error('شغّل اللعبة أول'); shareWin = id; return true; }));
+ipcMain.handle('ps:remoteInput', guard(async (id, ev) => { id = fromPage(id);
   const w = gameWins.get(id); if (!w || w.isDestroyed() || id !== shareWin || !ev || typeof ev !== 'object') return false;
   const T = ['keyDown', 'keyUp', 'char', 'mouseDown', 'mouseUp', 'mouseMove', 'mouseWheel'];
   if (!T.includes(ev.type)) return false;
@@ -1488,9 +1520,9 @@ function handleDeepLink(url) {
     const u = new URL(url), kind = u.hostname, id = u.pathname.replace(/^\/+/, '').split('/')[0];
     // a game in its own program asks for the console's Control Center (Home button) or the home screen (Home held)
     if (kind === 'overlay' || kind === 'home') { if (running.size) homePressed(kind === 'home'); else createMain(consoleOn ? 'bigpicture' : ''); return; }
-    if (kind === 'launch' && validId(id) && installedNow()[bfKey(id)]) return playFromOutside(bfKey(id));
+    if (kind === 'launch' && validId(id) && !isCon(id) && installedNow()[bfKey(id)]) return playFromOutside(bfKey(id));
     if (kind === 'play' && validId(id)) {
-      const mine = Object.entries(installedNow()).filter(([k, v]) => (v.game || k.split('--')[0]) === id)
+      const mine = Object.entries(installedFor(false)).filter(([k, v]) => (v.game || k.split('--')[0]) === id)
         .sort((a, b) => ((b[1].lastPlayed || 0) - (a[1].lastPlayed || 0)) || (EDITIONS.indexOf(b[1].edition) - EDITIONS.indexOf(a[1].edition)));
       if (mine.length) return playFromOutside(mine[0][0]);
       return createMain('library');
@@ -1502,7 +1534,7 @@ function handleDeepLink(url) {
 function handleArgv(argv, firstRun) {
   const launch = argValue(argv, 'launch');
   const link = argv.find(a => a.startsWith('premiumstudio://'));
-  if (launch && validId(launch) && installedNow()[bfKey(launch)]) { playFromOutside(bfKey(launch)); return true; }
+  if (launch && validId(launch) && !isCon(launch) && installedNow()[bfKey(launch)]) { playFromOutside(bfKey(launch)); return true; }
   if (link) { handleDeepLink(link); return true; }
   const consoleBoot = argv.includes('--console') || (firstRun && settings().consoleBoot);
   if (consoleBoot) { createMain('bigpicture'); return true; }   // console mode: straight to the big screen

@@ -93,6 +93,9 @@ app.whenReady().then(async () => {
     ok('horror game closes', await waitFor(async () => !(await call('ps:getRunning'))['last-recording--std'], 20000));
     // ---- console mode with a game running (like a PS5): full screen, no launcher window, Home = Control Center over the game
     await call('ps:setConsole', true);
+    ok('console system: starts empty (the PC\'s games are the PC\'s)', !(await call('ps:getInstalled'))['last-recording--std']);
+    await call('ps:install', 'last-recording--std', { edition: 'std' });
+    ok('console system: the game installs into the console', !!(await call('ps:getInstalled'))['last-recording--std'] && fs.existsSync(path.join(process.env.LOCALAPPDATA, 'PremiumStudio', 'console', 'games', 'last-recording--std', 'index.html')));
     const homeSent = []; { const mw = BrowserWindow.getAllWindows().find(w => /#bigpicture$/.test(w.webContents.getURL())); if (mw) { const orig = mw.webContents.send.bind(mw.webContents); mw.webContents.send = (ch, p) => { if (ch === 'bp:home') homeSent.push(p); return orig(ch, p); }; } }
     await call('ps:launch', 'last-recording--std');
     ok('console: game runs', await waitFor(async () => !!(await call('ps:getRunning'))['last-recording--std'], 30000));
@@ -108,7 +111,7 @@ app.whenReady().then(async () => {
     ok('console: Home opens the Control Center over the game', await waitFor(ccW, 10000));
     await sleep(1500);
     const ccd = await call('cc:data');
-    ok('console: Control Center knows the game', ccd && ccd.key === 'last-recording--std' && ccd.running.length === 1, ccd && ccd.name);
+    ok('console: Control Center knows the game', ccd && ccd.key === 'last-recording--std--console' && ccd.running.length === 1, ccd && ccd.name);
     try { fs.mkdirSync(path.join(__dirname, 'shots'), { recursive: true }); const w = ccW(); if (w) fs.writeFileSync(path.join(__dirname, 'shots', 'control-center.png'), (await w.webContents.capturePage()).toPNG()); } catch (e) {}
     const focusedInCC = ccW() ? await ccW().webContents.executeJavaScript('document.activeElement && document.activeElement.dataset.a') : '';
     ok('console: Control Center is drawn and focused on the game card', focusedInCC === 'close', focusedInCC);
@@ -131,6 +134,7 @@ app.whenReady().then(async () => {
     ok('console: Close Game from the Control Center', await waitFor(async () => !(await call('ps:getRunning'))['last-recording--std'], 20000));
     await call('ps:setConsole', false);
     ok('console: the reader stops when console mode ends', await waitFor(() => !padUp(), 5000));
+    ok('console system: the PC still has its own copy', !!(await call('ps:getInstalled'))['last-recording--std'] && fs.existsSync(path.join(process.env.LOCALAPPDATA, 'PremiumStudio', 'games', 'last-recording--std', 'index.html')));
     // the console's own files: everything is written down
     const csDir = path.join(process.env.LOCALAPPDATA, 'PremiumStudio', 'console');
     let act = []; try { act = fs.readFileSync(path.join(csDir, 'activity.log'), 'utf8').trim().split('\n').map(l => JSON.parse(l)); } catch (e) {}
@@ -176,34 +180,13 @@ app.whenReady().then(async () => {
     await call('ps:stop', 'blockfall');
     ok('BLOCKFALL closes from the Close button', await waitFor(async () => !(await call('ps:getRunning')).blockfall, 40000));
     ok('BLOCKFALL process gone', await waitFor(() => !procAlive(), 15000));
-    // ---- BLOCKFALL on the console: no launcher; the console's game menu picks the edition and the version
-    const vers = await call('ps:gameVersions', 'blockfall');
-    ok('console: BLOCKFALL versions for its menu', !!vers && vers.versions.length > 5 && !!vers.latest, vers && vers.latest + ' · ' + vers.versions.length);
+    // ---- BLOCKFALL's own launcher is a PC program (one fixed folder and save place): it isn't on the console system
     const tvApp = path.join(process.env.LOCALAPPDATA, 'Programs', 'TERRAVOLT', 'resources', 'app');
     for (const f of ['main.js', 'premium.js']) fs.copyFileSync(path.join(__dirname, 'fixtures', 'launcher-app', f), path.join(tvApp, f));   // the launcher's console mode (1.10.0)
     { const pj = path.join(tvApp, 'package.json'), j = JSON.parse(fs.readFileSync(pj, 'utf8')); j.version = '1.10.0'; fs.writeFileSync(pj, JSON.stringify(j, null, 2)); }
     await call('ps:setConsole', true);
-    const pick = vers && (vers.versions.find(v => v.installed) || vers.versions[0]).id;
-    const tl = Date.now();
-    await call('ps:launch', 'blockfall', 'gold', { version: pick });
-    ok('console: BLOCKFALL goes straight into the game (no launcher)', await waitFor(() => { const s = state(); return s && s.game && s.at > tl; }, 240000), JSON.stringify(state()) + ' · ' + Math.round((Date.now() - tl) / 1000) + 's');
-    let pl = {}; try { pl = JSON.parse(fs.readFileSync(path.join(bfData, 'premium_launch.json'), 'utf8')); } catch (e) {}
-    ok('console: the launcher got the edition and version', pl.console === true && pl.edition === 'gold' && pl.version === pick, JSON.stringify(pl));
-    let lic = {}; try { lic = JSON.parse(fs.readFileSync(path.join(bfData, 'license.json'), 'utf8')); } catch (e) {}
-    ok('console: playing the picked edition', !lic.ed || lic.ed === 'gold', lic.ed);
-    ok('console: the picked version is installed', fs.existsSync(path.join(bfData, 'versions', pick)));
-    await sleep(3000); T.padPress();
-    ok('console: Home over BLOCKFALL opens the Control Center', await waitFor(ccW, 10000));
-    const bcd = await call('cc:data');
-    ok('console: Control Center knows BLOCKFALL', bcd && bcd.key === 'blockfall', bcd && bcd.name);
-    await sleep(600); T.padPress();
-    ok('console: Home again back to BLOCKFALL', await waitFor(() => !ccW(), 5000));
-    await call('ps:launch', 'blockfall');   // the tile again: the same game comes forward, no second launcher
-    await sleep(3000);
-    ok('console: one BLOCKFALL only', require('child_process').execSync('tasklist /FI "IMAGENAME eq BLOCKFALL3001.exe" /NH').toString().split('BLOCKFALL3001.exe').length - 1 >= 1 && state().game);
-    await call('ps:stop', 'blockfall');
-    ok('console: BLOCKFALL closes from the console', await waitFor(async () => !(await call('ps:getRunning')).blockfall, 40000));
-    ok('console: the launcher quits with the game', await waitFor(() => !procAlive(), 20000));
+    let bfPc = false; try { await call('ps:launch', 'blockfall', 'gold'); } catch (e) { bfPc = /مو مثبتة/.test(String(e.message)); }
+    ok('console system: the PC\'s BLOCKFALL does not start from the console', bfPc && !(await call('ps:getRunning')).blockfall);
     await call('ps:setConsole', false);
     // ---- the Developer edition: its own program
     const devData = path.join(app.getPath('appData'), '.terravolt-dev'), devExe = path.join(process.env.LOCALAPPDATA, 'Programs', 'BLOCKFALL3001-Dev', 'BLOCKFALL3001-Dev.exe');
@@ -238,13 +221,25 @@ app.whenReady().then(async () => {
       const pi = (await call('ps:getInstalled'))[key];
       ok('engine game: installs (zip, sha256, unzip)', !!pi && pi.type === 'pge' && fs.existsSync(path.join(gdir, vj.exe)) && fs.existsSync(path.join(gdir, 'game.pge.json')), Math.round((Date.now() - tp) / 1000) + 's · ' + (pi && pi.version));
       ok('engine game: its own name and icon', pi && pi.name === 'BLOCKFALL 3001 · Premium Engine' && fs.existsSync(path.join(desk, 'BLOCKFALL 3001 · Premium Engine.lnk')));
-      if (vj.console) ok('engine game: its console version installs too (console\\)', pi && pi.consoleEntry === 'console/' + vj.console.exe && fs.existsSync(path.join(gdir, 'console', vj.console.exe)), pi && pi.consoleEntry);
       ok('engine game: the main BLOCKFALL is still there', !!(await call('ps:getInstalled')).blockfall);
+      // ---- console mode is its own system (like a PS5): its own installs, only in it, only from it
+      const ckey = key + '--console', cdir = path.join(process.env.LOCALAPPDATA, 'PremiumStudio', 'console', 'games', key);
+      const lnks = () => fs.readdirSync(desk).filter(f => f.endsWith('.lnk')).sort().join('|'), lnk0 = lnks();
       await call('ps:setConsole', true);
+      ok('console system: the PC copy is not in the console', !(await call('ps:getInstalled'))[key] && !(await call('ps:getInstalled')).blockfall, Object.keys(await call('ps:getInstalled')).join(','));
+      let notThere = false; try { await call('ps:launch', key); } catch (e) { notThere = /مو مثبتة/.test(String(e.message)); }
+      ok('console system: the PC copy does not start from the console', notThere && !T.pgeProc(key) && !T.pgeProc(ckey));
+      let pcOnly = false; try { await call('ps:install', 'blockfall'); } catch (e) { pcOnly = /البي سي/.test(String(e.message)); }
+      ok('console system: BLOCKFALL\'s own launcher stays on the PC', pcOnly);
+      const conProg = []; { const mw = BrowserWindow.getAllWindows().find(w => /#bigpicture$/.test(w.webContents.getURL())) || BrowserWindow.getAllWindows()[0]; const wc = mw.webContents, orig = wc.send.bind(wc); wc.send = (ch, x) => { if (ch === 'ps:progress' && x && x.id !== 'premium-engine') conProg.push(x.id + ':' + x.phase); return orig(ch, x); }; }
+      await call('ps:install', key);
+      const ci0 = (await call('ps:getInstalled'))[key];
+      ok('console system: installs its own copy in the console\'s folder', !!ci0 && fs.existsSync(path.join(cdir, vj.exe)) && fs.existsSync(path.join(gdir, vj.exe)), ci0 && ci0.version);
+      ok('console system: the page sees the plain key while it downloads', conProg.includes(key + ':done') && !conProg.some(x => x.includes('--console')), conProg.slice(-3).join(','));
+      ok('console system: no icon on the desktop or the Start menu', lnks() === lnk0, lnks());
       await call('ps:launch', key);
-      const alive = () => { const c = T.pgeProc(key); return !!c && c.exitCode === null; };
-      ok('engine game: runs from the console', await waitFor(alive, 15000) && !!(await call('ps:getRunning'))[key]);
-      if (vj.console) ok('engine game: the console runs its console version', /[\\/]console[\\/]/.test(T.pgeProc(key).spawnfile || ''), T.pgeProc(key).spawnfile);
+      const alive = (k = ckey) => { const c = T.pgeProc(k); return !!c && c.exitCode === null; };
+      ok('engine game: runs from the console (the console\'s copy)', await waitFor(() => alive(), 15000) && !!(await call('ps:getRunning'))[key] && !T.pgeProc(key) && /[\\/]console[\\/]games[\\/]/.test(T.pgeProc(ckey).spawnfile || ''), T.pgeProc(ckey) && T.pgeProc(ckey).spawnfile);
       await sleep(8000);
       ok('engine game: still running after 8 s (the world loads)', alive());
       try { fs.mkdirSync(path.join(__dirname, 'shots'), { recursive: true }); const img = await require('electron').desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1280, height: 720 } }); if (img[0]) fs.writeFileSync(path.join(__dirname, 'shots', 'engine-game.png'), img[0].thumbnail.toPNG()); } catch (e) {}
@@ -252,44 +247,61 @@ app.whenReady().then(async () => {
       T.padPress();
       ok('engine game: Home opens the Control Center over it', await waitFor(ccW2, 10000));
       const ecd = await call('cc:data');
-      ok('engine game: Control Center knows it', ecd && ecd.key === key, ecd && ecd.name);
+      ok('engine game: Control Center knows it', ecd && ecd.key === ckey, ecd && ecd.name);
       await sleep(600); T.padPress();
       ok('engine game: Home again brings the game back to the front', await waitFor(() => !ccW2() && /^focused \d+ 1$/.test(T.lastFocused()), 8000), T.lastFocused());
       // a trophy the game writes goes to the account
-      fs.appendFileSync(path.join(app.getPath('userData'), 'events', key + '.txt'), 'trophy e2e_trophy\nbad line\n');
+      fs.appendFileSync(path.join(app.getPath('userData'), 'events', ckey + '.txt'), 'trophy e2e_trophy\nbad line\n');
       ok('engine game: its trophies are read', await waitFor(() => T.granted().some(g => g.endsWith(key + 'e2e_trophy')), 6000) || !T.granted().length, T.granted().join(','));
       await call('ps:stop', key);
       ok('engine game: closes from Premium Games', await waitFor(async () => !alive() && !(await call('ps:getRunning'))[key], 30000));
       await call('ps:setConsole', false);
+      ok('console system: the PC sees only its own copy', !!(await call('ps:getInstalled'))[key] && !Object.keys(await call('ps:getInstalled')).some(k => k.includes('--console')));
+      app.emit('second-instance', {}, [process.execPath, '--launch=' + ckey]); await sleep(4000);
+      ok('console system: the console\'s copy can\'t be started from outside the console', !alive());
+      await call('ps:uninstall', key);
+      ok('console system: removing the PC copy leaves the console\'s', !fs.existsSync(gdir) && fs.existsSync(path.join(cdir, vj.exe)));
+      await call('ps:install', key);
       // an update: the version in version.json changed → it's downloaded again before playing
       { const reg = path.join(process.env.LOCALAPPDATA, 'PremiumStudio', 'games', 'installed.json'), r = JSON.parse(fs.readFileSync(reg, 'utf8')); r[key].version = '00.00.00'; fs.writeFileSync(reg, JSON.stringify(r, null, 2)); }
       await call('ps:launch', key);
-      ok('engine game: updates when version.json changes, then starts', await waitFor(alive, 60000) && (await call('ps:getInstalled'))[key].version === vj.version, (await call('ps:getInstalled'))[key].version);
-      await call('ps:stop', key); await waitFor(() => !alive(), 30000);
+      ok('engine game: updates when version.json changes, then starts', await waitFor(() => alive(key), 60000) && (await call('ps:getInstalled'))[key].version === vj.version, (await call('ps:getInstalled'))[key].version);
+      await call('ps:stop', key); await waitFor(() => !alive(key), 30000);
       await call('ps:uninstall', key);
       ok('engine game: uninstalls (files and icon)', !fs.existsSync(gdir) && !fs.existsSync(path.join(desk, 'BLOCKFALL 3001 · Premium Engine.lnk')) && !(await call('ps:getInstalled'))[key]);
-      // two versions: the PC version and the console version (console\ in the game's folder, the one that runs on the console)
-      if (!vj.console) {
+      await call('ps:setConsole', true);
+      await call('ps:uninstall', key);
+      ok('console system: removed only from the console', !fs.existsSync(cdir) && !(await call('ps:getInstalled'))[key]);
+      await call('ps:setConsole', false);
+      // two versions: the PC installs the PC version, the console the console version
+      {
         const os = require('os'), http = require('http'), dist = fs.mkdtempSync(path.join(os.tmpdir(), 'pge-dist-'));
-        fs.copyFileSync(path.join(__dirname, '..', '..', 'games', 'blockfall', 'dist', vj.file), path.join(dist, 'pc.zip'));
-        fs.copyFileSync(path.join(__dirname, '..', '..', 'games', 'blockfall', 'dist', vj.file), path.join(dist, 'console.zip'));
-        fs.writeFileSync(path.join(dist, 'version.json'), JSON.stringify({ ...vj, file: 'pc.zip', console: { file: 'console.zip', zipRoot: vj.zipRoot, exe: vj.exe, sha256: vj.sha256, size: vj.size } }));
+        const src = path.join(__dirname, '..', '..', 'games', 'blockfall', 'dist', vj.file);
+        fs.copyFileSync(src, path.join(dist, 'pc.zip'));
+        // the console zip: the same game with a marker file, so the test can tell which one was installed
+        fs.copyFileSync(src, path.join(dist, 'console.zip'));
+        const entry = (vj.zipRoot || '') + 'console.json', czip = path.join(dist, 'console.zip').replace(/'/g, "''");
+        require('child_process').execFileSync('powershell', ['-NoProfile', '-Command', `Add-Type -AssemblyName System.IO.Compression.FileSystem; $z=[System.IO.Compression.ZipFile]::Open('${czip}','Update'); $e=$z.CreateEntry('${entry}'); $w=New-Object System.IO.StreamWriter($e.Open()); $w.Write('{"console":true}'); $w.Close(); $z.Dispose()`]);
+        const cb = fs.readFileSync(path.join(dist, 'console.zip')), csha = require('crypto').createHash('sha256').update(cb).digest('hex'), csize = cb.length;
+        fs.writeFileSync(path.join(dist, 'version.json'), JSON.stringify({ ...vj, file: 'pc.zip', console: { file: 'console.zip', zipRoot: vj.zipRoot, exe: vj.exe, sha256: csha, size: csize } }));
         const srv = http.createServer((q, s) => { const f = path.join(dist, path.basename(decodeURIComponent(q.url.split('?')[0]))); if (!fs.existsSync(f)) { s.writeHead(404); s.end(); return; } s.writeHead(200, { 'Content-Length': fs.statSync(f).size }); fs.createReadStream(f).pipe(s); });
         await new Promise(r => srv.listen(0, '127.0.0.1', r));
         const man = JSON.parse(fs.readFileSync(global.__psManifestFile, 'utf8')), manFile = path.join(dist, 'games.json'), oldMan = global.__psManifestFile;
         man.games[key].dist = `http://127.0.0.1:${srv.address().port}/`; fs.writeFileSync(manFile, JSON.stringify(man)); global.__psManifestFile = manFile;
         try {
           await call('ps:install', key);
-          const ci = (await call('ps:getInstalled'))[key];
-          ok('engine game, two versions: both install (PC + console\\)', ci && ci.consoleEntry === 'console/' + vj.exe && fs.existsSync(path.join(gdir, vj.exe)) && fs.existsSync(path.join(gdir, 'console', vj.exe)) && fs.existsSync(path.join(gdir, 'console', 'game.pge.json')), ci && ci.consoleEntry);
-          await call('ps:setConsole', true); await call('ps:launch', key);
-          ok('engine game, two versions: the console runs the console version', await waitFor(alive, 15000) && /[\\/]console[\\/]/.test(T.pgeProc(key).spawnfile || ''), T.pgeProc(key) && T.pgeProc(key).spawnfile);
-          await call('ps:stop', key); await waitFor(() => !alive(), 30000); await call('ps:setConsole', false);
+          ok('engine game, two versions: the PC installs the PC version only', fs.existsSync(path.join(gdir, vj.exe)) && !fs.existsSync(path.join(gdir, 'console.json')) && !fs.existsSync(path.join(gdir, 'console')));
+          await call('ps:setConsole', true); await call('ps:install', key);
+          ok('engine game, two versions: the console installs the console version', fs.existsSync(path.join(cdir, vj.exe)) && fs.existsSync(path.join(cdir, 'console.json')));
           await call('ps:launch', key);
-          ok('engine game, two versions: the PC runs the PC version', await waitFor(alive, 15000) && !/[\\/]console[\\/]/.test(T.pgeProc(key).spawnfile || ''), T.pgeProc(key) && T.pgeProc(key).spawnfile);
+          ok('engine game, two versions: the console runs the console version', await waitFor(() => alive(), 15000) && /[\\/]console[\\/]games[\\/]/.test(T.pgeProc(ckey).spawnfile || ''), T.pgeProc(ckey) && T.pgeProc(ckey).spawnfile);
           await call('ps:stop', key); await waitFor(() => !alive(), 30000);
+          await call('ps:uninstall', key); await call('ps:setConsole', false);
+          await call('ps:launch', key);
+          ok('engine game, two versions: the PC runs the PC version', await waitFor(() => alive(key), 15000) && !/[\\/]console[\\/]/.test(T.pgeProc(key).spawnfile || ''), T.pgeProc(key) && T.pgeProc(key).spawnfile);
+          await call('ps:stop', key); await waitFor(() => !alive(key), 30000);
           await call('ps:uninstall', key);
-          ok('engine game, two versions: uninstall removes both', !fs.existsSync(gdir));
+          ok('engine game, two versions: each removed from its own system', !fs.existsSync(gdir) && !fs.existsSync(cdir));
         } finally { global.__psManifestFile = oldMan; srv.close(); }
       }
     }

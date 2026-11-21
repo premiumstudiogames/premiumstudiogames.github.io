@@ -21,7 +21,8 @@ const CF = () => PS && PS.consoleFiles;   // the console's own files on the PC (
   const mins = gid => ((S().PLAY[gid] || {}).minutes) || 0;
   const hrs = m => m >= 60 ? (m / 60).toFixed(1).replace(/\.0$/, "") + " ساعة" : m + " دقيقة";
   const last = gid => H.lastPlayed(gid);
-  const mine = () => GAMES.filter(g => ownedEds(g.id).length).sort((a, b) => last(b.id) - last(a.id));
+  // the console is its own system: games that only run on the PC (BLOCKFALL's own launcher) aren't on it
+  const mine = () => GAMES.filter(g => ownedEds(g.id).length && !g.pcOnly).sort((a, b) => last(b.id) - last(a.id));
   const title = g => esc(g.en || g.title);
   const running = gid => Object.keys(S().RUNNING).some(k => k.split("--")[0] === gid || (S().RUNNING[k] || {}).game === gid);
   const GB = n => n >= 1e9 ? `<span class="num">${(n / 1e9).toFixed(2)}</span> غيغابايت` : `<span class="num">${(n / 1e6).toFixed(0)}</span> ميغابايت`;   // numbers only in .num (font features break Arabic joining)
@@ -146,12 +147,14 @@ const CF = () => PS && PS.consoleFiles;   // the console's own files on the PC (
 
   /* ---------- state of a game ---------- */
   function gameState(g, prefer){ const s = S(), eds = ownedEds(g.id).slice().reverse();
+    if (g.pcOnly) return {k:instOf(g.id, eds[0] || "demo")[0], ed:eds[0], none:true, pcOnly:true};
     if (prefer && eds.includes(prefer)) eds.unshift(prefer);
     for (const ed of eds) { const [k, inst] = instOf(g.id, ed); if (inst && s.RUNNING[k]) return {k, ed, run:true}; }
     for (const ed of eds) { const [k] = instOf(g.id, ed); if (s.PROGRESS[k]) return {k, ed, prog:s.PROGRESS[k]}; }
     for (const ed of eds) { const [k, inst] = instOf(g.id, ed); if (inst) return {k, ed, inst:true, info:inst}; }
     return {k:instOf(g.id, eds[0] || "demo")[0], ed:eds[0], none:true}; }
   function actBtn(g, prefer){ const st = gameState(g, prefer);
+    if (st.pcOnly) return `<button class="ps-btn" data-bp="act" data-a="none" data-g="${g.id}">على البي سي بس</button>`;
     if (st.run) return `<button class="ps-btn play" data-bp="act" data-a="play" data-g="${g.id}" data-e="${st.ed}">متابعة اللعب</button>`;
     if (st.prog) return `<button class="ps-btn" data-bp="act" data-a="none" data-g="${g.id}">يحمّل <span class="num">${H.pct(st.prog)}%</span></button>`;
     if (st.inst) return `<button class="ps-btn play" data-bp="act" data-a="play" data-g="${g.id}" data-e="${st.ed}">العب اللعبة</button>`;
