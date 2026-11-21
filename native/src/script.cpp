@@ -154,7 +154,12 @@ const voxels = { lastError: '',
   items(list) { __n.voxItems(list instanceof Float32Array ? list : new Float32Array(list || [])); },
   get stats() { return JSON.parse(__n.voxStats()); } };
 const input = { key(k) { return __n.key(String(k)); }, pressed(k) { return __n.pressed(String(k)); },
-  get mouse() { const m = __n.mouse(); return { dx: m[0], dy: m[1], left: !!m[2], right: !!m[3] }; } };
+  get mouse() { const m = __n.mouse(); return { dx: m[0], dy: m[1], left: !!m[2], right: !!m[3] }; },
+  // the controller: input.axis('LeftX' | 'LeftY' | 'RightX' | 'RightY' | 'LT' | 'RT'), buttons are keys ('PadA' ...)
+  axis(n) { return __n.axis(String(n)); },
+  get pad() { return __n.padOn(); },
+  padSettings(o) { __n.padSet(JSON.stringify(o || {})); },
+  rumble(low, high, seconds) { __n.rumble(+low || 0, +high || 0, seconds === undefined ? 0.2 : +seconds); } };
 const math = { clamp: (v, a, b) => Math.max(a, Math.min(b, v)), lerp: (a, b, t) => a + (b - a) * t, random: (a = 0, b = 1) => a + Math.random() * (b - a), vec3: (x, y, z) => new Vec3(x, y, z) };
 const THREE = { Vector3: Vec3, MathUtils: { clamp: math.clamp, lerp: math.lerp, degToRad: d => d * Math.PI / 180, radToDeg: r => r * 180 / Math.PI } };
 globalThis.__make = function (fn, id, name) {
@@ -326,6 +331,10 @@ static void bindNatives(JSContext* c) {
   FN("launch", 3, W(c)->playerLaunch({(float)D(c, a[0]), (float)D(c, a[1]), (float)D(c, a[2])}); return JS_UNDEFINED;);
   FN("key", 1, return JS_NewBool(c, W(c)->key(keyAlias(S(c, a[0]))));) ;
   FN("pressed", 1, return JS_NewBool(c, W(c)->pressed(keyAlias(S(c, a[0]))));) ;
+  FN("axis", 1, return JS_NewFloat64(c, W(c)->axis(S(c, a[0])));) ;
+  FN("padOn", 0, return JS_NewBool(c, W(c)->padConnected());) ;
+  FN("padSet", 1, W(c)->padSet(S(c, a[0])); return JS_UNDEFINED;) ;
+  FN("rumble", 3, W(c)->rumble((float)D(c, a[0]), (float)D(c, a[1]), (float)D(c, a[2])); return JS_UNDEFINED;) ;
   FN("mouse", 0, { glm::vec4 m = W(c)->mouse(); JSValue r = JS_NewArray(c); for (int i = 0; i < 4; i++) JS_SetPropertyUint32(c, r, i, JS_NewFloat64(c, m[i])); return r; });
   FN("log", 1, W(c)->log(S(c, a[0])); return JS_UNDEFINED;);
   FN("trophy", 1, W(c)->trophy(S(c, a[0])); return JS_UNDEFINED;);

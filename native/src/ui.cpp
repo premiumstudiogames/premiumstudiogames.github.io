@@ -14,6 +14,7 @@
 namespace pge {
 using json = nlohmann::json;
 
+static size_t utf8Len(const std::string& s);
 /* ------------------------------------------------------------------ the node */
 struct Len { float v = 0; int u = 2; };   // u: 0 units, 1 percent of the parent's content, 2 auto (fits its content), 3 fill (v = weight)
 struct Ui::Node {
@@ -46,6 +47,7 @@ void Ui::reset() {
   if (focus_ && SDL_IsTextInputActive()) SDL_StopTextInput();
   nodes_.clear(); roots_.clear(); events_.clear(); drawn_.clear();
   hover_ = press_ = focus_ = drag_ = slide_ = thumb_ = dropOver_ = lastClickNode_ = nullptr; dragging_ = false;
+  nav_ = osk_ = oskTarget_ = nullptr; padDrag_ = false; holdDir_ = stickDir_ = -1;
   userScale_ = 1; rtl_ = false; ownEscape_ = false; autoId_ = 0;
 }
 
@@ -185,7 +187,7 @@ std::string Ui::set(const std::string& id, const json& p) {
 void Ui::unlink(Node* n) { auto& v = n->parent ? n->parent->kids : roots_; v.erase(std::remove(v.begin(), v.end(), n), v.end()); }
 void Ui::destroy(Node* n) {
   for (Node* k : std::vector<Node*>(n->kids)) destroy(k);
-  for (Node** p : {&hover_, &press_, &focus_, &drag_, &slide_, &thumb_, &dropOver_, &lastClickNode_}) if (*p == n) *p = nullptr;
+  for (Node** p : {&hover_, &press_, &focus_, &drag_, &slide_, &thumb_, &dropOver_, &lastClickNode_, &nav_, &osk_, &oskTarget_}) if (*p == n) *p = nullptr;
   if (!focus_ && SDL_IsTextInputActive() && n->type == "input") SDL_StopTextInput();
   if (drag_ == nullptr) dragging_ = false;
   drawn_.erase(std::remove(drawn_.begin(), drawn_.end(), n), drawn_.end());
@@ -234,18 +236,22 @@ void Ui::hide(const std::string& id, const json& a0) {
 void Ui::focus(const std::string& id) {
   Node* n = id.empty() ? nullptr : find(id);
   if (n && n->type != "input") n = nullptr;
+  if (n && console_) { oskOpen(n); return; }   // the console version: the on-screen keyboard
   if (focus_ == n) return;
   if (focus_) emit(focus_, "blur");
   focus_ = n; if (n) { n->caret = n->value.size(); n->blink = time_; emit(n, "focus"); SDL_StartTextInput(); } else SDL_StopTextInput();
 }
 void Ui::listen(const std::string& id, const std::string& ev, bool on) { if (Node* n = find(id)) { if (on) n->listen.insert(ev); else n->listen.erase(ev); } }
 void Ui::emit(Node* n, const std::string& type, json data) {
+  if (n->id.rfind("__osk", 0) == 0) { if (type == "click") oskKey(n); return; }   // the on-screen keyboard is the engine's own
   UiEvent e; e.id = n->id; e.type = type; e.data = std::move(data); for (Node* q = n->parent; q; q = q->parent) e.path.push_back(q->id);
   events_.push_back(std::move(e));
 }
 
 void Ui::update(float dt) {
   time_ += dt;
+  if (osk_ && oskTarget_) if (Node* tx = find("__osk_text")) tx->text = (oskTarget_->password ? std::string(utf8Len(oskTarget_->value), '*') : oskTarget_->value) + "|";
+  if (holdDir_ >= 0) { holdT_ -= dt; if (holdT_ <= 0) { holdT_ = 0.11f; navMove(holdDir_); } }   // held D-pad / stick: repeat
   for (auto& [k, n] : nodes_) if (n->at < 1) { n->at = std::min(1.f, n->at + dt / n->dur); if (n->at >= 1 && n->hiding) { n->hiding = false; n->visible = false; } }
 }
 
@@ -412,6 +418,7 @@ void Ui::drawNode(ImDrawList* dl, Node& n, const Xf& P, float pclip[4]) {
   dl->PushClipRect({clip[0], clip[1]}, {clip[2], clip[3]}, false);
   float x0 = n.sx, y0 = n.sy, x1 = n.sx + n.sw, y1 = n.sy + n.sh, rad = n.radius * scale_ * T.s;
   bool hov = false, prs = false; for (Node* q = hover_; q; q = q->parent) if (q == &n) hov = true; for (Node* q = press_; q; q = q->parent) if (q == &n) prs = true;
+  bool ring = navOn_ && nav_ == &n; if (ring) hov = true;
   if (n.disabled) hov = prs = false;
   bool dropHere = dragging_ && dropOver_ == &n;
   if (n.shadow > 0) { float sh = n.shadow * scale_ * T.s; for (int i = 4; i >= 1; i--) { float e = sh * i / 4; dl->AddRectFilled({x0 - e * 0.5f, y0 - e * 0.25f}, {x1 + e * 0.5f, y1 + e * 0.75f}, withA(0x18000000u, T.a), rad + e); } }
@@ -425,6 +432,8 @@ void Ui::drawNode(ImDrawList* dl, Node& n, const Xf& P, float pclip[4]) {
   }
   unsigned bc = (hov || focus_ == &n) && n.hborder ? n.hborder : n.border; if (focus_ == &n) bc = rgba(0.12f, 0.53f, 1, 1);
   if ((bc >> 24) && n.borderW > 0) dl->AddRect({x0, y0}, {x1, y1}, withA(bc, T.a), rad, 0, n.borderW * scale_ * T.s);
+  if (ring) { float g = 3 * scale_ * T.s; dl->AddRect({x0 - g, y0 - g}, {x1 + g, y1 + g}, withA(0xffffffffu, T.a), rad + g, 0, 2.5f * scale_ * T.s);
+    dl->AddRect({x0 - g * 2.2f, y0 - g * 2.2f}, {x1 + g * 2.2f, y1 + g * 2.2f}, withA(0x40ffffffu, T.a), rad + g * 2.2f, 0, 3 * scale_ * T.s); }
   unsigned tc = withA(hov && n.hcolor ? n.hcolor : n.color, T.a * (n.disabled ? 0.5f : 1));
   float S = scale_, ix = n.lx + n.pad[3] * S, iy = n.ly + n.pad[0] * S + n.headH, iw = std::max(0.f, n.lw - (n.pad[1] + n.pad[3]) * S), ih = std::max(0.f, n.lh - (n.pad[0] + n.pad[2]) * S - n.headH);
   // ---- what each kind draws
@@ -523,6 +532,7 @@ void Ui::draw(ImDrawList* dl, float x, float y, float w, float h) {
   std::vector<Node*> R = roots_; std::stable_sort(R.begin(), R.end(), [](Node* a, Node* b) { return a->z < b->z; });
   for (Node* r : R) drawNode(dl, *r, I, clip);
   // what's being dragged follows the mouse
+  if (dragging_ && drag_ && padDrag_ && nav_) { mx_ = nav_->sx + nav_->sw * 0.5f + 8 * scale_; my_ = nav_->sy + nav_->sh * 0.5f + 8 * scale_; grabX_ = drag_->sw * 0.5f; grabY_ = drag_->sh * 0.5f; }
   if (dragging_ && drag_) { Node& d = *drag_; Xf G; G.tx = mx_ - grabX_ - d.lx; G.ty = my_ - grabY_ - d.ly; G.a = 0.9f;
     bool v = d.visible; bool ws = d.hiding; d.hiding = false; dragging_ = false; size_t keep = drawn_.size();
     float big[4] = {x, y, x + w, y + h}; drawNode(dl, d, G, big); drawn_.resize(keep); dragging_ = true; d.visible = v; d.hiding = ws;
@@ -590,7 +600,7 @@ bool Ui::event(const SDL_Event& e) {
   switch (e.type) {
     case SDL_MOUSEMOTION: {
       if (rel) return false;
-      mx_ = (float)e.motion.x; my_ = (float)e.motion.y;
+      mx_ = (float)e.motion.x; my_ = (float)e.motion.y; if (navOn_ && (std::abs(e.motion.xrel) + std::abs(e.motion.yrel)) > 2) navOn_ = false;
       Node* top = hit(mx_, my_, 16); Node* nh = hit(mx_, my_, 1);
       if (nh != hover_) {   // enter / leave on the nodes that listen
         std::set<Node*> was, now; for (Node* q = hover_; q; q = q->parent) was.insert(q); for (Node* q = nh; q; q = q->parent) now.insert(q);
@@ -666,5 +676,136 @@ bool Ui::event(const SDL_Event& e) {
     case SDL_KEYDOWN: if (typing()) { textKey(e); return true; } return false;
     default: return false;
   }
+}
+
+/* ------------------------------------------------------------------ the controller */
+Ui::Node* Ui::scopeRoot() const {   // the menu the controller moves in: the keyboard, else the top shown modal
+  if (osk_) return osk_;
+  for (auto it = drawn_.rbegin(); it != drawn_.rend(); ++it) if ((*it)->modal && shown(*it)) return *it;
+  return nullptr;
+}
+std::vector<Ui::Node*> Ui::navCandidates() const {
+  Node* root = scopeRoot(); std::vector<Node*> c;
+  auto inside = [&](Node* n) { if (!root) return true; for (Node* q = n; q; q = q->parent) if (q == root) return true; return false; };
+  for (Node* n : drawn_) { if (n->disabled || n->pass || n->alpha < 0.2f || !shown(n) || !inside(n) || n == root) continue;
+    bool ok = interactive(*n) || (n->parent && n->parent->listen.count("click") && ((n->bg >> 24) || n->type == "image"));
+    if (n->type == "window" || n->type == "text") ok = ok && n->listen.count("click");
+    if (ok) c.push_back(n); }
+  // the most specific: a node that holds another candidate isn't one itself
+  std::vector<Node*> r; for (Node* n : c) { bool holds = false; for (Node* m : c) if (m != n) for (Node* q = m->parent; q; q = q->parent) if (q == n) { holds = true; break; } if (!holds) r.push_back(n); }
+  return r;
+}
+void Ui::ensureVisible(Node* n) {
+  for (Node* q = n->parent; q; q = q->parent) { if (!q->scroll) continue;
+    float top = q->ly + q->pad[0] * scale_ + q->headH, bot = q->ly + q->lh - q->pad[2] * scale_;
+    if (n->ly < top) q->scrollY = std::max(0.f, q->scrollY - (top - n->ly) - 8 * scale_);
+    else if (n->ly + n->lh > bot) q->scrollY += (n->ly + n->lh - bot) + 8 * scale_; }
+}
+void Ui::navMove(int dir) {
+  auto C = navCandidates(); if (C.empty()) return;
+  if (!nav_ || std::find(C.begin(), C.end(), nav_) == C.end()) {   // first: the one at the top (left, or right in a right-to-left menu)
+    Node* best = nullptr; for (Node* n : C) if (!best || n->sy < best->sy - 2 || (std::abs(n->sy - best->sy) <= 2 && (rtl_ ? n->sx > best->sx : n->sx < best->sx))) best = n;
+    nav_ = best; ensureVisible(nav_); return; }
+  // a slider takes left / right
+  if (nav_->type == "slider" && dir <= 1) { double st = nav_->step > 0 ? nav_->step : std::abs(nav_->mx - nav_->mn) / 20; bool inc = (dir == 1) != nav_->rtl();
+    setValue(nav_, nav_->num + (inc ? st : -st), true); emit(nav_, "change", {{"value", nav_->num}}); return; }
+  float fx = nav_->sx + nav_->sw / 2, fy = nav_->sy + nav_->sh / 2; Node* best = nullptr; float bs = 1e30f;
+  for (Node* n : C) { if (n == nav_) continue; float cx = n->sx + n->sw / 2, cy = n->sy + n->sh / 2, dx = cx - fx, dy = cy - fy;
+    float along = dir == 0 ? -dx : dir == 1 ? dx : dir == 2 ? -dy : dy, perp = dir <= 1 ? std::abs(dy) : std::abs(dx);
+    // the edges, so a wide button next to a small one is still "to the right"
+    float gap = dir == 0 ? nav_->sx - (n->sx + n->sw) : dir == 1 ? n->sx - (nav_->sx + nav_->sw) : dir == 2 ? nav_->sy - (n->sy + n->sh) : n->sy - (nav_->sy + nav_->sh);
+    if (along <= 1 || gap < -std::min(nav_->sw, nav_->sh) * 0.5f) continue;
+    float overlap = dir <= 1 ? std::min(n->sy + n->sh, nav_->sy + nav_->sh) - std::max(n->sy, nav_->sy) : std::min(n->sx + n->sw, nav_->sx + nav_->sw) - std::max(n->sx, nav_->sx);
+    float score = std::max(0.f, gap) + perp * (overlap > 0 ? 0.3f : 2.5f);
+    if (score < bs) { bs = score; best = n; } }
+  if (best) { nav_ = best; ensureVisible(nav_); }
+}
+void Ui::navActivate() {
+  Node* n = nav_; if (!n) return;
+  if (n->id.rfind("__osk", 0) == 0) { oskKey(n); return; }
+  if (n->type == "input") { oskOpen(n); return; }
+  if (n->type == "tabs") { setValue(n, (n->sel + 1) % std::max<size_t>(1, n->labels.size()), true); return; }
+  if (n->type == "slider") return;
+  Node* drag = nullptr; for (Node* q = n; q; q = q->parent) if (q->draggable && !q->disabled) { drag = q; break; }
+  Node* drop = nullptr; for (Node* q = n; q; q = q->parent) if (q->droppable && !q->disabled) { drop = q; break; }
+  if (padDrag_ && drag_) {   // putting it down
+    json d = {{"from", drag_->id}, {"data", drag_->data}}; if (drop && drop != drag_) { d["to"] = drop->id; emit(drop, "drop", d); }
+    emit(drag_, "dragend", {{"to", drop && drop != drag_ ? drop->id : ""}, {"data", drag_->data}}); drag_ = dropOver_ = nullptr; dragging_ = padDrag_ = false; return; }
+  if (drag && n->type != "button" && !n->listen.count("click")) { drag_ = drag; dragging_ = padDrag_ = true; emit(drag, "dragstart", {{"data", drag->data}}); return; }
+  emit(n, "click", {{"shift", false}, {"ctrl", false}, {"alt", false}, {"pad", true}});
+}
+bool Ui::pad(const std::string& b, bool down) {
+  bool menu = osk_ || modal();
+  if (!down) { if (b == "PadUp" || b == "PadDown" || b == "PadLeft" || b == "PadRight") { holdDir_ = -1; return menu; } return menu && (b == "PadA" || b == "PadB"); }
+  if (!menu) return false;
+  navOn_ = true;
+  int dir = b == "PadLeft" ? 0 : b == "PadRight" ? 1 : b == "PadUp" ? 2 : b == "PadDown" ? 3 : -1;
+  if (dir >= 0) { navMove(dir); holdDir_ = dir; holdT_ = 0.42f; return true; }
+  if (b == "PadA") { auto C = navCandidates(); if (!nav_ || std::find(C.begin(), C.end(), nav_) == C.end()) navMove(3); else navActivate(); return true; }
+  if (b == "PadY" && osk_) { oskClose(true); return true; }
+  if (b == "PadX" && osk_) { for (Node* k : navCandidates()) if (k->id == "__osk_bs") { oskKey(k); break; } return true; }
+  if (b == "PadB") {
+    if (padDrag_ && drag_) { emit(drag_, "dragend", {{"to", ""}, {"data", drag_->data}}); drag_ = nullptr; dragging_ = padDrag_ = false; return true; }
+    if (osk_) { oskClose(false); return true; }
+    if (Node* r = scopeRoot()) emit(r, "back");
+    return false;   // the game hears it too (as Escape), so its own "close the menu" works
+  }
+  if (b == "PadLB" || b == "PadRB") {
+    Node* t = nullptr; for (Node* q = nav_; q; q = q->parent) if (q->type == "tabs") { t = q; break; }
+    if (!t) for (Node* n : drawn_) if (n->type == "tabs" && shown(n)) { Node* r = scopeRoot(); bool in = !r; for (Node* q = n; q && !in; q = q->parent) in = q == r; if (in) { t = n; break; } }
+    if (t && !t->labels.empty()) { int s = t->sel + ((b == "PadRB") != t->rtl() ? 1 : -1); s = (s + (int)t->labels.size()) % (int)t->labels.size(); setValue(t, s, true); nav_ = nullptr; }
+    return true; }
+  return false;
+}
+void Ui::padStick(float x, float y) {
+  if (!(osk_ || modal())) { stickDir_ = -1; return; }
+  int d = -1; if (std::max(std::abs(x), std::abs(y)) > 0.6f) d = std::abs(x) > std::abs(y) ? (x < 0 ? 0 : 1) : (y < 0 ? 2 : 3);
+  if (d != stickDir_) { stickDir_ = d; if (d >= 0) { navOn_ = true; navMove(d); holdDir_ = d; holdT_ = 0.42f; } else holdDir_ = -1; }
+}
+
+/* ------------------------------------------------------------------ the on-screen keyboard (text fields with the controller) */
+void Ui::oskOpen(Node* input) {
+  if (osk_) oskClose(false);
+  oskTarget_ = input; input->caret = input->value.size();
+  create("window", "__osk", {{"title", input->placeholder.empty() ? (hasRtl(input->value) || input->rtl() ? std::string("\xd8\xa7\xd9\x83\xd8\xaa\xd8\xa8") : std::string("Type")) : input->placeholder},
+    {"modal", true}, {"anchor", "bottom"}, {"y", -30}, {"w", 1180}, {"z", 1000}, {"closable", false}, {"dir", "ltr"}, {"anim", {{"anim", "slide"}, {"from", "bottom"}, {"time", 0.18}}}});
+  osk_ = find("__osk"); osk_->at = 0; osk_->ak = 2; osk_->from = 3; osk_->dur = 0.18f;
+  oskArabic_ = hasRtl(input->value) || input->rtl();
+  oskBuild(); nav_ = nullptr; navOn_ = true; navMove(3);
+  focus_ = input; input->blink = time_; SDL_StartTextInput();   // a real keyboard types too
+}
+void Ui::oskBuild() {
+  clear("__osk");
+  create("text", "__osk_text", {{"parent", "__osk"}, {"text", oskTarget_ ? (oskTarget_->password ? std::string(utf8Len(oskTarget_->value), '*') : oskTarget_->value) + "|" : "|"}, {"size", 30}, {"align", "center"}, {"w", "fill"}, {"bg", "#00000060"}, {"radius", 8}, {"pad", 10}});
+  static const char* EN[4] = {"1234567890", "qwertyuiop", "asdfghjkl-", "zxcvbnm_.@"};
+  static const char* AR[4] = {"\xd9\xa1\xd9\xa2\xd9\xa3\xd9\xa4\xd9\xa5\xd9\xa6\xd9\xa7\xd9\xa8\xd9\xa9\xd9\xa0",
+    "\xd8\xb6\xd8\xb5\xd8\xab\xd9\x82\xd9\x81\xd8\xba\xd8\xb9\xd9\x87\xd8\xae\xd8\xad\xd8\xac",
+    "\xd8\xb4\xd8\xb3\xd9\x8a\xd8\xa8\xd9\x84\xd8\xa7\xd8\xaa\xd9\x86\xd9\x85\xd9\x83\xd8\xb7",
+    "\xd8\xa6\xd8\xa1\xd8\xa4\xd8\xb1\xd9\x89\xd8\xa9\xd9\x88\xd8\xb2\xd8\xb8\xd8\xaf\xd8\xb0"};
+  int k = 0;
+  for (int r = 0; r < 4; r++) { std::string row = "__osk_r" + std::to_string(r); create("panel", row, {{"parent", "__osk"}, {"layout", "row"}, {"gap", 6}, {"justify", "center"}, {"w", "fill"}, {"dir", oskArabic_ ? "rtl" : "ltr"}});
+    std::string s = oskArabic_ ? AR[r] : EN[r];
+    for (size_t i = 0; i < s.size();) { size_t j = i + 1; while (j < s.size() && (s[j] & 0xC0) == 0x80) j++; std::string ch = s.substr(i, j - i); i = j;
+      create("button", "__osk_k" + std::to_string(k++), {{"parent", row}, {"text", ch}, {"data", {{"k", ch}}}, {"w", 84}, {"h", 64}, {"size", 26}, {"pad", 0}}); } }
+  create("panel", "__osk_r4", {{"parent", "__osk"}, {"layout", "row"}, {"gap", 6}, {"justify", "center"}, {"w", "fill"}});
+  create("button", "__osk_lang", {{"parent", "__osk_r4"}, {"text", oskArabic_ ? "EN" : "\xd8\xb9\xd8\xb1\xd8\xa8\xd9\x8a"}, {"w", 140}, {"h", 64}, {"size", 24}});
+  create("button", "__osk_space", {{"parent", "__osk_r4"}, {"text", " "}, {"data", {{"k", " "}}}, {"w", 420}, {"h", 64}});
+  create("button", "__osk_bs", {{"parent", "__osk_r4"}, {"text", "\xe2\x8c\xab  X"}, {"w", 160}, {"h", 64}, {"size", 24}});
+  create("button", "__osk_done", {{"parent", "__osk_r4"}, {"text", oskArabic_ ? "\xd8\xaa\xd9\x85  Y" : "Done  Y"}, {"w", 180}, {"h", 64}, {"size", 24}, {"bg", "#1f86ff"}, {"hover", {{"bg", "#4aa0ff"}}}});
+}
+void Ui::oskKey(Node* key) {
+  if (!oskTarget_ || !nodes_.count(oskTarget_->id)) { oskClose(false); return; }
+  Node& t = *oskTarget_; const std::string& id = key->id;
+  if (id == "__osk_done") { oskClose(true); return; }
+  if (id == "__osk_lang") { oskArabic_ = !oskArabic_; std::string keep = nav_ ? nav_->id : ""; oskBuild(); nav_ = find("__osk_lang"); return; }
+  if (id == "__osk_bs") { if (!t.value.empty()) { t.value.erase(prevChar(t.value, t.value.size())); t.caret = t.value.size(); emit(&t, "input", {{"value", t.value}}); } }
+  else if (key->data.is_object() && key->data.contains("k")) { std::string ch = key->data["k"]; if (utf8Len(t.value) + utf8Len(ch) <= (size_t)t.maxLen) { t.value += ch; t.caret = t.value.size(); emit(&t, "input", {{"value", t.value}}); } }
+  if (Node* tx = find("__osk_text")) tx->text = (t.password ? std::string(utf8Len(t.value), '*') : t.value) + "|";
+}
+void Ui::oskClose(bool submit) {
+  Node* t = oskTarget_ && nodes_.count(oskTarget_->id) ? oskTarget_ : nullptr;
+  if (osk_) { std::string id = osk_->id; osk_ = nullptr; remove(id); }
+  oskTarget_ = nullptr; nav_ = t; if (focus_ == t) { focus_ = nullptr; SDL_StopTextInput(); }
+  if (t && submit) emit(t, "submit", {{"value", t->value}});
 }
 }

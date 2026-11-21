@@ -82,7 +82,7 @@ void addActorVisual(Frame& f, const Project& P, const Actor& a, const glm::mat4&
 
 /* ------------------------------------------------------------------ game */
 Game::Game(const Project& p, const std::string& ln) : levelName(ln), project_(p) {}
-Game::~Game() { clear(); }
+Game::~Game() { clear(); padClose(); }
 
 void Game::clear() {
   if (audio_) audio_->stopAll();
@@ -103,6 +103,7 @@ glm::mat4 Game::world(const Obj& o) const {
 }
 
 bool Game::start() {
+  if (!pad_) for (int i = 0; i < SDL_NumJoysticks(); i++) padOpen(i);
   clear();
   const Level* L = project_.level(levelName); if (!L) { logMsg("error: level \"" + levelName + "\" not found", LogKind::Error); return false; }
   level_ = *L; time_ = 0; restartRequested_ = false; tune_ = Tune(); grounded_ = running_ = sneaking_ = tapRun_ = false;
@@ -115,7 +116,7 @@ bool Game::start() {
   if (mode_ == "Spectator") specPos_ = ps + glm::vec3(0, 1.6f, 0); else player_ = phys_->addPlayer(ps);
   // scripts
   if (!models_) models_.reset(new Models()); models_->clear(); models_->setBlocks(vox_.get());
-  if (!ui_) ui_.reset(new Ui()); ui_->reset(); ui_->setAssets([this](const std::string& p) { return assetPath(p); });
+  if (!ui_) ui_.reset(new Ui()); ui_->setConsole(console_); ui_->reset(); ui_->setAssets([this](const std::string& p) { return assetPath(p); });
   scripts_.reset(new ScriptHost()); scripts_->init(this);
   for (auto& op : objs_) { Obj& o = *op; if (o.a.script.empty()) continue;
     auto it = project_.scripts.find(o.a.script); if (it == project_.scripts.end()) { logMsg("warning: " + o.a.name + ": script \"" + o.a.script + "\" not found", LogKind::Warn); continue; }
@@ -144,6 +145,7 @@ void Game::addBody(Obj& o) {
   o.lastWorld = world(o); o.bodyScale = sc;
 }
 
+static const char* padName(int b);
 void Game::event(const SDL_Event& e) {
   if (!started_) return;
   // the game's menus first: what they use, the game doesn't see (key ups always go through, so nothing stays held)
@@ -163,10 +165,52 @@ void Game::event(const SDL_Event& e) {
       if (e.button.button == SDL_BUTTON_LEFT) mouseState_.z = down; if (e.button.button == SDL_BUTTON_RIGHT) mouseState_.w = down;
       if (k) { if (down) { if (!keys_.count(k)) pressed_.insert(k); keys_.insert(k); } else keys_.erase(k); }
       break; }
+    // the controller
+    case SDL_CONTROLLERDEVICEADDED: padOpen(e.cdevice.which); break;
+    case SDL_CONTROLLERDEVICEREMOVED: if (e.cdevice.which == padId_) { padClose(); for (int i = 0; i < SDL_NumJoysticks(); i++) padOpen(i); } break;
+    case SDL_CONTROLLERBUTTONDOWN: case SDL_CONTROLLERBUTTONUP: if (e.cbutton.which == padId_ || padId_ < 0) if (const char* n = padName(e.cbutton.button)) padKey(n, e.type == SDL_CONTROLLERBUTTONDOWN); break;
+    case SDL_CONTROLLERAXISMOTION: { if (e.caxis.which != padId_ && padId_ >= 0) break; int a = e.caxis.axis; float v = e.caxis.value / 32767.f;
+      int i = a == SDL_CONTROLLER_AXIS_LEFTX ? 0 : a == SDL_CONTROLLER_AXIS_LEFTY ? 1 : a == SDL_CONTROLLER_AXIS_RIGHTX ? 2 : a == SDL_CONTROLLER_AXIS_RIGHTY ? 3 : a == SDL_CONTROLLER_AXIS_TRIGGERLEFT ? 4 : 5;
+      ax_[i] = std::clamp(v, -1.f, 1.f);
+      if (i >= 4) { bool on = ax_[i] > 0.5f, &was = trig_[i - 4]; if (on != was) { was = on; padKey(i == 4 ? "PadLT" : "PadRT", on); } }
+      if (i <= 1 && ui_) ui_->padStick(ax_[0], ax_[1]);
+      break; }
     default: break;
   }
 }
-void Game::releaseInput() { keys_.clear(); pressed_.clear(); mouseState_ = glm::vec4(0); }
+void Game::releaseInput() { keys_.clear(); pressed_.clear(); mouseState_ = glm::vec4(0); padRun_ = false; }
+
+/* ---- the controller */
+void Game::keyDown(const std::string& k, bool fire) { if (!keys_.count(k)) pressed_.insert(k); keys_.insert(k); if (fire) for (int b = 0; b < scripts_->count(); b++) scripts_->call(b, EV_Key, 0, k); }
+void Game::padOpen(int index) {
+  if (pad_ || !SDL_IsGameController(index)) return; pad_ = SDL_GameControllerOpen(index); if (!pad_) return;
+  padId_ = SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(pad_)); const char* n = SDL_GameControllerName(pad_); logMsg(std::string("Controller: ") + (n ? n : "connected"));
+}
+void Game::padClose() { if (pad_) SDL_GameControllerClose(pad_); pad_ = nullptr; padId_ = -1; for (float& a : ax_) a = 0; trig_[0] = trig_[1] = false;
+  for (auto it = keys_.begin(); it != keys_.end();) { if (it->rfind("Pad", 0) == 0) it = keys_.erase(it); else ++it; } padRun_ = false; }
+static const char* padName(int b) {
+  switch (b) { case SDL_CONTROLLER_BUTTON_A: return "PadA"; case SDL_CONTROLLER_BUTTON_B: return "PadB"; case SDL_CONTROLLER_BUTTON_X: return "PadX"; case SDL_CONTROLLER_BUTTON_Y: return "PadY";
+    case SDL_CONTROLLER_BUTTON_LEFTSHOULDER: return "PadLB"; case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: return "PadRB"; case SDL_CONTROLLER_BUTTON_START: return "PadStart"; case SDL_CONTROLLER_BUTTON_BACK: return "PadBack";
+    case SDL_CONTROLLER_BUTTON_LEFTSTICK: return "PadLS"; case SDL_CONTROLLER_BUTTON_RIGHTSTICK: return "PadRS"; case SDL_CONTROLLER_BUTTON_DPAD_UP: return "PadUp"; case SDL_CONTROLLER_BUTTON_DPAD_DOWN: return "PadDown";
+    case SDL_CONTROLLER_BUTTON_DPAD_LEFT: return "PadLeft"; case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: return "PadRight"; default: return nullptr; } }
+void Game::padKey(const std::string& name, bool down) {
+  // the game's menus first (moving between buttons, A, B, LB / RB for tabs ...)
+  if (ui_ && ui_->pad(name, down)) return;
+  bool menu = ui_ && ui_->modal();
+  if (down) { keyDown(name, true); if (name == "PadLS") padRun_ = true; } else keys_.erase(name);
+  if (!padAliases_) return;
+  std::string al = name == "PadA" ? "Space" : name == "PadRT" ? "MouseLeft" : name == "PadLT" ? "MouseRight" : name == "PadStart" ? "Escape" : (menu && name == "PadB") ? "Escape" : "";
+  if (name == "PadRT") mouseState_.z = down; if (name == "PadLT") mouseState_.w = down;
+  if (!al.empty()) { if (down) keyDown(al, true); else keys_.erase(al); }
+  if (down && (name == "PadLB" || name == "PadRB")) { const char* w = name == "PadLB" ? "WheelUp" : "WheelDown"; pressed_.insert(w); for (int b = 0; b < scripts_->count(); b++) scripts_->call(b, EV_Key, 0, w); }
+}
+float Game::axis(const std::string& n) {
+  static const char* N[6] = {"LeftX", "LeftY", "RightX", "RightY", "LT", "RT"}; for (int i = 0; i < 6; i++) if (n == N[i]) return ax_[i]; return 0; }
+void Game::padSet(const std::string& js) { json o = json::parse(js, nullptr, false); if (!o.is_object()) return;
+  if (o.contains("aliases") && o["aliases"].is_boolean()) padAliases_ = o["aliases"].get<bool>();
+  if (o.contains("invertY") && o["invertY"].is_boolean()) invertY_ = o["invertY"].get<bool>();
+  if (o.contains("lookSpeed") && o["lookSpeed"].is_number()) lookSpeed_ = std::clamp(o["lookSpeed"].get<float>(), 0.2f, 12.f); }
+void Game::rumble(float lo, float hi, float sec) { if (pad_) SDL_GameControllerRumble(pad_, (Uint16)(std::clamp(lo, 0.f, 1.f) * 65535), (Uint16)(std::clamp(hi, 0.f, 1.f) * 65535), (Uint32)(std::clamp(sec, 0.f, 5.f) * 1000)); }
 
 void Game::update(float dt) {
   if (!started_) return;
@@ -187,9 +231,19 @@ void Game::update(float dt) {
   auto k = [&](const char* c) { return keys_.count(c) > 0; };
   if (k("KeyW") || k("ArrowUp")) mv += fwd; if (k("KeyS") || k("ArrowDown")) mv -= fwd; if (k("KeyD") || k("ArrowRight")) mv += right; if (k("KeyA") || k("ArrowLeft")) mv -= right;
   if (glm::dot(mv, mv) > 0) mv = glm::normalize(mv);
+  // the controller: left stick moves (gently when pushed a little), right stick looks (faster the further it is pushed)
+  if (!(ui_ && ui_->modal())) {
+    auto dz = [](float x, float y, float d) { glm::vec2 v(x, y); float l = glm::length(v); if (l < d) return glm::vec2(0); return v / l * std::min(1.f, (l - d) / (1 - d)); };
+    glm::vec2 ls = dz(ax_[0], ax_[1], 0.18f), rs = dz(ax_[2], ax_[3], 0.14f);
+    if (glm::dot(mv, mv) == 0 && glm::dot(ls, ls) > 0) mv = fwd * -ls.y + right * ls.x;
+    if (glm::length(ls) < 0.3f) padRun_ = false;
+    float rl = glm::length(rs); if (rl > 0) { glm::vec2 c = rs * rl;   // response curve: precise aim near the centre
+      yaw_ -= c.x * lookSpeed_ * dt; pitch_ = glm::clamp(pitch_ - c.y * lookSpeed_ * 0.75f * dt * (invertY_ ? -1.f : 1.f), -1.45f, 1.45f); }
+  }
   auto held = [&](const std::string& n) { return !n.empty() && (k((n + "Left").c_str()) || k((n + "Right").c_str()) || k(n.c_str())); };
   { bool w = k("KeyW"); if (tune_.doubleTapRun) { if (w && !wHeld_) { if (time_ - wTap_ < 0.3) tapRun_ = true; wTap_ = time_; } if (!w) tapRun_ = false; } wHeld_ = w; }
-  sneaking_ = !tune_.fly && held(tune_.sneakKey); running_ = glm::dot(mv, mv) > 0 && !sneaking_ && (held(tune_.runKey) || tapRun_);
+  bool padSneak = pad_ && k("PadB") && !(ui_ && ui_->modal());
+  sneaking_ = !tune_.fly && (held(tune_.sneakKey) || padSneak); running_ = glm::dot(mv, mv) > 0 && !sneaking_ && (held(tune_.runKey) || tapRun_ || padRun_);
   float speed = tune_.fly ? tune_.flySpeed * (running_ ? tune_.flyRun : 1.f) : sneaking_ ? tune_.sneak : running_ ? tune_.run : tune_.walk; moveDir_ = mv;
   if (mode_ == "Spectator") { if (k("KeyE")) mv.y += 1; if (k("KeyQ")) mv.y -= 1; specPos_ += mv * speed * 1.6f * dt; }
   else if (player_ != NO_BODY) {
@@ -200,13 +254,13 @@ void Game::update(float dt) {
     for (auto& o : offs) if (phys_->rayHit(feet + glm::vec3(o.x, 0.1f, o.y), feet + glm::vec3(o.x, -0.15f, o.y), player_)) { grounded = true; break; }
     // block world liquids: swim (slower, Space goes up, otherwise sink slowly; climb out at the edge)
     grounded_ = grounded; swimming_ = false;
-    if (tune_.fly) { v.y = ((k("Space") ? 1.f : 0.f) - (held(tune_.sneakKey.empty() ? "Shift" : tune_.sneakKey) ? 1.f : 0.f)) * tune_.flyClimb - gravity_ * dt; }   // flying: Space up, sneak key down, no falling
+    if (tune_.fly) { v.y = ((k("Space") || k("PadA") ? 1.f : 0.f) - (held(tune_.sneakKey.empty() ? "Shift" : tune_.sneakKey) || padSneak ? 1.f : 0.f)) * tune_.flyClimb - gravity_ * dt; }   // flying: Space up, sneak key down, no falling
     else if (tune_.gravity != 0) v.y += (tune_.gravity - gravity_) * dt;   // the player's own gravity
     if (!tune_.fly && vox_) { bool body = vox_->liquidAt(feet + glm::vec3(0, 0.45f, 0)) || vox_->liquidAt(c), head = vox_->liquidAt(c + glm::vec3(0, 0.7f, 0));
       if (body) { swimming_ = true; v.x *= 0.55f; v.z *= 0.55f;
-        float target = k("Space") ? (head ? 2.4f : 3.4f) : head ? -0.7f : -0.25f;
+        float target = k("Space") || k("PadA") ? (head ? 2.4f : 3.4f) : head ? -0.7f : -0.25f;
         v.y = v.y + (target - v.y) * std::min(1.f, dt * 5.f) - gravity_ * dt; } }
-    if (!tune_.fly && grounded && !swimming_ && !sneaking_ && pressed_.count("Space")) v.y = tune_.jump;
+    if (!tune_.fly && grounded && !swimming_ && !sneaking_ && (pressed_.count("Space") || pressed_.count("PadA"))) v.y = tune_.jump;
     // block world: walk up 20 - 40 cm steps without jumping
     if (!tune_.fly && vox_ && grounded && glm::dot(mv, mv) > 0 && v.y <= 0.5f) {
       glm::vec3 ahead = feet + mv * 0.5f; auto solid = [&](float h) { return vox_->solidAt(ahead + glm::vec3(0, h, 0)); };

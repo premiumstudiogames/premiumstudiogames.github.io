@@ -231,11 +231,13 @@ void Editor::runMapCheck() {
   mapCheck.insert(mapCheck.begin(), "Map check: " + std::to_string(errs) + " error(s), " + std::to_string(warns) + " warning(s)");
   for (auto& m : mapCheck) logMsg(m); wMapCheck = true;
 }
-void Editor::packageProject() {
+// the console version has a size limit (the whole game folder); the PC version has none
+static const uintmax_t CONSOLE_LIMIT_MB = 2048;
+void Editor::packageProject(bool console) {
   compileScripts(true); runMapCheck(); wMapCheck = false;
   packageOk = false; packageDir.clear();
   for (auto& m : mapCheck) if (m.rfind("error", 0) == 0) { packageResult = "Packaging stopped: fix the errors in the Output Log first.\n\n" + m; wPackage = true; wLog = true; return; }
-  std::string name = sanitizeName(P.name); fs::path out = fs::u8path(buildsDir()) / fs::u8path(name) / "Windows";
+  std::string name = sanitizeName(P.name); fs::path out = fs::u8path(buildsDir()) / fs::u8path(name) / (console ? "Console" : "Windows");
   fs::path player = fs::u8path(exeDir()) / fs::u8path("PremiumEnginePlayer" + exeSuffix());
   std::error_code ec;
   if (!fs::exists(player)) { packageResult = "The game player program is missing next to the editor:\n" + player.u8string(); wPackage = true; return; }
@@ -262,10 +264,19 @@ void Editor::packageProject() {
 #ifndef _WIN32
   fs::permissions(exe, fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec, fs::perm_options::add, ec);
 #endif
+  if (console) {   // full screen, controller first, the console's picture settings
+    std::ofstream cf(out / "console.json"); cf << json{{"console", true}, {"limitMB", CONSOLE_LIMIT_MB}, {"quality", {{"msaa", 2}, {"ssao", true}, {"bloom", true}, {"shadowDistance", 120}}}}.dump(2); }
   uintmax_t size = 0; for (auto& e : fs::recursive_directory_iterator(out, ec)) if (e.is_regular_file()) size += e.file_size();
+  char mb[64]; std::snprintf(mb, sizeof mb, "%.1f MB", size / 1048576.0);
+  if (console && size > CONSOLE_LIMIT_MB * 1048576ull) {
+    fs::remove_all(out, ec); char lim[96]; std::snprintf(lim, sizeof lim, "%.1f MB of %llu MB", size / 1048576.0, (unsigned long long)CONSOLE_LIMIT_MB);
+    packageResult = std::string("The console version is too big: ") + lim + ".\n\nMake the game's files smaller (pictures, sounds, music) and package again."; wPackage = true;
+    logMsg(std::string("error: Package (Console): too big, ") + lim, LogKind::Error); return; }
   packageOk = true; packageDir = out.u8string();
-  char mb[32]; std::snprintf(mb, sizeof mb, "%.1f MB", size / 1048576.0);
-  packageResult = "Packaged " + P.name + " for Windows (" + mb + ").\n\n" + exe.u8string() + "\n\nThe folder is the whole game: zip it and share it, or upload it to Premium Games.";
+  if (console) { char lim[96]; std::snprintf(lim, sizeof lim, "%s of %llu MB", mb, (unsigned long long)CONSOLE_LIMIT_MB); std::snprintf(mb, sizeof mb, "%s", lim); }
+  packageResult = "Packaged " + P.name + (console ? " for the console (" : " for Windows (") + mb + ").\n\n" + exe.u8string() +
+    (console ? "\n\nThe console version opens full screen, is played with a controller and has the on-screen keyboard. Upload it next to the PC version on Premium Games."
+             : "\n\nThe folder is the whole game: zip it and share it, or upload it to Premium Games.");
   logMsg("Package: " + exe.u8string(), LogKind::Ok); wPackage = true;
 }
 
@@ -274,7 +285,12 @@ void Editor::play() {
   if (!hasProject) return; if (playing) stopPlay();
   compileScripts(true);
   logMsg("PIE: Play in editor - " + level + " (" + L().world.gameMode + ")", LogKind::Ok);
-  game.reset(new Game(P, level)); if (!game->start()) { game.reset(); return; }
+#ifdef _WIN32
+  _putenv_s("PREMIUM_CONSOLE", consolePreview ? "1" : "0");
+#else
+  setenv("PREMIUM_CONSOLE", consolePreview ? "1" : "0", 1);
+#endif
+  game.reset(new Game(P, level)); game->setConsole(consolePreview); if (!game->start()) { game.reset(); return; }
   playing = true; mouseFree = !game->wantsMouseLock(); ImGui::SetWindowFocus("Viewport");
   if (game->wantsMouseLock()) SDL_SetRelativeMouseMode(SDL_TRUE);
 }
@@ -286,6 +302,11 @@ void Editor::playStandalone() {
   Project q = P; q.startLevel = level; fs::path f = dir / "standalone.pge.json"; std::string err;
   if (!saveProjectFile(q, f.u8string(), &err)) { notify(err); return; }
   fs::path player = fs::u8path(exeDir()) / fs::u8path("PremiumEnginePlayer" + exeSuffix());
+#ifdef _WIN32
+  _putenv_s("PREMIUM_CONSOLE", consolePreview ? "1" : "0");
+#else
+  setenv("PREMIUM_CONSOLE", consolePreview ? "1" : "0", 1);
+#endif
   if (!launchProgram(player.u8string(), {"--game", f.u8string(), "--windowed"}, &err)) { logMsg("error: " + err, LogKind::Error); notify(err); }
   else logMsg("Started " + P.name + " in a new window");
 }

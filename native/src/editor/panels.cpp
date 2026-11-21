@@ -146,13 +146,13 @@ void Editor::drawToolbar() {
     else if (toolButton("##stop", IC_Stop, nullptr, RED, "Stop (Esc)")) stopPlay();
     ImGui::SameLine(0, 0); if (toolButton("##playopts", IC_Down, nullptr, IM_COL32(200, 200, 200, 255), "Play options")) ImGui::OpenPopup("playOpts");
     if (ImGui::BeginPopup("playOpts")) {
-      section("PLAY"); if (ImGui::MenuItem("Selected Viewport", "Alt+P")) play(); if (ImGui::MenuItem("New Window (standalone game)")) playStandalone();
+      section("PLAY"); if (ImGui::MenuItem("Selected Viewport", "Alt+P")) play(); if (ImGui::MenuItem("New Window (standalone game)")) playStandalone(); ImGui::MenuItem("Play as the Console Version", nullptr, &consolePreview);
       section("GAME MODE"); for (const char* m : {"FirstPerson", "ThirdPerson", "Spectator"}) if (ImGui::MenuItem(m, nullptr, L().world.gameMode == m)) run(std::string("gm:") + m);
       ImGui::EndPopup(); }
     ImGui::SameLine(); ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical); ImGui::SameLine();
     if (toolButton("##platforms", IC_Box, "Platforms", IM_COL32(230, 180, 80, 255), "Package the game")) ImGui::OpenPopup("platforms");
     if (ImGui::BeginPopup("platforms")) {
-      section("PACKAGE"); if (ImGui::MenuItem("Windows (.exe)")) packageProject(); if (ImGui::MenuItem("Open Builds Folder")) { std::error_code ec; fs::create_directories(fs::u8path(buildsDir()), ec); openInExplorer(buildsDir()); }
+      section("PACKAGE"); if (ImGui::MenuItem("Windows (.exe)")) packageProject(); if (ImGui::MenuItem("Console (controller, up to 2 GB)")) packageProject(true); if (ImGui::MenuItem("Open Builds Folder")) { std::error_code ec; fs::create_directories(fs::u8path(buildsDir()), ec); openInExplorer(buildsDir()); }
       section("SETTINGS"); if (ImGui::MenuItem("Packaging Settings...")) run("projectSettings");
       ImGui::EndPopup(); }
     float right = ImGui::GetWindowWidth() - 130; ImGui::SameLine(std::max(right, ImGui::GetCursorPosX()));

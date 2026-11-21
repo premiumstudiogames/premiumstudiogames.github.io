@@ -37,7 +37,11 @@ public:
   virtual void playerLaunch(const glm::vec3& v) = 0;
   virtual bool key(const std::string& k) = 0;
   virtual bool pressed(const std::string& k) = 0;
-  virtual glm::vec4 mouse() = 0;                                               // dx, dy, left, right
+  virtual glm::vec4 mouse() = 0;
+  virtual float axis(const std::string& name) { return 0; }                   // the controller: LeftX, LeftY, RightX, RightY (-1 .. 1), LT, RT (0 .. 1)
+  virtual bool padConnected() { return false; }
+  virtual void padSet(const std::string& json) {}                             // { aliases: bool, lookSpeed, invertY }
+  virtual void rumble(float low, float high, float seconds) {}                                               // dx, dy, left, right
   virtual void log(const std::string& t) = 0;
   // block world (BLOCKFALL style); nullptr until a script calls voxels.create()
   virtual VoxelWorld* voxels() { return nullptr; }

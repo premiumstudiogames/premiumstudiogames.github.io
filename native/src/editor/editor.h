@@ -40,7 +40,7 @@ public:
   int gizmoOp = 0; bool gizmoLocal = false; bool snapT = true, snapR = true, snapS = false; float snapTv = 0.5f, snapRv = 15, snapSv = 0.25f;
   RenderTarget vpRT; float vpX = 0, vpY = 0, vpW = 1, vpH = 1; bool vpHovered = false, vpFocused = false, flying = false;
   // play in editor
-  std::unique_ptr<Game> game; bool playing = false, mouseFree = false;
+  std::unique_ptr<Game> game; bool playing = false, mouseFree = false, consolePreview = false;   // play as the console version (controller, on-screen keyboard, premium.console)
   // windows
   bool wPlaceActors = false, wOutliner = true, wDetails = true, wWorld = true, wContent = true, wLog = true, wScripts = false, wMaterial = false;
   bool wPrefs = false, wProjectSettings = false, wStats = false, wApi = false, wDocs = false, wShortcuts = false, wAbout = false, wMapCheck = false, wPackage = false;
@@ -73,7 +73,7 @@ public:
   void openLevel(const std::string& name); void newLevel(const std::string& name, bool templ);
   void openScript(const std::string& id); std::string newScript(const std::string& name);
   std::string newMaterial(const std::string& name);
-  void compileScripts(bool quiet); void runMapCheck(); void packageProject();
+  void compileScripts(bool quiet); void runMapCheck(); void packageProject(bool console = false);
   void notify(const std::string& t);
   void savePrefs(); void loadPrefs(); void addRecent(const std::string& f);
   std::string uniqueName(const std::string& base);

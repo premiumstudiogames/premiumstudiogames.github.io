@@ -563,6 +563,67 @@ function onUpdate(dt) { t += dt; m.pose({ lid: { rotation: [t, 0, 0] } }); const
     CHECK(GM->particleCount() == 5, "particles.emit from a script");
   }
 
+  std::printf("controller and console menus\n");
+  {
+    ImGui::CreateContext(); ImGuiIO& io = ImGui::GetIO(); io.Fonts->AddFontDefault(); { ImFontConfig b; b.SizePixels = 39; io.Fonts->AddFontDefault(&b); }
+    unsigned char* px; int fw, fh; io.Fonts->GetTexDataAsRGBA32(&px, &fw, &fh); io.DisplaySize = ImVec2(1920, 1080); io.DeltaTime = 1.f / 60;
+    Project q = makeTemplate("FirstPerson", "T");
+    q.scripts["SC_P"] = {"SC_P", R"JS(
+const S = { keys: '' };
+function put(k, v) { S[k] = v; ui.get('out').text = JSON.stringify(S); }
+function onKey(k) { if (k === 'PadA' || k === 'Space' || k === 'Escape') put('keys', S.keys + k + ','); }
+function onStart() {
+  ui.create('text', { id: 'out', text: '{}', anchor: 'top-left', size: 12 });
+  const w = ui.create('window', { id: 'menu', title: 'Menu', w: 700, h: 640, modal: true, visible: false, layout: 'column', gap: 12 });
+  const row = w.add('panel', { layout: 'row', gap: 10 });
+  row.add('button', { id: 'b1', text: 'One', on: { click: () => put('clicked', 'one') } });
+  row.add('button', { id: 'b2', text: 'Two', on: { click: e => put('clicked', 'two' + (e.pad ? ' pad' : '')) } });
+  const slots = w.add('grid', { id: 'slots', cols: 4, cell: 70, gap: 8 });
+  for (let i = 0; i < 4; i++) slots.add('panel', { id: 's' + i, bg: '#ffffff20', draggable: true, droppable: true, data: { i } });
+  slots.on('drop', e => put('drop', e.from + '>' + e.target.id));
+  w.add('input', { id: 'name', placeholder: 'Name', on: { submit: e => put('name', e.value) } });
+  w.on('back', () => put('back', true));
+}
+)JS"};
+    Actor pa = newActor("Empty", "PadTest"); pa.script = "SC_P"; q.levels[0].second.actors.push_back(pa);
+    Game g(q, q.startLevel); logClear(); CHECK(g.start(), "a game for the controller starts");
+    Ui& U = *g.ui();
+    auto frame = [&] { ImGui::NewFrame(); g.drawHud(ImGui::GetBackgroundDrawList(), 0, 0, 1920, 1080); ImGui::EndFrame(); };
+    auto btn = [&](int b, bool down) { SDL_Event e{}; e.type = down ? SDL_CONTROLLERBUTTONDOWN : SDL_CONTROLLERBUTTONUP; e.cbutton.button = (Uint8)b; g.event(e); };
+    auto tap = [&](int b) { btn(b, true); g.update(1.f / 60); frame(); btn(b, false); g.update(1.f / 60); frame(); };
+    auto stick = [&](int a, float v) { SDL_Event e{}; e.type = SDL_CONTROLLERAXISMOTION; e.caxis.axis = (Uint8)a; e.caxis.value = (Sint16)(v * 32767); g.event(e); };
+    auto out = [&] { json o = json::parse(U.get("out")["text"].get<std::string>(), nullptr, false); return o.is_object() ? o : json::object(); };
+    run(g, 0.5f);
+    glm::vec3 p0 = g.playerPos(); stick(SDL_CONTROLLER_AXIS_LEFTY, -1); run(g, 1.f); stick(SDL_CONTROLLER_AXIS_LEFTY, 0);
+    CHECK(glm::length(glm::vec2(g.playerPos().x - p0.x, g.playerPos().z - p0.z)) > 3.f, "the left stick walks");
+    float yaw0 = json::parse(g.playerGet())["yaw"].get<float>(); stick(SDL_CONTROLLER_AXIS_RIGHTX, 1); run(g, 0.5f); stick(SDL_CONTROLLER_AXIS_RIGHTX, 0);
+    CHECK(json::parse(g.playerGet())["yaw"].get<float>() < yaw0 - 0.5f, "the right stick turns");
+    run(g, 0.4f); float y0 = g.playerPos().y; btn(SDL_CONTROLLER_BUTTON_A, true); run(g, 0.25f); btn(SDL_CONTROLLER_BUTTON_A, false);
+    CHECK(g.playerPos().y > y0 + 0.4f, "A jumps");
+    CHECK(out().value("keys", "").find("PadA,Space,") != std::string::npos, ("onKey hears PadA and Space (the alias): " + out().value("keys", std::string())).c_str());
+    stick(SDL_CONTROLLER_AXIS_TRIGGERRIGHT, 0.95f);
+    CHECK(g.key("PadRT") && g.key("MouseLeft") && g.mouse().z > 0, "RT is the left mouse button too (PC games play on a controller)");
+    stick(SDL_CONTROLLER_AXIS_TRIGGERRIGHT, 0); run(g, 0.05f); CHECK(!g.key("MouseLeft"), "and lets go");
+    U.show("menu", json::object()); run(g, 0.1f); frame(); frame();
+    tap(SDL_CONTROLLER_BUTTON_DPAD_DOWN);   // the first press puts the focus on the first button
+    tap(SDL_CONTROLLER_BUTTON_DPAD_RIGHT); tap(SDL_CONTROLLER_BUTTON_A);
+    CHECK(out().value("clicked", "") == "two pad", ("D-pad right, A: " + out().value("clicked", std::string())).c_str());
+    tap(SDL_CONTROLLER_BUTTON_DPAD_DOWN); tap(SDL_CONTROLLER_BUTTON_A);   // pick up a slot
+    tap(SDL_CONTROLLER_BUTTON_DPAD_RIGHT); tap(SDL_CONTROLLER_BUTTON_A);   // put it on the next one
+    CHECK(out().value("drop", "").size() > 3 && out().value("drop", "").find('>') != std::string::npos && out()["drop"].get<std::string>().substr(0, 2) != out()["drop"].get<std::string>().substr(3), ("pick up with A, put down with A: " + out().value("drop", std::string())).c_str());
+    for (int i = 0; i < 3; i++) tap(SDL_CONTROLLER_BUTTON_DPAD_DOWN);
+    tap(SDL_CONTROLLER_BUTTON_A);
+    CHECK(U.keyboardOpen() && U.exists("__osk"), "A on a text field opens the on-screen keyboard");
+    tap(SDL_CONTROLLER_BUTTON_DPAD_DOWN); tap(SDL_CONTROLLER_BUTTON_A); tap(SDL_CONTROLLER_BUTTON_DPAD_RIGHT); tap(SDL_CONTROLLER_BUTTON_A);
+    std::string typed = U.get("name")["value"].get<std::string>();
+    CHECK(typed.size() == 2, ("typing with the controller: '" + typed + "'").c_str());
+    tap(SDL_CONTROLLER_BUTTON_Y);
+    CHECK(!U.keyboardOpen() && out().value("name", "") == typed, "Y: done, the keyboard closes and the field is submitted");
+    tap(SDL_CONTROLLER_BUTTON_B);
+    CHECK(out().value("back", false) && out().value("keys", "").find("Escape") != std::string::npos, "B: the menu hears 'back' and the game hears Escape (its own close)");
+    ImGui::DestroyContext();
+  }
+
   std::printf("\n%d passed, %d failed\n", passes, fails);
   return fails ? 1 : 0;
 }

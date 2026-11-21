@@ -54,6 +54,13 @@ public:
   bool hovering() const { return hoverSolid_; }
   // the mouse and the screen in UI units (the numbers nodes use): x, y from the top-left, w, h
   void mouse(float out[4]) const { out[0] = (mx_ - ox_) / scale_; out[1] = (my_ - oy_) / scale_; out[2] = sw_ / scale_; out[3] = sh_ / scale_; }
+  // the controller in menus: the D-pad / left stick move between buttons (a ring shows which), A presses, B goes back,
+  // LB / RB change tabs; a draggable item is picked up with A and put down with A; text fields open the on-screen keyboard
+  bool pad(const std::string& button, bool down);   // true = the menu used it
+  void padStick(float x, float y);
+  bool navigating() const { return navOn_; }
+  void setConsole(bool c) { console_ = c; }
+  bool keyboardOpen() const { return osk_ != nullptr; }
 
   struct Node;
 private:
@@ -65,7 +72,14 @@ private:
   float mx_ = -1e9f, my_ = -1e9f; bool hoverSolid_ = false; double time_ = 0; int autoId_ = 0; std::string lastId_;
   Node *hover_ = nullptr, *press_ = nullptr, *focus_ = nullptr, *drag_ = nullptr, *slide_ = nullptr, *thumb_ = nullptr, *dropOver_ = nullptr;
   float pressX_ = 0, pressY_ = 0, grabX_ = 0, grabY_ = 0, thumbGrab_ = 0; bool dragging_ = false; double lastClick_ = 0; Node* lastClickNode_ = nullptr;
-  std::vector<Node*> drawn_;   // this frame, in drawing order (hit testing goes backwards)
+  std::vector<Node*> drawn_;
+  Node *nav_ = nullptr, *osk_ = nullptr, *oskTarget_ = nullptr; bool navOn_ = false, console_ = false, padDrag_ = false, oskArabic_ = false; int holdDir_ = -1, stickDir_ = -1; float holdT_ = 0;
+  std::vector<Node*> navCandidates() const;
+  Node* scopeRoot() const;
+  void navMove(int dir);
+  void navActivate();
+  void ensureVisible(Node* n);
+  void oskOpen(Node* input); void oskClose(bool submit); void oskBuild(); void oskKey(Node* k);   // this frame, in drawing order (hit testing goes backwards)
   struct Tex { unsigned id = 0; int w = 0, h = 0; bool bad = false; };
   std::map<std::string, Tex> tex_;
 

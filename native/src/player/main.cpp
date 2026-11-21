@@ -9,6 +9,8 @@
 #include <imgui_impl_opengl3.h>
 #include <filesystem>
 #include <cstring>
+#include <fstream>
+#include <nlohmann/json.hpp>
 
 using namespace pge;
 
@@ -24,7 +26,23 @@ int main(int argc, char** argv) {
   SDL_SetWindowTitle(W.win, P.name.c_str());
   if (!windowed) SDL_SetWindowFullscreen(W.win, SDL_WINDOW_FULLSCREEN_DESKTOP);
   Renderer R; R.init();
-  Game G(P, P.startLevel); if (!G.start()) { showError(P.name, "The start level could not be loaded.", W.win); closeWindow(W); return 1; }
+  // the console version: console.json next to the game (made by Package > Console), or Premium Games' console mode.
+  // Full screen, no mouse pointer, controller first (menus, the on-screen keyboard), its own picture settings
+  bool console = false; { const char* e = std::getenv("PREMIUM_CONSOLE"); console = e && std::string(e) == "1"; }
+  nlohmann::json cj = nlohmann::json::object();
+  { std::ifstream in(std::filesystem::u8path(exeDir() + "/console.json")); if (in) { try { in >> cj; console = console || cj.value("console", false); } catch (...) {} } }
+  if (console) {
+#ifdef _WIN32
+    _putenv_s("PREMIUM_CONSOLE", "1");
+#else
+    setenv("PREMIUM_CONSOLE", "1", 1);
+#endif
+    if (cj.contains("quality") && cj["quality"].is_object()) { auto& q = cj["quality"]; R.quality.msaa = q.value("msaa", R.quality.msaa); R.quality.ssao = q.value("ssao", R.quality.ssao);
+      R.quality.bloom = q.value("bloom", R.quality.bloom); R.quality.shadowDistance = q.value("shadowDistance", R.quality.shadowDistance); }
+    if (!windowed) SDL_ShowCursor(SDL_DISABLE);
+  }
+  ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;   // the pause menu works with a controller
+  Game G(P, P.startLevel); G.setConsole(console); if (!G.start()) { showError(P.name, "The start level could not be loaded.", W.win); closeWindow(W); return 1; }
   bool running = true, paused = false, focused = true; Uint64 last = SDL_GetPerformanceCounter(); size_t seenLog = 0; std::string lastError; double errorUntil = 0;
   auto lock = [&](bool on) { SDL_SetRelativeMouseMode(on && G.wantsMouseLock() ? SDL_TRUE : SDL_FALSE); };
   auto toggleFull = [&]() { bool full = SDL_GetWindowFlags(W.win) & SDL_WINDOW_FULLSCREEN_DESKTOP; SDL_SetWindowFullscreen(W.win, full ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP); };
@@ -47,6 +65,8 @@ int main(int argc, char** argv) {
       else if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) focused = true;
       // Escape: the engine's pause menu, unless the game's own menus use it (ui.escape = true; the pause menu is then the game's)
       else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE && !e.key.repeat && (paused || !G.ownsEscape())) { paused = !paused; G.releaseInput(); lock(!paused); }
+      // the controller's Start: the pause menu (unless the game has its own), B closes it
+      else if (e.type == SDL_CONTROLLERBUTTONDOWN && ((e.cbutton.button == SDL_CONTROLLER_BUTTON_START && (paused || !G.ownsEscape())) || (paused && e.cbutton.button == SDL_CONTROLLER_BUTTON_B))) { paused = !paused; G.releaseInput(); lock(!paused); if (paused) ImGui::SetWindowFocus("Paused"); }
       else if (e.type == SDL_KEYDOWN && !e.key.repeat && (e.key.keysym.sym == SDLK_F11 || (e.key.keysym.sym == SDLK_RETURN && (e.key.keysym.mod & KMOD_ALT)))) toggleFull();
       else if (!paused) { if (e.type == SDL_MOUSEBUTTONDOWN && !SDL_GetRelativeMouseMode()) lock(true); G.event(e); }
     }
@@ -67,6 +87,7 @@ int main(int argc, char** argv) {
     if (paused) {
       ImGui::GetBackgroundDrawList()->AddRectFilled({0, 0}, io.DisplaySize, IM_COL32(0, 0, 0, 140));
       ImGui::SetNextWindowPos({io.DisplaySize.x / 2, io.DisplaySize.y / 2}, ImGuiCond_Always, {0.5f, 0.5f}); ImGui::SetNextWindowSize({300 * W.dpi, 0});
+      ImGui::SetNextWindowFocus();
       ImGui::Begin("Paused", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings);
       ImGui::TextUnformatted(P.name.c_str()); ImGui::Separator();
       ImVec2 bw(-1, 34 * W.dpi);

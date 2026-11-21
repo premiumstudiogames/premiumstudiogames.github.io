@@ -140,6 +140,27 @@ props (all optional):
 events (node.on): click, dblclick, rightclick, down, up, enter, leave, change, input, submit, focus, blur, close,
   dragstart, dragend, drop.  e.target (where it happened), e.current (the node whose handler runs), e.value,
   e.from / e.to / e.data (drag and drop), e.shift / e.ctrl / e.alt, e.stop()  - clicks and drops bubble up to the parents
+)"
+R"(
+CONTROLLER (Xbox, PlayStation, Switch Pro ... plugged in or Bluetooth, found when it connects)
+  The player walks with the left stick and looks with the right stick out of the box; clicking the left stick runs.
+  Buttons are keys: 'PadA' 'PadB' 'PadX' 'PadY' 'PadLB' 'PadRB' 'PadLT' 'PadRT' 'PadLS' 'PadRS' 'PadStart' 'PadBack'
+  'PadUp' 'PadDown' 'PadLeft' 'PadRight'   ->  input.key('PadA'), input.pressed('PadRT'), onKey('PadY') all work.
+  They also press the keys a PC game already uses (aliases): A = Space, RT = MouseLeft, LT = MouseRight, Start = Escape,
+  LB / RB = WheelUp / WheelDown, B = Escape while a menu is open, B = sneak.  So a mouse and keyboard game plays at once.
+  input.pad                      a controller is connected
+  input.axis('LeftX')            -1 .. 1 ('LeftX' 'LeftY' 'RightX' 'RightY'), triggers 0 .. 1 ('LT' 'RT'); dead zones applied
+  input.rumble(low, high, seconds)   vibration (0 .. 1 each motor)
+  input.padSettings({ aliases: true, invertY: false, lookSpeed: 3 })
+  In menus (ui): the D-pad / left stick move between buttons (a ring shows which), A presses, B goes back (the scope's
+  'back' event, and Escape), LB / RB change tabs, left / right move a slider, A picks a draggable item up and A puts it
+  down.  On the console a text field opens the on-screen keyboard (Arabic / English, X deletes, Y done).
+
+CONSOLE VERSION - every game ships twice: the PC version and the console version
+  Platforms > Console (controller, up to 2 GB): Builds/<name>/Console with console.json. Full controller play,
+  console menus (focus ring, on-screen keyboard, no mouse cursor) and lighter graphics (MSAA 2, shadows 120 m).
+  The package must stay under 2 GB, or packaging stops and says how big it is.
+  Play options (the arrow next to Play) > Play as the Console Version: test it in the editor.   premium.console is true there (make bigger, simpler menus).
 
 BLOCK WORLD (voxels)
 The ground is split into 16 x 16 m chunks. Near the ground (the near layer) blocks can be 20, 40, 60, 80 or 100 cm

@@ -15,6 +15,7 @@
 #include "ui.h"
 #include "audio.h"
 #include "models.h"
+#include <SDL.h>
 
 struct ImDrawList;
 namespace pge {
@@ -41,6 +42,8 @@ public:
   bool ownsEscape() const { return ui_ && ui_->ownsEscape(); }   // the game's own menus use Escape (ui.escape = true)
   bool uiTyping() const { return ui_ && ui_->typing(); }
   bool paused() const { return ui_ && ui_->pausing(); }
+  void setConsole(bool c) { console_ = c; if (ui_) ui_->setConsole(c); }   // the console version: text fields open the on-screen keyboard
+  bool console() const { return console_; }
   const std::string& mode() const { return mode_; }
   double gameTime() const { return time_; }
   int actorCount() const;
@@ -75,6 +78,10 @@ public:
   bool key(const std::string& k) override { return keys_.count(k) > 0; }
   bool pressed(const std::string& k) override { return pressed_.count(k) > 0; }
   glm::vec4 mouse() override { return mouseState_; }
+  float axis(const std::string& name) override;
+  bool padConnected() override { return pad_ != nullptr; }
+  void padSet(const std::string& json) override;
+  void rumble(float low, float high, float seconds) override;
   void log(const std::string& t) override;
   VoxelWorld* voxels() override { return vox_.get(); }
   std::string createVoxels(const std::string& optsJson) override;
@@ -120,5 +127,13 @@ private:
   glm::vec3 playerStart(float* yawDeg) const;
   void destroyRec(const std::string& id);
   void soundFrame();
+  // the controller (the first one connected): buttons are keys (PadA, PadB, PadX, PadY, PadLB, PadRB, PadLT, PadRT, PadStart, PadBack,
+  // PadLS, PadRS, PadUp, PadDown, PadLeft, PadRight); with aliases on A = Space, RT = MouseLeft, LT = MouseRight, LB = WheelUp,
+  // RB = WheelDown, Start = Escape, so PC games play on a controller as they are
+  SDL_GameController* pad_ = nullptr; int padId_ = -1; float ax_[6] = {0, 0, 0, 0, 0, 0}; bool trig_[2] = {false, false};
+  bool console_ = false, padAliases_ = true, padRun_ = false, invertY_ = false; float lookSpeed_ = 3.0f;
+  void padOpen(int index); void padClose();
+  void padKey(const std::string& name, bool down);
+  void keyDown(const std::string& k, bool fire);
 };
 }
