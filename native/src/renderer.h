@@ -38,11 +38,20 @@ public:
   const GpuMesh& wireCam() const { return wireCam_; }
   const GpuMesh& gridMesh() const { return grid_; }
   int drawCalls = 0, triangles = 0;
+  // picture quality (the console can lower it): MSAA samples (0 = off), ambient occlusion, bloom, how far sun shadows reach
+  struct Quality { int msaa = 4; bool ssao = true, bloom = true; float aoAmount = 0.8f, aoRadius = 0.6f, bloomAmount = 0.07f, bloomThreshold = 1.0f, shadowDistance = 160.f; } quality;
 private:
+  static constexpr int SHADOW_SIZE = 2048;   // one cascade; the shadow texture holds 2 x 2
+  struct Post { int w = 0, h = 0, samples = 0, want = -1; unsigned msFbo = 0, msColor = 0, msDepth = 0, hdrFbo = 0, hdrTex = 0, depthTex = 0, aoFbo[2] = {0, 0}, aoTex[2] = {0, 0};
+    unsigned bloomFbo[6] = {0}, bloomTex[6] = {0}; int bloomN = 0, bw[6] = {0}, bh[6] = {0}; } post_;
+  unsigned postVao_ = 0, ssao_ = 0, aoBlur_ = 0, bloomPre_ = 0, bloomDown_ = 0, bloomUp_ = 0, compose_ = 0;
+  glm::mat4 casc_[4]; float split_[4] = {0, 0, 0, 0}, texel_[4] = {0, 0, 0, 0}; int cascN_ = 0;
+  void ensurePost(int w, int h);
+  void freePost();
   unsigned lit_ = 0, vox_ = 0, wat_ = 0, flat_ = 0, depth_ = 0, vdepth_ = 0, idp_ = 0, text_ = 0, shadowFbo_ = 0, shadowTex_ = 0, textVao_ = 0, textVbo_ = 0;
   int buildText(const TextItem& t);   // fills textVbo_, returns vertex count
   GpuMesh wireBox_, wireCapsule_, arrow_, axes_, wireCam_, grid_, grid10_;
-  void shadowPass(const Frame& f, glm::mat4& lightVP, bool& has);
+  void shadowPass(const Frame& f, const Camera& cam, bool& has);
 };
 glm::mat4 actorLocal(const Actor& a);
 }
