@@ -936,7 +936,7 @@ const fetchManifest = () => global.__psManifestFile ? Promise.resolve(JSON.parse
 // (the old copy is moved aside, with retries): if the new copy can't go in, the old one goes back, so a failed update
 // never leaves the game missing.
 async function swapDir(from, to) {
-  const retry = async f => { for (let i = 0; ; i++) { try { return await f(); } catch (e) { if (i >= 20 || !['EPERM', 'EBUSY', 'EACCES', 'ENOTEMPTY'].includes(e.code)) throw e; if (global.__psTest) console.log('swapDir retry', i, e.code, e.path || ''); await new Promise(r => setTimeout(r, 250 + i * 150)); } } };
+  const retry = async f => { for (let i = 0; ; i++) { try { return await f(); } catch (e) { if (i >= 20 || !['EPERM', 'EBUSY', 'EACCES', 'ENOTEMPTY'].includes(e.code)) throw e; await new Promise(r => setTimeout(r, 250 + i * 150)); } } };
   const aside = to + '.old';
   await fsp.mkdir(path.dirname(to), { recursive: true });
   await fsp.rm(aside, { recursive: true, force: true }).catch(() => {});

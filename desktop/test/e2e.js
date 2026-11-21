@@ -266,8 +266,9 @@ app.whenReady().then(async () => {
       await call('ps:install', key);
       // an update: the version in version.json changed → it's downloaded again before playing
       { const reg = path.join(process.env.LOCALAPPDATA, 'PremiumStudio', 'games', 'installed.json'), r = JSON.parse(fs.readFileSync(reg, 'utf8')); r[key].version = '00.00.00'; fs.writeFileSync(reg, JSON.stringify(r, null, 2)); }
-      const tu = Date.now(); await call('ps:launch', key); console.log('update+launch took', Date.now() - tu, 'ms');
-      ok('engine game: updates when version.json changes, then starts', await waitFor(() => alive(key), 60000) && (await call('ps:getInstalled'))[key].version === vj.version, (await call('ps:getInstalled'))[key].version + ' · ' + JSON.stringify(T.pgeProc(key) ? { file: T.pgeProc(key).spawnfile, exit: T.pgeProc(key).exitCode, err: T.pgeProc(key).spawnError } : null));
+      await call('ps:launch', key);
+      const want = ((await call('ps:getLatest'))[key] || {}).version;   // what the store offers now (the branch's own copy may be older)
+      ok('engine game: updates when version.json changes, then starts', await waitFor(() => alive(key), 60000) && !!want && (await call('ps:getInstalled'))[key].version === want, (await call('ps:getInstalled'))[key].version + ' · ' + JSON.stringify(T.pgeProc(key) ? { file: T.pgeProc(key).spawnfile, exit: T.pgeProc(key).exitCode, err: T.pgeProc(key).spawnError } : null));
       await call('ps:stop', key); await waitFor(() => !alive(key), 30000);
       await call('ps:uninstall', key);
       ok('engine game: uninstalls (files and icon)', !fs.existsSync(gdir) && !fs.existsSync(path.join(desk, 'BLOCKFALL 3001 · Premium Engine.lnk')) && !(await call('ps:getInstalled'))[key]);

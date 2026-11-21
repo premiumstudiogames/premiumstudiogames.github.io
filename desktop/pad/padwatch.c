@@ -27,11 +27,16 @@ static int focusPid(DWORD pid) {
   if (IsIconic(f.w)) ShowWindow(f.w, SW_RESTORE);
   /* Windows only lets the program the player is using change the front window: the input of the current front
      window is joined for a moment (and an Alt tap counts as the player's own input), then the game comes forward */
-  HWND fg = GetForegroundWindow(); DWORD fgT = fg ? GetWindowThreadProcessId(fg, NULL) : 0, me = GetCurrentThreadId();
-  if (fgT && fgT != me) AttachThreadInput(me, fgT, TRUE);
-  keybd_event(VK_MENU, 0, 0, 0); keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0);
-  BringWindowToTop(f.w); SetForegroundWindow(f.w); SetFocus(f.w);
-  if (fgT && fgT != me) AttachThreadInput(me, fgT, FALSE);
+  /* the other program takes the front a moment later (its own thread activates it): wait for that, and ask again if a
+     window that was closing (the Control Center) or nothing was in front at the first try */
+  for (int tries = 0; tries < 4 && GetForegroundWindow() != f.w; tries++) {
+    HWND fg = GetForegroundWindow(); DWORD fgT = fg ? GetWindowThreadProcessId(fg, NULL) : 0, me = GetCurrentThreadId();
+    if (fgT && fgT != me) AttachThreadInput(me, fgT, TRUE);
+    keybd_event(VK_MENU, 0, 0, 0); keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0);
+    BringWindowToTop(f.w); SetForegroundWindow(f.w); SetFocus(f.w);
+    if (fgT && fgT != me) AttachThreadInput(me, fgT, FALSE);
+    for (int i = 0; i < 10 && GetForegroundWindow() != f.w; i++) Sleep(15);
+  }
   return GetForegroundWindow() == f.w;
 }
 static DWORD WINAPI readIn(LPVOID p) { (void)p; char b[64];
