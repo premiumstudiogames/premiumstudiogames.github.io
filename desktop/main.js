@@ -801,7 +801,9 @@ function launchPge(id, g) {
   const dir = gameDir(id, g), ev = PGE_EVENTS(id);
   try { fs.mkdirSync(path.dirname(ev), { recursive: true }); fs.writeFileSync(ev, ''); } catch (e) {}
   const cm = consoleOn;
-  const child = require('child_process').spawn(path.join(dir, g.entry), [], { cwd: dir, stdio: 'ignore', windowsHide: false,
+  // on the console its console version (controller menus, lighter graphics) when the game has one
+  const exe = cm && g.consoleEntry && fs.existsSync(path.join(dir, g.consoleEntry)) ? path.join(dir, g.consoleEntry) : path.join(dir, g.entry);
+  const child = require('child_process').spawn(exe, [], { cwd: path.dirname(exe), stdio: 'ignore', windowsHide: false,
     env: { ...process.env, PREMIUM_GAMES: '1', PREMIUM_CONSOLE: cm ? '1' : '0', PREMIUM_GAMES_EVENTS: ev, PREMIUM_GAMES_USER: playerName() || '' } });
   pgeProcs.set(id, child);
   let read = 0;
@@ -903,7 +905,7 @@ const fetchManifest = () => global.__psManifestFile ? Promise.resolve(JSON.parse
 async function latestOf(m) {
   if (m.type === 'bf-launcher') { const p = await fetchJSON(m.parts); let game = ''; try { game = (await fetchJSON(m.gameManifest)).latest.release; } catch (e) {} return { version: p.version, game, size: p.size }; }
   if (m.type === 'manifest') { const j = await fetchJSON(m.base + 'manifest.json'); return { version: j.version, files: j.files }; }
-  if (m.type === 'pge') { const j = await fetchJSON(m.dist + 'version.json'); return { version: j.version, size: j.size }; }
+  if (m.type === 'pge') { const j = await fetchJSON(m.dist + 'version.json'); return { version: j.version, size: (+j.size || 0) + (j.console ? +j.console.size || 0 : 0) }; }
   return { version: m.version };
 }
 async function getLatest() {
@@ -945,7 +947,7 @@ async function install(id, opts) {
     const edition = info.edition;
     let received = 0, last = 0, total = 0;
     const tick = n => { received += n; const now = Date.now(); if (now - last > 150) { last = now; send('ps:progress', { id, phase: 'download', received, total: total || received }); } };
-    let entry = m.entry, version;
+    let entry = m.entry, version, consoleEntry;
 
     const V = m.type === 'bf-launcher' ? bfv(info.game) : null;
     if (m.type === 'bf-launcher' && fs.existsSync(V.exe) && !readReg()[id] && !opts.force) {
@@ -992,31 +994,44 @@ async function install(id, opts) {
       await fsp.rm(gameDir(id), { recursive: true, force: true });
       await fsp.rename(stage, gameDir(id)); stage = null;
     } else if (m.type === 'pge') {
-      // a game made with Premium Engine: version.json + one zip (checked with its sha256), unzipped into the game's folder
-      const j = await fetchJSON(m.dist + 'version.json'); version = j.version; total = +j.size || 0;
-      if (!j.file || /[\\/]|\.\./.test(j.file) || !j.exe || /[\\/]|\.\./.test(j.exe) || !/^[0-9a-f]{64}$/.test(j.sha256 || '')) throw new Error('بيانات التحديث غير صالحة');
+      // a game made with Premium Engine: version.json + one zip (checked with its sha256), unzipped into the game's folder.
+      // Most come twice: the PC version and a console version (full controller play, console menus, at most 2 GB), which
+      // goes into console\ inside the game's folder and is what runs in console mode.
+      const j = await fetchJSON(m.dist + 'version.json'); version = j.version;
+      const bad = x => !x || typeof x !== 'object' || !x.file || /[\\/]|\.\./.test(x.file) || !x.exe || /[\\/]|\.\./.test(x.exe) || !/^[0-9a-f]{64}$/.test(x.sha256 || '') || /\.\./.test(x.zipRoot || '');
+      if (bad(j) || (j.console && bad(j.console))) throw new Error('بيانات التحديث غير صالحة');
+      total = (+j.size || 0) + (j.console ? +j.console.size || 0 : 0);
       send('ps:progress', { id, phase: 'download', received: 0, total });
-      tmpZip = path.join(app.getPath('temp'), `ps-${id}-${Date.now()}.zip`);
-      await download(m.dist + encodeURIComponent(j.file), tick, tmpZip);
-      const h = crypto.createHash('sha256'); await new Promise((res, rej) => fs.createReadStream(tmpZip).on('data', d => h.update(d)).on('end', res).on('error', rej));
-      if (h.digest('hex') !== j.sha256) throw new Error('الملف وصل ناقص، جرّب مرة ثانية');
-      send('ps:progress', { id, phase: 'extract', received, total: received });
       stage = gameDir(id) + '.new';
       await fsp.rm(stage, { recursive: true, force: true });
-      await require('extract-zip')(tmpZip, { dir: stage });
-      const inner = path.join(stage, j.zipRoot || '');
-      if (!inner.startsWith(stage) || !fs.existsSync(path.join(inner, j.exe))) throw new Error('اللعبة ناقصة في الملف');
-      const old = pgeProcs.get(id); if (old) { try { old.kill(); } catch (e) {} }
+      const unpack = async (x, into) => {
+        tmpZip = path.join(app.getPath('temp'), `ps-${id}-${Date.now()}.zip`);
+        await download(m.dist + encodeURIComponent(x.file), tick, tmpZip);
+        const h = crypto.createHash('sha256'); await new Promise((res, rej) => fs.createReadStream(tmpZip).on('data', d => h.update(d)).on('end', res).on('error', rej));
+        if (h.digest('hex') !== x.sha256) throw new Error('الملف وصل ناقص، جرّب مرة ثانية');
+        const raw = into + '.zip-out';
+        await fsp.rm(raw, { recursive: true, force: true });
+        await require('extract-zip')(tmpZip, { dir: raw });
+        await fsp.rm(tmpZip, { force: true }).catch(() => {}); tmpZip = null;
+        const inner = path.join(raw, x.zipRoot || '');
+        if (!(inner + path.sep).startsWith(raw + path.sep) || !fs.existsSync(path.join(inner, x.exe))) throw new Error('اللعبة ناقصة في الملف');
+        await fsp.rm(into, { recursive: true, force: true });
+        await fsp.rename(inner, into);
+        await fsp.rm(raw, { recursive: true, force: true });
+      };
+      await unpack(j, stage);
+      if (j.console) await unpack(j.console, path.join(stage, 'console'));
+      send('ps:progress', { id, phase: 'extract', received, total: received });
+      const old = pgeProcs.get(id); if (old) await stopGame(id).catch(() => {});
       await fsp.rm(gameDir(id), { recursive: true, force: true });
-      await fsp.rename(inner, gameDir(id));
-      await fsp.rm(stage, { recursive: true, force: true }); stage = null;
-      entry = j.exe;
+      await fsp.rename(stage, gameDir(id)); stage = null;
+      entry = j.exe; consoleEntry = j.console ? 'console/' + j.console.exe : undefined;
     } else {
       throw new Error('نوع اللعبة غير معروف');
     }
 
     const reg = readReg(), bf = m.type === 'bf-launcher', one = bf || m.type === 'pge';   // one install for every edition
-    reg[id] = { type: m.type, game: info.game, base: m.name, name: one ? m.name : edTitle(m.name, edition), version, entry, demoPatch: Array.isArray(m.demoPatch) ? m.demoPatch : undefined, account: m.account || undefined, icon: bf ? 'resources/app/icon.ico' : m.type === 'pge' ? entry : 'icon.ico', edition: one ? undefined : edition,
+    reg[id] = { type: m.type, game: info.game, base: m.name, name: one ? m.name : edTitle(m.name, edition), version, entry, demoPatch: Array.isArray(m.demoPatch) ? m.demoPatch : undefined, account: m.account || undefined, icon: bf ? 'resources/app/icon.ico' : m.type === 'pge' ? entry : 'icon.ico', edition: one ? undefined : edition, consoleEntry,
       size: await dirSize(bf ? V.dir : gameDir(id, m)), installedAt: Date.now(), lastPlayed: (readReg()[id] || {}).lastPlayed };
     if (bf) writeBfAccount();
     await writeReg(reg);

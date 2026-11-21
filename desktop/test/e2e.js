@@ -238,11 +238,13 @@ app.whenReady().then(async () => {
       const pi = (await call('ps:getInstalled'))[key];
       ok('engine game: installs (zip, sha256, unzip)', !!pi && pi.type === 'pge' && fs.existsSync(path.join(gdir, vj.exe)) && fs.existsSync(path.join(gdir, 'game.pge.json')), Math.round((Date.now() - tp) / 1000) + 's · ' + (pi && pi.version));
       ok('engine game: its own name and icon', pi && pi.name === 'BLOCKFALL 3001 · Premium Engine' && fs.existsSync(path.join(desk, 'BLOCKFALL 3001 · Premium Engine.lnk')));
+      if (vj.console) ok('engine game: its console version installs too (console\\)', pi && pi.consoleEntry === 'console/' + vj.console.exe && fs.existsSync(path.join(gdir, 'console', vj.console.exe)), pi && pi.consoleEntry);
       ok('engine game: the main BLOCKFALL is still there', !!(await call('ps:getInstalled')).blockfall);
       await call('ps:setConsole', true);
       await call('ps:launch', key);
       const alive = () => { const c = T.pgeProc(key); return !!c && c.exitCode === null; };
       ok('engine game: runs from the console', await waitFor(alive, 15000) && !!(await call('ps:getRunning'))[key]);
+      if (vj.console) ok('engine game: the console runs its console version', /[\\/]console[\\/]/.test(T.pgeProc(key).spawnfile || ''), T.pgeProc(key).spawnfile);
       await sleep(8000);
       ok('engine game: still running after 8 s (the world loads)', alive());
       try { fs.mkdirSync(path.join(__dirname, 'shots'), { recursive: true }); const img = await require('electron').desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1280, height: 720 } }); if (img[0]) fs.writeFileSync(path.join(__dirname, 'shots', 'engine-game.png'), img[0].thumbnail.toPNG()); } catch (e) {}
@@ -266,6 +268,30 @@ app.whenReady().then(async () => {
       await call('ps:stop', key); await waitFor(() => !alive(), 30000);
       await call('ps:uninstall', key);
       ok('engine game: uninstalls (files and icon)', !fs.existsSync(gdir) && !fs.existsSync(path.join(desk, 'BLOCKFALL 3001 · Premium Engine.lnk')) && !(await call('ps:getInstalled'))[key]);
+      // two versions: the PC version and the console version (console\ in the game's folder, the one that runs on the console)
+      if (!vj.console) {
+        const os = require('os'), http = require('http'), dist = fs.mkdtempSync(path.join(os.tmpdir(), 'pge-dist-'));
+        fs.copyFileSync(path.join(__dirname, '..', '..', 'games', 'blockfall', 'dist', vj.file), path.join(dist, 'pc.zip'));
+        fs.copyFileSync(path.join(__dirname, '..', '..', 'games', 'blockfall', 'dist', vj.file), path.join(dist, 'console.zip'));
+        fs.writeFileSync(path.join(dist, 'version.json'), JSON.stringify({ ...vj, file: 'pc.zip', console: { file: 'console.zip', zipRoot: vj.zipRoot, exe: vj.exe, sha256: vj.sha256, size: vj.size } }));
+        const srv = http.createServer((q, s) => { const f = path.join(dist, path.basename(decodeURIComponent(q.url.split('?')[0]))); if (!fs.existsSync(f)) { s.writeHead(404); s.end(); return; } s.writeHead(200, { 'Content-Length': fs.statSync(f).size }); fs.createReadStream(f).pipe(s); });
+        await new Promise(r => srv.listen(0, '127.0.0.1', r));
+        const man = JSON.parse(fs.readFileSync(global.__psManifestFile, 'utf8')), manFile = path.join(dist, 'games.json'), oldMan = global.__psManifestFile;
+        man.games[key].dist = `http://127.0.0.1:${srv.address().port}/`; fs.writeFileSync(manFile, JSON.stringify(man)); global.__psManifestFile = manFile;
+        try {
+          await call('ps:install', key);
+          const ci = (await call('ps:getInstalled'))[key];
+          ok('engine game, two versions: both install (PC + console\\)', ci && ci.consoleEntry === 'console/' + vj.exe && fs.existsSync(path.join(gdir, vj.exe)) && fs.existsSync(path.join(gdir, 'console', vj.exe)) && fs.existsSync(path.join(gdir, 'console', 'game.pge.json')), ci && ci.consoleEntry);
+          await call('ps:setConsole', true); await call('ps:launch', key);
+          ok('engine game, two versions: the console runs the console version', await waitFor(alive, 15000) && /[\\/]console[\\/]/.test(T.pgeProc(key).spawnfile || ''), T.pgeProc(key) && T.pgeProc(key).spawnfile);
+          await call('ps:stop', key); await waitFor(() => !alive(), 30000); await call('ps:setConsole', false);
+          await call('ps:launch', key);
+          ok('engine game, two versions: the PC runs the PC version', await waitFor(alive, 15000) && !/[\\/]console[\\/]/.test(T.pgeProc(key).spawnfile || ''), T.pgeProc(key) && T.pgeProc(key).spawnfile);
+          await call('ps:stop', key); await waitFor(() => !alive(), 30000);
+          await call('ps:uninstall', key);
+          ok('engine game, two versions: uninstall removes both', !fs.existsSync(gdir));
+        } finally { global.__psManifestFile = oldMan; srv.close(); }
+      }
     }
     // ---- Premium Engine from Premium Games (like Epic Games Launcher with Unreal)
     const engAlive = () => require('child_process').execSync('tasklist /FI "IMAGENAME eq PremiumEngine.exe" /NH').toString().includes('PremiumEngine.exe');
