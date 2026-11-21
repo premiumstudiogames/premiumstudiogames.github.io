@@ -52,6 +52,8 @@ public:
   bool typing() const;         // a text field has the keyboard
   bool ownsEscape() const { return ownEscape_; }
   bool hovering() const { return hoverSolid_; }
+  // the mouse and the screen in UI units (the numbers nodes use): x, y from the top-left, w, h
+  void mouse(float out[4]) const { out[0] = (mx_ - ox_) / scale_; out[1] = (my_ - oy_) / scale_; out[2] = sw_ / scale_; out[3] = sh_ / scale_; }
 
   struct Node;
 private:

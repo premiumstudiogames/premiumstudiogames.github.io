@@ -387,6 +387,7 @@ function onStart() {
     CHECK(g.paused() && !g.wantsMouseLock(), "an open menu pauses the game and frees the mouse");
     auto s0 = rect("s0"), s1 = rect("s1"), s3 = rect("s3");
     CHECK(s1[0] < s0[0] && std::abs(s0[0] - s1[0] - 90) < 0.5f && std::abs(s3[1] - s0[1] - 90) < 0.5f && std::abs(s0[2] - 80) < 0.5f, "grid: 80 cells, 10 gap, right to left (ui.rtl)");
+    { mouse(480, 270, 0); float m[4]; U.mouse(m); CHECK(std::abs(m[0] - 480) < 0.5f && std::abs(m[1] - 270) < 0.5f && std::abs(m[2] - 1920) < 0.5f && std::abs(m[3] - 1080) < 0.5f, "ui.mouse: the mouse and the screen in UI units"); }
     clickAt("s4", KMOD_LSHIFT); CHECK(label() == "slot s4 shift", ("click bubbles to the grid with the slot and Shift: " + label()).c_str());
     { frame(); auto a0 = rect("s0"), a2 = rect("s2"); mouse(a0[0] + 20, a0[1] + 20, 0); mouse(a0[0] + 20, a0[1] + 20, 1);
       for (int i = 1; i <= 5; i++) { mouse(a0[0] + 20 + (a2[0] - a0[0]) * i / 5, a0[1] + 20, 0); frame(); }

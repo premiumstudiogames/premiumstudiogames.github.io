@@ -201,6 +201,7 @@ const ui = {
   get open() { return __n.uiState()[0]; },
   get paused() { return __n.uiState()[1]; },
   get typing() { return __n.uiState()[2]; },
+  get mouse() { const m = __n.uiMouse(); return { x: m[0], y: m[1], w: m[2], h: m[3] }; },
   blur() { __n.uiFocus(''); }
 };
 globalThis.ui = ui;
@@ -350,6 +351,7 @@ static void bindNatives(JSContext* c) {
   FN("uiScale", 1, { UIP(c) U->setScale((float)D(c, a[0])); return JS_UNDEFINED; });
   FN("uiDir", 1, { UIP(c) U->setDir(JS_ToBool(c, a[0])); return JS_UNDEFINED; });
   FN("uiEscape", 1, { UIP(c) U->setEscape(JS_ToBool(c, a[0])); return JS_UNDEFINED; });
+  FN("uiMouse", 0, { UIP(c) float m[4]; U->mouse(m); JSValue r = JS_NewArray(c); for (int i = 0; i < 4; i++) JS_SetPropertyUint32(c, r, i, JS_NewFloat64(c, m[i])); return r; });
   FN("uiState", 0, { UIP(c) JSValue r = JS_NewArray(c); JS_SetPropertyUint32(c, r, 0, JS_NewBool(c, U->modal())); JS_SetPropertyUint32(c, r, 1, JS_NewBool(c, U->pausing())); JS_SetPropertyUint32(c, r, 2, JS_NewBool(c, U->typing())); return r; });
   // sound
 #define SNDP(c) Audio* A = W(c)->audio(); if (!A) return JS_NewString(c, "no sound here");

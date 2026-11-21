@@ -120,6 +120,7 @@ The screen is 1080 units tall (1920 wide at 16:9) at any resolution: sizes and p
   ui.rtl = true          rows and grids from the right (Arabic menus);  ui.scale = 1.2 (bigger UI)
   ui.escape = true       Escape goes to your script (onKey('Escape')), not the engine's pause menu
   ui.open / ui.paused / ui.typing     a menu that frees the mouse is open / the game is paused / a text field has the keys
+  ui.mouse               { x, y, w, h }: the mouse and the screen in UI units from the top-left (an item that follows the mouse)
 types: panel, text, image, button, grid, list (scrolling column), input, slider, tabs, window
 props (all optional):
   id, parent, x, y, w, h ('fill', 'fill:2', '50%', 'auto' or units), minW, maxW, minH, maxH
