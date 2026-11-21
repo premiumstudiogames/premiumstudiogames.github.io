@@ -838,7 +838,7 @@ function launchPge(id, g) {
     try { const b = fs.readFileSync(ev, 'utf8'); if (b.length <= read) return; const lines = b.slice(read).split('\n'); read = b.length - lines[lines.length - 1].length;
       for (const l of lines.slice(0, -1)) { const m = /^trophy ([A-Za-z0-9_-]{1,40})$/.exec(l.trim()); if (m) grantTrophy(g.game || id, m[1]); } } catch (e) {}
   }, 1000);
-  child.on('error', () => {});
+  child.on('error', e => { child.spawnError = String(e && e.message || e); });
   child.on('exit', () => { clearInterval(poll); if (pgeProcs.get(id) === child) pgeProcs.delete(id);
     try { const b = fs.readFileSync(ev, 'utf8').slice(read); for (const l of b.split('\n')) { const m = /^trophy ([A-Za-z0-9_-]{1,40})$/.exec(l.trim()); if (m) grantTrophy(g.game || id, m[1]); } } catch (e) {}
     markStopped(id); });
