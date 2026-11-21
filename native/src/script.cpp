@@ -10,6 +10,7 @@
 #include "voxel.h"
 #include "ui.h"
 #include "audio.h"
+#include "models.h"
 #include "project.h"
 #include <nlohmann/json.hpp>
 
@@ -225,6 +226,37 @@ const sound = {
   getVolume(bus) { return __n.sndVolume(String(bus), undefined); }
 };
 globalThis.sound = sound;
+// ---- models made by scripts (boxes / vertices, parts that turn about their pivots) and particles
+const __v3 = v => (v && typeof v === 'object' && !Array.isArray(v) && 'x' in v) ? [v.x, v.y, v.z] : v;
+function __pose(o) { if (!o || typeof o !== 'object') return o; const r = Object.assign({}, o);
+  for (const k of ['position', 'rotation', 'scale']) if (k in r) r[k] = __v3(r[k]);
+  if (r.parts) { const p = {}; for (const n in r.parts) p[n] = __pose(r.parts[n]); r.parts = p; } return r; }
+class Model {
+  constructor(id) { this.id = id; }
+  set(o) { const e = __n.mdlSet(this.id, JSON.stringify(__pose(o) || {})); if (e) __n.log('warning: model: ' + e); return this; }
+  pose(parts) { return this.set({ parts }); }
+  get info() { return JSON.parse(__n.mdlGet(this.id)); }
+  get exists() { return __n.mdlExists(this.id); }
+  get position() { const i = this.info; return i && i.position; } set position(v) { this.set({ position: v }); }
+  get rotation() { const i = this.info; return i && i.rotation; } set rotation(v) { this.set({ rotation: v }); }
+  get visible() { const i = this.info; return !!i && i.visible; } set visible(v) { this.set({ visible: !!v }); }
+  part(name) { const m = __n.mdlPart(this.id, String(name)); if (!m) return null;
+    return { matrix: m, position: { x: m[12], y: m[13], z: m[14] }, forward: { x: -m[8], y: -m[9], z: -m[10] }, up: { x: m[4], y: m[5], z: m[6] } }; }
+  remove() { __n.mdlRemove(this.id); }
+}
+const models = {
+  lastError: '',
+  define(name, def) { const e = __n.mdlDefine(String(name), JSON.stringify(def)); models.lastError = e || ''; if (e) { __n.log('warning: models.define: ' + e); return false; } return true; },
+  spawn(name, o) { const r = __n.mdlSpawn(String(name), JSON.stringify(__pose(o) || {})); if (r[0] === '!') { models.lastError = r.slice(1); __n.log('warning: models.spawn: ' + r.slice(1)); return null; } models.lastError = ''; return new Model(r); },
+  get(id) { return __n.mdlExists(String(id)) ? new Model(String(id)) : null; }
+};
+const particles = {
+  emit(o) { o = Object.assign({}, o); for (const k of ['position', 'direction', 'velocity', 'area']) if (k in o) o[k] = __v3(o[k]);
+    const e = __n.ptEmit(JSON.stringify(o)); if (e) { __n.log('warning: particles.emit: ' + e); return false; } return true; },
+  clear() { __n.ptClear(); },
+  get count() { return __n.ptCount(); }
+};
+globalThis.models = models; globalThis.particles = particles; globalThis.Model = Model;
 globalThis.__uiDispatch = function (json) {
   for (const e of JSON.parse(json)) {
     let stopped = false; const target = new UiNode(e.id);
@@ -341,6 +373,25 @@ static void bindNatives(JSContext* c) {
   FN("sndHas", 1, { SNDP(c) return JS_NewBool(c, A->has(S(c, a[0]))); });
   FN("sndVolume", 2, { SNDP(c) std::string b = S(c, a[0]); if (JS_IsNumber(a[1])) A->setVolume(b, (float)D(c, a[1])); return JS_NewFloat64(c, A->volume(b)); });
 #undef SNDP
+  // models and particles
+#define MDP(c) Models* M = W(c)->models(); if (!M) return JS_NewString(c, "no models here");
+  auto pj = [](JSContext* c, JSValueConst v) { nlohmann::json j = nlohmann::json::object(); try { j = nlohmann::json::parse(S(c, v)); } catch (...) {} return j; };
+  (void)pj;
+  FN("mdlDefine", 2, { MDP(c) nlohmann::json d; try { d = nlohmann::json::parse(S(c, a[1])); } catch (...) { return JS_NewString(c, "the model is not valid"); }
+    std::string e = M->define(S(c, a[0]), d); return JS_NewStringLen(c, e.data(), e.size()); });
+  FN("mdlSpawn", 2, { MDP(c) nlohmann::json o = nlohmann::json::object(); try { o = nlohmann::json::parse(S(c, a[1])); } catch (...) {}
+    std::string id, e = M->spawn(S(c, a[0]), o, id); std::string r = e.empty() ? id : "!" + e; return JS_NewStringLen(c, r.data(), r.size()); });
+  FN("mdlSet", 2, { MDP(c) nlohmann::json o = nlohmann::json::object(); try { o = nlohmann::json::parse(S(c, a[1])); } catch (...) { return JS_NewString(c, "not valid"); }
+    std::string e = M->set(S(c, a[0]), o); return JS_NewStringLen(c, e.data(), e.size()); });
+  FN("mdlGet", 1, { MDP(c) std::string r = M->get(S(c, a[0])).dump(); return JS_NewStringLen(c, r.data(), r.size()); });
+  FN("mdlRemove", 1, { MDP(c) M->remove(S(c, a[0])); return JS_UNDEFINED; });
+  FN("mdlExists", 1, { MDP(c) return JS_NewBool(c, M->exists(S(c, a[0]))); });
+  FN("mdlPart", 2, { MDP(c) bool ok = false; glm::mat4 m = M->partWorld(S(c, a[0]), S(c, a[1]), &ok); if (!ok) return JS_NULL;
+    JSValue r = JS_NewArray(c); for (int i = 0; i < 16; i++) JS_SetPropertyUint32(c, r, i, JS_NewFloat64(c, (&m[0][0])[i])); return r; });
+  FN("ptEmit", 1, { MDP(c) nlohmann::json o; try { o = nlohmann::json::parse(S(c, a[0])); } catch (...) { return JS_NewString(c, "not valid"); } std::string e = M->emit(o); return JS_NewStringLen(c, e.data(), e.size()); });
+  FN("ptClear", 0, { MDP(c) M->clearParticles(); return JS_UNDEFINED; });
+  FN("ptCount", 0, { MDP(c) return JS_NewInt32(c, M->particleCount()); });
+#undef MDP
   FN("uiError", 1, { logMsg("error: " + S(c, a[0]), LogKind::Error); return JS_UNDEFINED; });
 #undef UIP
   FN("psEnv", 1, { const char* v = std::getenv(S(c, a[0]).c_str()); return JS_NewBool(c, v && *v && std::string(v) != "0"); });

@@ -86,6 +86,7 @@ Game::~Game() { clear(); }
 
 void Game::clear() {
   if (audio_) audio_->stopAll();
+  if (models_) { models_->setBlocks(nullptr); models_->clear(); }
   if (scripts_ && started_) for (int b = 0; b < scripts_->count(); b++) scripts_->call(b, EV_Stop);   // last chance to save
   if (ui_) { ui_->setVoxels(nullptr); ui_->reset(); }
   if (scripts_) scripts_->shutdown();
@@ -113,6 +114,7 @@ bool Game::start() {
   float yawDeg = 0; glm::vec3 ps = playerStart(&yawDeg); yaw_ = glm::radians(yawDeg); pitch_ = 0;
   if (mode_ == "Spectator") specPos_ = ps + glm::vec3(0, 1.6f, 0); else player_ = phys_->addPlayer(ps);
   // scripts
+  if (!models_) models_.reset(new Models()); models_->clear(); models_->setBlocks(vox_.get());
   if (!ui_) ui_.reset(new Ui()); ui_->reset(); ui_->setAssets([this](const std::string& p) { return assetPath(p); });
   scripts_.reset(new ScriptHost()); scripts_->init(this);
   for (auto& op : objs_) { Obj& o = *op; if (o.a.script.empty()) continue;
@@ -249,6 +251,7 @@ void Game::update(float dt) {
     if (o.motion == Motion::Kinematic) phys_->moveKinematic(o.body, pos, q); else phys_->teleport(o.body, pos, q);
     o.lastWorld = W; }
   soundFrame();
+  if (models_) models_->update(dt);   // particles
   pressed_.clear(); scripts_->runJobs();
   if (restartRequested_) { logMsg("Restarting the level"); start(); }
 }
@@ -274,6 +277,7 @@ void Game::buildFrame(Frame& f, Camera& cam, float aspect) const {
   } else { camW = glm::translate(glm::mat4(1), eye) * glm::mat4_cast(quatYXZ({pitch_, yaw_, 0})); cam.view = glm::inverse(camW); cam.pos = eye; }
   cam.proj = glm::perspective(glm::radians(glm::clamp(level_.world.fov, 20.f, 150.f)), std::max(aspect, 0.01f), 0.05f, 2000.f);
   { glm::vec3 fw = -glm::vec3(glm::inverse(cam.view)[2]); fw.y = 0; f.shadowCenter = eye + (glm::length(fw) > 1e-3f ? glm::normalize(fw) * 25.f : glm::vec3(0)); }   // the shadow box covers what is in front of the camera
+  if (models_) models_->draw(f);
   if (vox_) { vox_->draw(f, cam);
     if (int lq = vox_->liquidAt(cam.pos)) { const BlockType& bt = vox_->block(lq); f.fog = true; f.world.fogColor = bt.color[0] * 0.5f; f.world.fogDensity = 0.09f; f.world.sky = f.world.fogColor; } }   // under water
   f.time = (float)time_;
@@ -405,7 +409,7 @@ std::string Game::createVoxels(const std::string& opts) {
   json o = json::object(); try { o = json::parse(opts); if (!o.is_object()) o = json::object(); } catch (...) { return "voxels.create: options are not valid"; }
   VoxelConfig c; c.minY = o.value("bottom", c.minY); c.maxY = o.value("top", c.maxY); c.viewDistance = o.value("viewDistance", c.viewDistance); c.seed = o.value("seed", c.seed); c.threads = o.value("threads", 0);
   if (o.contains("nearLayer") && o["nearLayer"].is_array() && o["nearLayer"].size() == 2) { c.fineLo = o["nearLayer"][0].get<int>(); c.fineHi = o["nearLayer"][1].get<int>(); }
-  vox_.reset(new VoxelWorld(c, phys_.get())); if (ui_) ui_->setVoxels(vox_.get()); return "";
+  vox_.reset(new VoxelWorld(c, phys_.get())); if (ui_) ui_->setVoxels(vox_.get()); if (models_) models_->setBlocks(vox_.get()); return "";
 }
 // the ear is the camera; sounds that follow an actor move with it (and stop when it is gone)
 void Game::soundFrame() {

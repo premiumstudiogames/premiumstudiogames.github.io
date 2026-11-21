@@ -77,12 +77,12 @@ void main(){
 // the block world: chunk meshes with per-vertex colour, corner shadow (AO) and an optional texture atlas
 static const char* VOX_VS = R"(#version 330 core
 layout(location=0) in vec3 aPos; layout(location=1) in vec2 aUv; layout(location=2) in vec4 aCol; layout(location=3) in vec4 aNrm; layout(location=4) in uvec2 aInfo;
-uniform mat4 uVP, uLightVP; uniform vec3 uOffset; uniform float uTime; uniform int uWater;
+uniform mat4 uVP, uLightVP, uModel, uNrmM; uniform vec3 uOffset, uTint; uniform float uTime; uniform int uWater;
 out vec3 vPos; out vec3 vNor; out vec4 vLight; out vec2 vUv; out vec4 vCol; flat out int vTile; flat out int vFlags;
-void main(){ vec3 w = aPos + uOffset; vNor = normalize(aNrm.xyz);
+void main(){ vec3 w = (uModel * vec4(aPos, 1.0)).xyz + uOffset; vNor = normalize(mat3(uNrmM) * aNrm.xyz);
   // liquid surfaces sit a little lower and move
   if(uWater==1 && vNor.y > 0.5) w.y += -0.05 + 0.018*sin(w.x*1.3 + uTime*1.4) + 0.014*sin(w.z*1.7 - uTime*1.1) + 0.008*sin((w.x+w.z)*3.1 + uTime*2.3);
-  vPos = w; vLight = uLightVP * vec4(w,1.0); vUv = aUv; vCol = aCol; vTile = int(aInfo.x); vFlags = int(aInfo.y & 255u); gl_Position = uVP * vec4(w,1.0); })";
+  vPos = w; vLight = uLightVP * vec4(w,1.0); vUv = aUv; vCol = vec4(aCol.rgb * uTint, aCol.a); vTile = int(aInfo.x); vFlags = int(aInfo.y & 255u); gl_Position = uVP * vec4(w,1.0); })";
 static const char* VOX_FS_HEAD = R"(#version 330 core
 in vec3 vPos; in vec3 vNor; in vec4 vLight; in vec2 vUv; in vec4 vCol; flat in int vTile; flat in int vFlags; out vec4 frag;
 uniform sampler2D uAtlas; uniform int uTiles; uniform float uTime;
@@ -252,7 +252,7 @@ void Renderer::shadowPass(const Frame& f, glm::mat4& lightVP, bool& has) {
   for (auto& it : f.draws) { if (!it.castShadow || !it.mesh || it.opacity < 0.5f || it.pickOnly || it.unlit) continue; M4(depth_, "uModel", it.model); glBindVertexArray(it.mesh->vao); glDrawElements(GL_TRIANGLES, it.mesh->count, GL_UNSIGNED_INT, nullptr); }
   if (!f.voxels.empty()) { glUseProgram(vdepth_); M4(vdepth_, "uVP", lightVP);
     glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, f.voxelAtlas); glUniform1i(U(vdepth_, "uAtlas"), 1); glUniform1i(U(vdepth_, "uTiles"), f.voxelAtlas ? f.voxelTiles : 0); glActiveTexture(GL_TEXTURE0);
-    for (auto& v : f.voxels) { M4(vdepth_, "uModel", glm::translate(glm::mat4(1), v.offset)); glBindVertexArray(v.vao); glDrawElements(GL_TRIANGLES, v.count, GL_UNSIGNED_INT, nullptr); } }
+    for (auto& v : f.voxels) { if (!v.castShadow) continue; M4(vdepth_, "uModel", glm::translate(glm::mat4(1), v.offset) * v.model); glBindVertexArray(v.vao); glDrawElements(GL_TRIANGLES, v.count, GL_UNSIGNED_INT, nullptr); } }
   glDisable(GL_POLYGON_OFFSET_FILL); has = true;
 }
 
@@ -283,10 +283,12 @@ void Renderer::render(const Frame& f, const Camera& cam, int w, int h, const Ren
         glUniform1fv(U(p, "uLInt"), n, in); glUniform1fv(U(p, "uLRange"), n, rg); glUniform1fv(U(p, "uLCos"), n, cs); }
     };
     // the block world first (opaque, large), then meshes
+    // a model's part: its matrix (and the one for its normals) and tint; chunks: none
+    auto voxModel = [&](unsigned p, const VoxelDraw& v) { M4(p, "uModel", v.model); M4(p, "uNrmM", glm::mat4(glm::transpose(glm::inverse(glm::mat3(v.model))))); V3(p, "uTint", v.tint); };
     auto voxCommon = [&](unsigned p, int water) { common(p); glUniform1f(U(p, "uTime"), f.time); glUniform1i(U(p, "uWater"), water);
       glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, f.voxelAtlas); glUniform1i(U(p, "uAtlas"), 1); glUniform1i(U(p, "uTiles"), f.voxelAtlas ? f.voxelTiles : 0); glActiveTexture(GL_TEXTURE0); };
     if (!f.voxels.empty()) { unsigned p = vox_; voxCommon(p, 0);
-      for (auto& v : f.voxels) { if (!v.visible) continue; V3(p, "uOffset", v.offset); glBindVertexArray(v.vao); glDrawElements(GL_TRIANGLES, v.count, GL_UNSIGNED_INT, nullptr); drawCalls++; triangles += v.count / 3; } }
+      for (auto& v : f.voxels) { if (!v.visible) continue; V3(p, "uOffset", v.offset); voxModel(p, v); glBindVertexArray(v.vao); glDrawElements(GL_TRIANGLES, v.count, GL_UNSIGNED_INT, nullptr); drawCalls++; triangles += v.count / 3; } }
     unsigned p = lit_;
     auto meshes = [&](int pass) {   // 0 opaque, 1 transparent
       common(p);
@@ -303,7 +305,7 @@ void Renderer::render(const Frame& f, const Camera& cam, int w, int h, const Ren
       std::vector<const VoxelDraw*> ws; for (auto& v : f.voxelWater) ws.push_back(&v);
       std::sort(ws.begin(), ws.end(), [&](const VoxelDraw* a, const VoxelDraw* b) { return glm::length((a->mn + a->mx) * 0.5f - cam.pos) > glm::length((b->mn + b->mx) * 0.5f - cam.pos); });
       unsigned w = wat_; voxCommon(w, 1); glDepthMask(GL_FALSE);
-      for (auto* v : ws) { V3(w, "uOffset", v->offset); glBindVertexArray(v->vao); glDrawElements(GL_TRIANGLES, v->count, GL_UNSIGNED_INT, nullptr); drawCalls++; triangles += v->count / 3; }
+      for (auto* v : ws) { V3(w, "uOffset", v->offset); voxModel(w, *v); glBindVertexArray(v->vao); glDrawElements(GL_TRIANGLES, v->count, GL_UNSIGNED_INT, nullptr); drawCalls++; triangles += v->count / 3; }
       glDepthMask(GL_TRUE); }
     meshes(1);
   }

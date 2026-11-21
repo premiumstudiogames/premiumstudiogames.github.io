@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(PremiumEngine VERSION 0.8.1 LANGUAGES C CXX)
+project(PremiumEngine VERSION 0.9.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -73,7 +73,7 @@ target_link_libraries(imgui PUBLIC SDL2::SDL2-static)
 
 # ---- the engine (shared by the editor and the game player)
 add_library(pgcore STATIC
-  src/gl.cpp src/project.cpp src/mesh.cpp src/renderer.cpp src/physics.cpp src/script.cpp src/game.cpp src/log.cpp src/ui_style.cpp src/app.cpp src/voxel.cpp src/arabic.cpp src/ui.cpp src/audio.cpp src/miniaudio_impl.c)
+  src/gl.cpp src/project.cpp src/mesh.cpp src/renderer.cpp src/physics.cpp src/script.cpp src/game.cpp src/log.cpp src/ui_style.cpp src/app.cpp src/voxel.cpp src/arabic.cpp src/ui.cpp src/audio.cpp src/miniaudio_impl.c src/models.cpp)
 target_include_directories(pgcore PUBLIC src third_party/gl ${stb_SOURCE_DIR} ${miniaudio_SOURCE_DIR})
 target_link_libraries(pgcore PUBLIC imgui Jolt qjs nlohmann_json::nlohmann_json glm::glm)
 if(UNIX)

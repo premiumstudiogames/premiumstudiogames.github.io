@@ -12,7 +12,7 @@ struct LightItem { int type = 1; glm::vec3 pos{0}, dir{0, -1, 0}, color{1}; floa
 struct LineItem { const GpuMesh* mesh = nullptr; glm::mat4 model{1}; glm::vec4 color{1}; bool onTop = false, wire = false; unsigned id = 0; };   // wire: draw a triangle mesh as wireframe
 struct TextItem { std::string text; glm::mat4 model{1}; glm::vec3 color{1}; float size = 0.6f; unsigned id = 0; };   // camera-independent text in the XY plane, centred
 enum ViewMode { VM_Lit = 0, VM_Unlit, VM_Wire, VM_Normals };
-struct VoxelDraw { unsigned vao = 0; int count = 0; glm::vec3 offset{0}, mn{0}, mx{0}; bool visible = true; };   // one chunk of the block world (world bounds; not visible = only casts shadows)
+struct VoxelDraw { unsigned vao = 0; int count = 0; glm::vec3 offset{0}, mn{0}, mx{0}; bool visible = true, castShadow = true; glm::mat4 model{1}; glm::vec3 tint{1}; };   // one chunk of the block world, or a part of a model (model matrix, colour tint); world bounds; not visible = only casts shadows
 struct Frame {
   std::vector<VoxelDraw> voxels, voxelWater; unsigned voxelAtlas = 0; int voxelTiles = 0;   // block world: solid chunks, liquid surfaces
   float time = 0;   // seconds (moving water)

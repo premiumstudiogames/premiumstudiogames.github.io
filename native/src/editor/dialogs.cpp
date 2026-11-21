@@ -66,6 +66,27 @@ input
   input.pressed('WheelUp')       the mouse wheel turned this frame ('WheelUp' / 'WheelDown'; onKey gets them too)
 
 world.camera                     .position, .forward (the direction the player looks)
+
+MODELS (models) - creatures, vehicles, held items: parts made of boxes (or your own vertices) that turn about their pivots
+  models.define('pig', { parts: {
+    body: { pivot: [0, 0.7, 0], boxes: [{ size: [0.6, 0.5, 1], color: '#f2a5a5' }] },
+    head: { parent: 'body', pivot: [0, 0.15, -0.5], boxes: [{ size: [0.5, 0.5, 0.45], pos: [0, 0, -0.22], tile: { top: 4, side: 3 } }] },
+    leg1: { parent: 'body', pivot: [-0.18, -0.25, -0.35], boxes: [{ size: [0.2, 0.45, 0.2], pos: [0, -0.225, 0], block: 5 }] } } })
+  a part: pivot (from its parent's), parent, rotation (rest), boxes, mesh;  { boxes: [...] } alone = one part named 'body'
+  a box: size, pos (centre, from the pivot), rotation, color / colors: { top, side, bottom } / tile: n or { top, side, bottom }
+         / block: id (that block's faces), glow (0 .. 2), repeat: true (the tile repeats every metre)
+  mesh: { positions: [x, y, z, ...], indices, normals, colors: [r, g, b, ...], uvs: [u, v, ...], color, tile, glow }
+  const m = models.spawn('pig', { position: [x, y, z], rotation: [0, yaw, 0], scale: 1 })    null + models.lastError if not
+  m.set({ position, rotation, scale, visible, tint: '#ff8080', shadow, parts: { leg1: { rotation: [0.5, 0, 0] } } })
+  m.pose({ leg1: { rotation: [a, 0, 0], position, scale, visible } })      every frame, all the parts in one call
+  m.part('head') -> { position, forward, up, matrix }     m.position  m.rotation  m.visible  m.remove()
+  rotations in radians, order X Y Z (like three.js); hiding a part hides its children. Lit and shadowed like the blocks.
+
+PARTICLES - small blocks that fly, fall, bounce on blocks and shrink (pieces of a broken block, smoke, sparks)
+  particles.emit({ position: [x, y, z], count: 12, block: id | tile: n | color: '#hex' | colors: [...],
+    speed: [1, 3], direction: [0, 1, 0], spread: 1 (0 = straight, 1 = everywhere), velocity: [x, y, z], area: [x, y, z],
+    gravity: -9.81, drag: 0.4, life: [0.6, 1.2], size: [0.08, 0.14], spin: [0, 6], bounce: 0.25, collide: true, shrink: true, glow: 0 .. 2 })
+  particles.clear()   particles.count
 )"   // (MSVC: one string literal piece is at most 16 KB)
 R"(
 SOUND (sound) - files (wav, ogg, mp3, flac) next to the project, or sounds made by code; 3D: the ear is the camera

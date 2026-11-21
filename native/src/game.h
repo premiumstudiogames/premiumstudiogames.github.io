@@ -14,6 +14,7 @@
 #include "voxel.h"
 #include "ui.h"
 #include "audio.h"
+#include "models.h"
 
 struct ImDrawList;
 namespace pge {
@@ -85,6 +86,7 @@ public:
   void trophy(const std::string& id) override;
   Ui* ui() override { return ui_.get(); }
   Audio* audio() override;
+  Models* models() override { return models_.get(); }
   void pauseSound(bool on) { if (audio_) audio_->pause(on); }   // the engine's pause menu / the window lost focus
   std::string playerGet() override;
   const std::vector<std::pair<std::string, std::string>>& hudLines() const { return hud_; }
@@ -103,7 +105,7 @@ private:
   std::string mode_; uint32_t player_ = NO_BODY; float yaw_ = 0, pitch_ = 0; glm::vec3 specPos_{0, 2, 5}, moveDir_{0};
   double time_ = 0; bool restartRequested_ = false, started_ = false;
   std::set<std::string> keys_, pressed_; glm::vec4 mouseState_{0}; float lookDx_ = 0, lookDy_ = 0;
-  std::set<std::string> trophies_; std::unique_ptr<Ui> ui_; std::unique_ptr<Audio> audio_; bool wasModal_ = false;
+  std::set<std::string> trophies_; std::unique_ptr<Ui> ui_; std::unique_ptr<Audio> audio_; std::unique_ptr<Models> models_; bool wasModal_ = false;
   // player movement (scripts can change it: world.player.set); the defaults are the engine's usual ones
   struct Tune { bool fly = false, doubleTapRun = false; float walk = 5, run = 9, sneak = 2, jump = 5.2f, flySpeed = 10, flyRun = 1.6f, flyClimb = 6, gravity = 0, accel = 0;
     std::string runKey = "Shift", sneakKey = ""; } tune_; bool grounded_ = false, running_ = false, sneaking_ = false, wHeld_ = false, tapRun_ = false; double wTap_ = -1;

@@ -8,6 +8,7 @@
 #include "arabic.h"
 #include "ui.h"
 #include "audio.h"
+#include "models.h"
 #include <imgui.h>
 #include <chrono>
 #include <cstdio>
@@ -500,6 +501,65 @@ function onStart() {
     CHECK(A->count() == 1, ("finished sounds go; the loop stays: " + std::to_string(A->count())).c_str());
     g.start(); run(g, 0.02f); CHECK(g.audio()->count() == 3, "restarting the level stops the old sounds (the new ones play)");
     g_headlessAudio = false;
+  }
+
+  std::printf("models and particles\n");
+  {
+    Models M;
+    json pig = {{"parts", {
+      {"body", {{"pivot", {0, 0.7, 0}}, {"boxes", json::array({json{{"size", {0.6, 0.5, 1.0}}, {"color", "#f0a0a0"}}})}}},
+      {"head", {{"parent", "body"}, {"pivot", {0, 0.15, -0.5}}, {"boxes", json::array({json{{"size", {0.5, 0.5, 0.4}}, {"pos", {0, 0, -0.2}}, {"tile", {{"side", 3}, {"top", 4}}}}})}}},
+      {"legFL", {{"parent", "body"}, {"pivot", {-0.18, -0.25, -0.35}}, {"boxes", json::array({json{{"size", {0.18, 0.45, 0.18}}, {"pos", {0, -0.225, 0}}}})}}},
+      {"legFR", {{"parent", "body"}, {"pivot", {0.18, -0.25, -0.35}}, {"boxes", json::array({json{{"size", {0.18, 0.45, 0.18}}, {"pos", {0, -0.225, 0}}}})}}},
+      {"tri", {{"parent", "head"}, {"mesh", {{"positions", {0, 0, 0, 0.1, 0, 0, 0, 0.1, 0}}, {"color", "#ffffff"}}}}}}}};
+    CHECK(M.define("pig", pig).empty(), "a model of parts: boxes with colours and tiles, a part of vertices");
+    std::string id; CHECK(M.spawn("pig", {{"position", {10, 0, 5}}}, id).empty() && M.drawCount() == 5, "spawned: each part drawn");
+    bool ok; glm::vec3 h = glm::vec3(M.partWorld(id, "head", &ok)[3]);
+    CHECK(ok && glm::distance(h, glm::vec3(10, 0.85f, 4.5f)) < 1e-4f, "the head sits at its pivot on the body");
+    M.set(id, {{"rotation", {0, 1.5707963, 0}}}); h = glm::vec3(M.partWorld(id, "head")[3]);
+    CHECK(glm::distance(h, glm::vec3(9.5f, 0.85f, 5.f)) < 1e-3f, "turning the model turns its parts with it (like three.js: radians)");
+    M.set(id, {{"rotation", {0, 0, 0}}, {"parts", {{"legFL", {{"rotation", {0.5, 0, 0}}}}}}});
+    glm::vec3 foot = glm::vec3(M.partWorld(id, "legFL") * glm::vec4(0, -0.45f, 0, 1)), still = glm::vec3(M.partWorld(id, "legFR") * glm::vec4(0, -0.45f, 0, 1));
+    CHECK(foot.z < still.z - 0.1f && std::abs(still.z - (5 - 0.35f)) < 1e-4f, "a leg turns about its hip, the other stays");
+    CHECK(!M.set(id, {{"parts", {{"tail", {{"rotation", {1, 0, 0}}}}}}}).empty(), "a part that isn't there says so");
+    M.set(id, {{"parts", {{"head", {{"visible", false}}}}}}); CHECK(M.drawCount() == 3, "hiding a part hides its children");
+    CHECK(!M.define("bad", {{"parts", {{"a", {{"parent", "nope"}}}}}}).empty() && !M.spawn("nope", json::object(), id).empty(), "bad models say what is wrong");
+    M.remove(id); CHECK(M.instanceCount() == 0 && M.drawCount() == 0, "removed");
+
+    Physics ph; ph.init(-9.81f);
+    VoxelConfig cfg; cfg.minY = -8; cfg.maxY = 24; cfg.fineLo = -4; cfg.fineHi = 8; cfg.viewDistance = 1; cfg.threads = 2;
+    VoxelWorld w(cfg, &ph); BlockType rock; w.defineBlock(3, rock);
+    w.setBuiltinGenerator("flat", R"({"ground": 0, "top": 3, "dirt": 3, "stone": 3})"); w.update({8, 0, 8}); w.waitIdle();
+    M.setBlocks(&w);
+    CHECK(M.emit({{"position", {8, 3, 8}}, {"count", 40}, {"block", 3}, {"life", {3, 3}}, {"speed", {1, 2}}}).empty() && M.particleCount() == 40, "particles from a block");
+    for (int i = 0; i < 120; i++) M.update(1.f / 60);
+    int low = 0, above = 0; (void)above;
+    M.emit({{"position", {8, 3, 8}}, {"count", 1}, {"speed", 0}, {"life", 5}, {"size", 0.1}});
+    for (int i = 0; i < 180; i++) M.update(1.f / 60);
+    CHECK(M.particleCount() == 1, "the others are gone when their life is over");
+    { json dummy; (void)dummy; }
+    Frame f; M.draw(f); CHECK(!f.voxels.empty(), "particles are drawn with the block world");
+    (void)low;
+    M.clearParticles(); CHECK(M.particleCount() == 0, "particles.clear");
+
+    Project q = makeTemplate("Blank", "T");
+    q.scripts["SC_M"] = {"SC_M", R"JS(
+let m, t = 0;
+function onStart() {
+  models.define('box', { parts: { base: { boxes: [{ size: [1, 1, 1], color: '#44aa66' }] }, lid: { parent: 'base', pivot: [0, 0.5, 0.5], boxes: [{ size: [1, 0.1, 1], pos: [0, 0.05, -0.5] }] } } });
+  m = models.spawn('box', { position: { x: 1, y: 2, z: 3 } });
+  world.vars.bad = models.spawn('nothing') === null;
+  particles.emit({ position: [0, 5, 0], count: 5, color: '#ffaa00', glow: 1.5, collide: false });
+}
+function onUpdate(dt) { t += dt; m.pose({ lid: { rotation: [t, 0, 0] } }); const p = m.part('lid'); world.vars.lidY = p.position.y; }
+)JS"};
+    Actor ma = newActor("Empty", "Chest"); ma.script = "SC_M"; q.levels[0].second.actors.push_back(ma);
+    Game g(q, q.startLevel); logClear(); CHECK(g.start(), "a game with models starts"); run(g, 0.5f);
+    Models* GM = g.models(); bool ok2 = false; glm::mat4 lid = GM ? GM->partWorld("m1", "lid", &ok2) : glm::mat4(1);
+    CHECK(GM && GM->instanceCount() == 1 && ok2 && glm::distance(glm::vec3(lid[3]), glm::vec3(1, 2.5f, 3.5f)) < 1e-4f, "models.spawn from a script; the lid's hinge stays at its pivot");
+    CHECK(glm::vec3(lid * glm::vec4(0, 0, -1, 1)).y > 2.7f, "the lid opens (turned every frame by the script)");
+    CHECK(hasLog("models.spawn: no model 'nothing'"), "a model that isn't there is a warning");
+    CHECK(GM->particleCount() == 5, "particles.emit from a script");
   }
 
   std::printf("\n%d passed, %d failed\n", passes, fails);
