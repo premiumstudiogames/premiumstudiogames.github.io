@@ -400,7 +400,8 @@ function playFromOutside(key) {
   launchWithUpdate(key).catch(() => createMain());
 }
 
-function openExternal(url) { if (/^https?:\/\//.test(url)) shell.openExternal(url); }
+// web links open in the PC's browser - never from console mode (nothing in the console takes the player to the desktop)
+function openExternal(url) { if (consoleOn) return; if (/^https?:\/\//.test(url)) shell.openExternal(url); }
 
 // Before starting a game that updates from its own manifest, pull the newest version (like the game's standalone app does).
 /* ---------------- screenshots (F12) and the in-game overlay (Shift+Tab), like Steam ---------------- */
@@ -459,7 +460,7 @@ ipcMain.handle('ps:screenshots', guard(async gid => {
   const { nativeImage } = require('electron');
   return uniq.map(f => { try { return { file: f, url: mediaUrl('shot', f), name: path.basename(f, '.png'), thumb: nativeImage.createFromPath(f).resize({ width: 360 }).toDataURL() }; } catch (e) { return null; } }).filter(Boolean);
 }));
-ipcMain.handle('ps:openShots', guard(async file => { if (typeof file === 'string' && path.resolve(file).startsWith(SHOTS())) shell.showItemInFolder(file); else { await fsp.mkdir(SHOTS(), { recursive: true }); shell.openPath(SHOTS()); } return true; }));
+ipcMain.handle('ps:openShots', guard(async file => { if (consoleOn) throw new Error('الصور تنفتح داخل الكونسل'); if (typeof file === 'string' && path.resolve(file).startsWith(SHOTS())) shell.showItemInFolder(file); else { await fsp.mkdir(SHOTS(), { recursive: true }); shell.openPath(SHOTS()); } return true; }));
 
 // game recording (F9 starts, F9 again saves), like Steam's — saved to Videos\Premium Games\<game>
 let recWin = null, recKey = '', recT = null, recLive = false, recStopAsked = false;
@@ -493,7 +494,7 @@ ipcMain.on('rec:done', async (e, bytes) => {
     await fsp.writeFile(path.join(dir, `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())} ${pad(t.getHours())}.${pad(t.getMinutes())}.${pad(t.getSeconds())}.webm`), Buffer.from(bytes));
     flash('🎬 انحفظ المقطع'); } catch (er) { flash('ما انحفظ المقطع'); }
 });
-ipcMain.handle('ps:openClips', guard(async () => { await fsp.mkdir(CLIPS(), { recursive: true }); shell.openPath(CLIPS()); return true; }));
+ipcMain.handle('ps:openClips', guard(async () => { if (consoleOn) throw new Error('المقاطع تنفتح داخل الكونسل'); await fsp.mkdir(CLIPS(), { recursive: true }); shell.openPath(CLIPS()); return true; }));
 
 // small notice at the bottom corner, above any game
 let flashWin = null, flashT = null;

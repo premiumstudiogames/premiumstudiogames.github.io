@@ -1400,6 +1400,41 @@ $("#codeForm").addEventListener("submit", async ev => { ev.preventDefault();
 });
 
 /* ---------------- buy flow ---------------- */
+// the price to pay now: a discount code, else the member discount or the sale (whichever is bigger) - the PC checkout and the console's
+function buyQuote(g, e, applied){
+  const onSale = !applied && e.price > 0 && !!saleOf(g.id), plusP = !applied && e.price > 0 && plusTier() ? (PLUSCFG.discount || 0) : 0;
+  const plus = plusP > 0 && plusP >= (onSale ? saleOf(g.id).pct : 0), sale = !plus && onSale;
+  const price = applied ? finalPrice(e.price, applied.pct) : plus ? finalPrice(e.price, plusP) : sale ? finalPrice(e.price, saleOf(g.id).pct) : e.price;
+  return {price:Math.round(price * 100) / 100, full:e.price, plus, sale, pct:applied ? applied.pct : plus ? plusP : sale ? saleOf(g.id).pct : 0};
+}
+async function checkCode(g, code){
+  const id = normCode(code); if (!id) throw "اكتب الكود";
+  const s = await getDoc(doc(fs, "codes", id)); const c = s.exists() ? s.data() : null;
+  if (!c || !c.active) throw "الكود غلط أو موقوف";
+  if (c.expires && tsMs(c.expires) < Date.now()) throw "الكود منتهي";
+  if (c.game && c.game !== g.id) throw "الكود ما يشتغل على هذي اللعبة";
+  return {id, pct:c.pct};
+}
+async function placeOrder(g, e, applied){
+  if (!user) throw new Error("سجّل دخولك أول");
+  const q = buyQuote(g, e, applied), status = e.price === 0 ? "free" : q.price === 0 ? "granted" : "pending";
+  const data = {game:g.id, edition:e.id, price:q.price, status, at:serverTimestamp()}; if (applied) data.code = applied.id; else if (q.plus) data.plus = true; else if (q.sale) data.sale = true;
+  await setDoc(doc(fs, "users", user.uid, "library", g.id + "__" + e.id), data);
+  return status;
+}
+// a new account (the PC's sign-up form and the console's use the same checks)
+async function createAccount(o){
+  const m = String(o.mail || "").trim().toLowerCase(), p = String(o.pass || ""), un = normUname(o.uname), n = String(o.name || "").trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(m)) throw new Error("اكتب إيميل صحيح، مثل name@example.com");
+  if (p.length < 6) throw new Error("كلمة السر لازم تكون 6 أحرف أو أكثر");
+  if (!UNAME_RE.test(un)) throw new Error("اسم المستخدم من 3 إلى 20 حرف: إنجليزي صغير وأرقام و _ و .");
+  if (n.length < 2) throw new Error("اكتب اسم لاعب من حرفين أو أكثر");
+  if (p !== String(o.pass2 || "")) throw new Error("كلمتين السر مو متطابقة");
+  if (!o.agree) throw new Error("لازم توافق عشان نكمل التسجيل");
+  if (!(await unameFree(un))) throw new Error("اسم المستخدم هذا مأخوذ، اختر غيره");
+  try { pendingName = n; pendingUname = un; const c = await createUserWithEmailAndPassword(auth, m, p); await updateProfile(c.user, {displayName:n}); await ensureProfile(c.user, n, un); sendEmailVerification(c.user).catch(()=>{}); }
+  catch(e) { throw new Error(authErr(e)); }
+}
 function buy(g, e){
   if (!user) return showAuth("login", "سجّل دخولك عشان تضيف ألعاب لمكتبتك.");
   let applied = null;   // {id, pct}
@@ -1483,6 +1518,10 @@ function bigPicture(){ if (!BP) BP = makeBP({$, esc, GAMES, ownedEds, instOf, ED
   plusClaim, plusOrder,
   accounts:() => accList().sort((a, b) => (b.at || 0) - (a.at || 0)).map(a => ({...a, cur:!!(user && user.uid === a.uid)})),
   switchUser:accSwitch, forgetUser:accForget, logout:() => signOut(auth), signUp:() => showAuth("signup"), authErr,
+  // the console does these itself (it never sends the player to the PC's pages)
+  createAccount, quote:(gid, eid, applied) => { const g = byId(gid), e = g && g.editions.find(x => x.id === eid); return g && e ? buyQuote(g, e, applied) : null; },
+  checkCode:(gid, code) => checkCode(byId(gid), code), order:(gid, eid, applied) => { const g = byId(gid), e = g && g.editions.find(x => x.id === eid); if (!g || !e) throw new Error("النسخة مو موجودة"); return placeOrder(g, e, applied); },
+  parental:() => PARENTAL, setParental:async o => { PARENTAL = await PS.setParental(o); document.body.classList.toggle("kidmode", !!PARENTAL.on); return PARENTAL; },
   signIn:(m, p) => signInWithEmailAndPassword(auth, String(m).trim().toLowerCase(), p),
   padConnected:async () => { try { if (PS && PS.getSettings && (await PS.getSettings()).consolePad && document.hasFocus()) { location.hash = "#bigpicture"; } } catch(e) {} },
   state:() => ({user, PROFILE, FRIENDS, PLAY, RUNNING, PROGRESS, WISH, PARENTAL, online:isOnline, playing:playingNow}),

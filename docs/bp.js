@@ -166,7 +166,7 @@ const CF = () => PS && PS.consoleFiles;   // the console's own files on the PC (
     if (st.prog) return `<button class="ps-btn" data-bp="act" data-a="none" data-g="${g.id}">يحمّل <span class="num">${H.pct(st.prog)}%</span></button>`;
     if (st.inst) return `<button class="ps-btn play" data-bp="act" data-a="play" data-g="${g.id}" data-e="${st.ed}">العب اللعبة</button>`;
     if (st.ed) return `<button class="ps-btn" data-bp="act" data-a="install" data-g="${g.id}" data-e="${st.ed}">تنزيل</button>`;
-    return `<button class="ps-btn" data-bp="buy" data-g="${g.id}">عرض في المتجر</button>`; }
+    return `<button class="ps-btn" data-bp="buy" data-g="${g.id}">${H.lowPrice(g) ? "اشترها" : "أضفها لمكتبتك"}</button>`; }
 
   /* ---------- the home row ---------- */
   function rowItems(){
@@ -429,7 +429,7 @@ const CF = () => PS && PS.consoleFiles;   // the console's own files on the PC (
         + (s.user ? `<button class="ps-set" data-bp="uforget" data-uid="${esc(s.user.uid)}"><span><b>إزالة حسابك من هذا الجهاز</b><small>يحتاج كلمة السر عشان ترجّعه</small></span><i class="val">✕</i></button>` : ""); }
     else if (c[0] === "family") { const pr = s.PARENTAL || ST.parental || {};
       body = row("الرقابة الأبوية", pr.on ? "شغّالة: الألعاب المسموحة فقط، ووقت لعب محدد" : "موقفة", pr.on ? "شغّالة" : "موقفة")
-        + `<button class="ps-set" data-bp="acctpage"><span><b>تعديل الرقابة الأبوية</b><small>تنفتح صفحة الحساب في التطبيق. تحتاج الرمز السري لو كانت شغّالة</small></span><i class="val">${G("a")}</i></button>`; }
+        + `<button class="ps-set" data-bp="acctpage"><span><b>تعديل الرقابة الأبوية</b><small>الألعاب المسموحة ووقت اللعب. تحتاج الرقم السري لو كانت شغّالة</small></span><i class="val">${G("a")}</i></button>`; }
     else if (c[0] === "system") body = (PS ? sw("consoleBoot", "شغّل الكمبيوتر على وضع الكونسل", "أول ما يشتغل الويندوز يفتح هالشاشة، مثل جهاز ألعاب") + sw("startup", "يشتغل مع الويندوز", "التطبيق يجهز بالخلفية عشان ألعابك تفتح بسرعة") + sw("consolePad", "افتح وضع الكونسل لما توصل يد تحكم", "توصّل اليد وتطلع لك هالشاشة على طول") : "")
         + row("إصدار النظام", "Premium Games", `<span class="num ltr">${esc((PS && PS.version) || "—")}</span>`)
         + `<button class="ps-set" data-bp="exit"><span><b>اطلع من وضع الكونسل</b><small>ترجع لشاشة المتجر العادية</small></span><i class="val">⏏</i></button>`;
@@ -466,6 +466,8 @@ const CF = () => PS && PS.consoleFiles;   // the console's own files on the PC (
     let ok = false; try { ok = await H.switchUser(uid); } catch(e) {}
     if (ok && await waitUser(uid)) return enterHome();
     busy = ""; fresh = true; push({t:"login", email:a.email || "", pass:"", locked:true, uid}); }
+  const coEds = g => g.editions.filter(e => !ownedEds(g.id).includes(e.id));
+  const coEd = L => { const eds = coEds(H.byId(L.g)); return eds.find(x => x.id === L.e) || eds[0]; };
   async function loginGo(L){ if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(L.email.trim())) { L.err = "اكتب إيميل صحيح"; beep("err"); return draw(); }
     if (L.pass.length < 6) { L.err = "كلمة السر 6 أحرف أو أكثر"; beep("err"); return draw(); }
     busy = "جاري تسجيل الدخول…"; L.err = ""; draw();
@@ -487,7 +489,7 @@ const CF = () => PS && PS.consoleFiles;   // the console's own files on the PC (
         ${inList ? `<button class="ps-mi" data-bp="rmfrom" data-g="${g.id}" data-id="${inList}">احذف من هذي القائمة</button>` : ""}
         ${st.inst && PS ? `<button class="ps-mi" data-bp="mact" data-a="verify" data-k="${st.k}">تحقّق من ملفات اللعبة</button><button class="ps-mi danger" data-bp="mact" data-a="uninstall" data-k="${st.k}">احذف</button>` : ""}
         ${st.run ? `<button class="ps-mi danger" data-bp="act" data-a="stop" data-g="${g.id}" data-e="${st.ed}">إغلاق اللعبة</button>` : ""}
-        <button class="ps-mi" data-bp="buy" data-g="${g.id}">صفحة المتجر</button></div>`; }
+        <button class="ps-mi" data-bp="buy" data-g="${g.id}">اشترِ نسخة</button></div>`; }
     if (L.t === "lists") { const lists = LISTS.all();
       return `<div class="ps-dlg"><h2>أضف إلى قائمة</h2>${lists.map(l => `<button class="ps-mi${l.games.includes(L.g) ? " sel" : ""}" data-bp="toggleList" data-id="${l.id}" data-g="${L.g}">${esc(l.name)} <small class="num">(${l.games.length})</small></button>`).join("")}<button class="ps-mi" data-bp="newlist" data-g="${L.g}">＋ قائمة جديدة</button></div>`; }
     if (L.t === "listmenu") return `<div class="ps-menu"><h3>القائمة</h3><button class="ps-mi" data-bp="renlist" data-id="${L.id}">غيّر الاسم</button><button class="ps-mi danger" data-bp="dellist" data-id="${L.id}">احذف القائمة</button></div>`;
@@ -509,6 +511,35 @@ const CF = () => PS && PS.consoleFiles;   // the console's own files on the PC (
         <button class="ps-field" data-bp="lfield" data-f="pass"><small>كلمة السر</small><span class="ltr">${L.pass ? "•".repeat(L.pass.length) : "<i>••••••</i>"}</span></button>
         ${L.err ? `<p class="err">${esc(L.err)}</p>` : ""}
         <button class="ps-mi ok" data-bp="lgo">تسجيل الدخول</button><button class="ps-mi" data-bp="lnew">ما عندك حساب؟ أنشئ حساب جديد</button></div>`;
+    // buying, inside the console (like the PC's checkout: editions, the sale / member price, a discount code)
+    if (L.t === "checkout") { const g = H.byId(L.g), eds = coEds(g), e = coEd(L);
+      if (!e) return `<div class="ps-dlg"><h2>${esc(g.en || g.title)}</h2><p>كل نسخها في مكتبتك.</p><button class="ps-mi" data-bp="back">رجوع</button></div>`;
+      const q = H.quote(g.id, e.id, L.applied) || {price:e.price, full:e.price, pct:0};
+      return `<div class="ps-dlg login"><h2>${esc(g.en || g.title)}</h2>
+        ${eds.length > 1 ? eds.map(x => `<button class="ps-mi${x.id === e.id ? " ok" : ""}" data-bp="coed" data-e="${x.id}">${esc(x.name)} · <span class="num">${x.price ? money(x.price) : "مجاني"}</span></button>`).join("") : `<p>${esc(e.name)}</p>`}
+        <p class="ps-price"><b class="num">${e.price ? money(q.price) : "مجاني"}</b>${q.price !== q.full ? ` <s class="num">${money(q.full)}</s>` : ""}${q.pct ? ` · خصم <bdi class="num">${q.pct}%</bdi>${q.plus ? " بلس" : ""}` : ""}</p>
+        ${e.price ? `<button class="ps-field" data-bp="cocode"><small>كود الخصم</small><span class="ltr">${L.applied ? esc(L.applied.id) + " ✓" : "<i>اختياري</i>"}</span></button>` : ""}
+        <p>${!e.price ? "تنضاف لمكتبتك على طول." : q.price === 0 ? "الكود يخلي اللعبة مجانية. تنضاف لمكتبتك على طول." : "الدفع الإلكتروني ما تفعّل للحين. لما تأكد الطلب يوصل للاستوديو بحالة «بانتظار الدفع»، وتقدر تلعب أول ما يتأكد الدفع."}</p>
+        ${L.err ? `<p class="err">${esc(L.err)}</p>` : ""}
+        <button class="ps-mi ok" data-bp="cogo">${L.busy ? "لحظة…" : e.price && q.price ? "تأكيد الطلب" : "أضف للمكتبة"}</button><button class="ps-mi" data-bp="back">إلغاء</button></div>`; }
+    // a new account, inside the console
+    if (L.t === "signup") { const f = (k, label, v, ph, cls) => `<button class="ps-field" data-bp="sfield" data-f="${k}"><small>${label}</small><span class="${cls || ""}">${v || `<i>${ph}</i>`}</span></button>`;
+      return `<div class="ps-dlg login"><h2>حساب جديد</h2>
+        ${f("name", "اسم اللاعب", esc(L.name || ""), "اسمك في الألعاب")}${f("uname", "اسم المستخدم", esc(L.uname || ""), "name_123", "ltr")}${f("mail", "الإيميل", esc(L.mail || ""), "name@example.com", "ltr")}
+        ${f("pass", "كلمة السر", L.pass ? "•".repeat(L.pass.length) : "", "6 أحرف أو أكثر", "ltr")}${f("pass2", "أعد كلمة السر", L.pass2 ? "•".repeat(L.pass2.length) : "", "نفسها مرة ثانية", "ltr")}
+        <button class="ps-mi${L.agree ? " ok" : ""}" data-bp="sagree">${L.agree ? "☑" : "☐"} أوافق على شروط الاستخدام وسياسة الخصوصية</button>
+        ${L.err ? `<p class="err">${esc(L.err)}</p>` : ""}
+        <button class="ps-mi ok" data-bp="sgo">${L.busy ? "ينشئ حسابك…" : "أنشئ الحساب"}</button><button class="ps-mi" data-bp="back">إلغاء</button></div>`; }
+    // parental controls for this console (PIN, allowed games, minutes a day)
+    if (L.t === "parental") { const p = H.parental() || {on:false, hasPin:false, allowed:[], daily:0, used:0};
+      return `<div class="ps-dlg login"><h2>الرقابة الأبوية</h2><p>${p.on ? `شغّالة · لعب اليوم <span class="num">${p.used || 0}</span> دقيقة` : "اختر الألعاب المسموحة ووقت اللعب باليوم."}</p>
+        <button class="ps-field" data-bp="pcpin"><small>${p.hasPin ? "الرقم السري" : "اختر رقم سري (4 لـ 8 أرقام)"}</small><span class="ltr">${L.pin ? "•".repeat(L.pin.length) : "<i>••••</i>"}</span></button>
+        <div class="ps-mi"><span>دقائق اللعب باليوم: <b class="num">${L.daily ? L.daily : "بدون حد"}</b></span></div>
+        <button class="ps-mi" data-bp="pcday" data-d="-15">− 15 دقيقة</button><button class="ps-mi" data-bp="pcday" data-d="15">+ 15 دقيقة</button>
+        <p>الألعاب المسموحة (إذا ما اخترت شي، كلها مسموحة):</p>
+        ${GAMES.filter(g => !g.hidden).map(g => `<button class="ps-mi${L.allowed.includes(g.id) ? " ok" : ""}" data-bp="pcg" data-g="${g.id}">${L.allowed.includes(g.id) ? "☑" : "☐"} ${esc(g.en || g.title)}</button>`).join("")}
+        ${L.err ? `<p class="err">${esc(L.err)}</p>` : ""}
+        <button class="ps-mi ok" data-bp="pcsave" data-on="1">${p.on ? "احفظ" : "شغّل الرقابة"}</button>${p.on ? '<button class="ps-mi danger" data-bp="pcsave" data-on="0">وقّفها</button>' : ""}<button class="ps-mi" data-bp="back">رجوع</button></div>`; }
     if (L.t === "confirm") return `<div class="ps-dlg"><h2>${esc(L.title)}</h2><p>${esc(L.text || "")}</p><button class="ps-mi danger" data-bp="yes">${esc(L.ok)}</button><button class="ps-mi" data-bp="back">إلغاء</button></div>`;
     if (L.t === "view") { const x = SHOTS[L.i]; return `<div class="ps-view"><img src="${x.url || x.thumb}" alt=""><div class="cap">${esc(x.name)} · <span class="num">${L.i + 1}/${SHOTS.length}</span></div></div>`; }
     // a clip plays here, in the console: A play / pause, left / right 10 seconds, LB / RB the clip before / after
@@ -714,7 +745,7 @@ const CF = () => PS && PS.consoleFiles;   // the console's own files on the PC (
     if (k === "lfield") { const L = top, f = el.dataset.f;
       return push({t:"kbd", v:L[f] || "", lang:"en", mail:f === "email", secret:f === "pass", ph:f === "email" ? "الإيميل" : "كلمة السر", done:v => { L[f] = f === "email" ? v.trim() : v; L.err = ""; }}); }
     if (k === "lgo") return loginGo(top);
-    if (k === "lnew") { close(); H.signUp(); return; }
+    if (k === "lnew") { stack.pop(); return push({t:"signup"}); }   // a new account, here in the console
     if (k === "me") return push({t:"me"});
     if (k === "switchu") { pages = [{t:"users"}]; stack = []; fresh = true; beep("open"); return draw(); }
     if (k === "logout") { pages = [{t:"users"}]; stack = []; fresh = true; try { await H.logout(); } catch(e) {} beep("back"); return draw(); }
@@ -723,7 +754,28 @@ const CF = () => PS && PS.consoleFiles;   // the console's own files on the PC (
     if (k === "gpage") { stack = []; return openPage({t:"game", g:el.dataset.g}); }
     if (k === "soon") { if (!el.dataset.s) return; stack = []; return openPage({t:"soon", s:el.dataset.s}); }
     if (k === "back") return pop();
-    if (k === "buy") { close(); location.hash = el.dataset.g; return; }
+    if (k === "buy") { if (!S().user) return push({t:"login", email:"", pass:""}); return push({t:"checkout", g:el.dataset.g}); }   // bought here, in the console
+    if (k === "coed") { top.e = el.dataset.e; top.applied = null; top.err = ""; beep("move"); return draw(); }
+    if (k === "cocode") { const L = top; return push({t:"kbd", v:L.applied ? L.applied.id : "", lang:"en", ph:"كود الخصم", done:async v => {
+      if (!v.trim()) { L.applied = null; return draw(); } try { L.applied = await H.checkCode(L.g, v); L.err = ""; beep("ok"); } catch(x) { L.applied = null; L.err = typeof x === "string" ? x : "ما قدرت أتحقق من الكود"; beep("err"); } draw(); }}); }
+    if (k === "cogo") { const L = top, e = coEd(L); if (L.busy || !e) return; L.busy = true; L.err = ""; draw();
+      try { const st = await H.order(L.g, e.id, L.applied); stack = stack.filter(x => x !== L); beep("ok"); notify(I.lib, st === "pending" ? "وصل طلبك ✓ تلقاه في مكتبتك" : "انضافت لمكتبتك ✓"); }
+      catch(x) { L.err = "ما انحفظ الطلب (" + (x && (x.code || x.message) || "خطأ") + "). جرّب مرة ثانية."; beep("err"); }
+      L.busy = false; return draw(); }
+    if (k === "sfield") { const L = top, f = el.dataset.f; return push({t:"kbd", v:L[f] || "", lang:f === "name" ? "ar" : "en", mail:f === "mail", secret:f === "pass" || f === "pass2",
+      ph:{name:"اسم اللاعب", uname:"اسم المستخدم", mail:"الإيميل", pass:"كلمة السر", pass2:"أعد كلمة السر"}[f], done:v => { L[f] = f === "mail" || f === "uname" ? v.trim() : v; L.err = ""; }}); }
+    if (k === "sagree") { top.agree = !top.agree; beep("move"); return draw(); }
+    if (k === "sgo") { const L = top; if (L.busy) return; L.busy = true; L.err = ""; draw();
+      try { await H.createAccount(L); stack = []; beep("ok"); notify(I.friends, "تم إنشاء حسابك ✓ أرسلنا رابط تأكيد لإيميلك"); const u = S().user; if (u && await waitUser(u.uid)) return enterHome(); }
+      catch(x) { L.err = String(x && x.message || x); beep("err"); }
+      L.busy = false; return draw(); }
+    if (k === "pcpin") { const L = top; return push({t:"kbd", v:"", lang:"en", secret:true, ph:"الرقم السري", done:v => { L.pin = v.replace(/\D/g, "").slice(0, 8); L.err = ""; }}); }
+    if (k === "pcday") { top.daily = Math.max(0, Math.min(1440, (top.daily || 0) + +el.dataset.d)); beep("move"); return draw(); }
+    if (k === "pcg") { const g = el.dataset.g, a = top.allowed; const i = a.indexOf(g); if (i >= 0) a.splice(i, 1); else a.push(g); beep("move"); return draw(); }
+    if (k === "pcsave") { const L = top, p = H.parental() || {}, on = el.dataset.on === "1"; const o = {pin:L.pin || "", daily:L.daily || 0, allowed:L.allowed.slice(), on}; if (!p.hasPin) o.newPin = L.pin || "";
+      try { await H.setParental(o); stack = stack.filter(x => x !== L); beep("ok"); notify(I.home, on ? "الرقابة الأبوية شغالة ✓" : "انوقفت الرقابة الأبوية"); }
+      catch(x) { L.err = String(x && x.message || x).replace(/^Error invoking remote method '[^']+': (Error: )?/, ""); beep("err"); }
+      return draw(); }
     if (k === "act") { const a = el.dataset.a, g = H.byId(el.dataset.g), st = gameState(g, el.dataset.e);
       if (a === "none") return; if (!PS) { beep("err"); return notify(I.pad, "التشغيل من تطبيق Premium Games على الكمبيوتر"); }
       if (a === "play" && !st.run && !el.dataset.hq && await openHQ(g)) return;   // a game with versions: its console menu first
@@ -732,7 +784,7 @@ const CF = () => PS && PS.consoleFiles;   // the console's own files on the PC (
       catch(e) { launching = null; stack = stack.filter(L => L.t !== "launch"); beep("err"); notify(I.pad, String(e && e.message || e)); }
       setTimeout(softRefresh, 500); return; }
     if (k === "hqed") { const P = pages[pages.length - 1], g = H.byId(P.g), e = el.dataset.e;
-      if (!ownedEds(g.id).includes(e)) { beep("err"); return push({t:"confirm", title:"ما عندك هذي النسخة", text:"تقدر تشتريها من المتجر وترجع تدخلها من هنا.", ok:"افتح صفحة المتجر", yes:() => { close(); location.hash = g.id; }}); }
+      if (!ownedEds(g.id).includes(e)) { beep("err"); return push({t:"confirm", title:"ما عندك هذي النسخة", text:"تقدر تشتريها من المتجر وترجع تدخلها من هنا.", ok:"اشترها", yes:() => push({t:"checkout", g:g.id, e}) }); }
       P.ed = e; hqSave(g.id, {ed:e}); beep("move"); return draw(); }
     if (k === "hqvers") { const P = pages[pages.length - 1]; return push({t:"versions", g:P.g}); }
     if (k === "hqv") { const P = pages.find(x => x.t === "hq"); if (P) { P.ver = el.dataset.v; hqSave(P.g, {ver:P.ver}); } stack = stack.filter(L => L.t !== "versions"); beep("ok"); return draw(); }
@@ -773,7 +825,7 @@ const CF = () => PS && PS.consoleFiles;   // the console's own files on the PC (
     if (k === "scat") return openPage({t:"settings", cat:el.dataset.c});
     if (k === "tpage") { stack = []; return openPage({t:"game", g:el.dataset.g, tro:true}); }
     if (k === "lset") { ST[el.dataset.k] = ST[el.dataset.k] === false; saveUI(); return draw(); }
-    if (k === "acctpage") { close(); location.hash = "#account"; return; }
+    if (k === "acctpage") { const p = H.parental() || {}; return push({t:"parental", pin:"", daily:p.daily || 0, allowed:(p.allowed || []).slice()}); }
     if (k === "wishT") { const g = el.dataset.g, w = !!(S().WISH || {})[g]; try { await H.wish(g, !w); notify(I.heart, w ? "انشالت من قائمة الأمنيات" : "انضافت لقائمة الأمنيات"); } catch(e) { notify(I.heart, String(e.message || e)); } return setTimeout(draw, 300); }
     if (k === "k") { top.v = (top.v + el.dataset.c).slice(0, 80); return draw(); }
     if (k === "kcaps") { top.caps = !top.caps; return draw(); }
