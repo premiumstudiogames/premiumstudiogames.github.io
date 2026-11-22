@@ -103,7 +103,7 @@ target_compile_definitions(textedit PUBLIC BOOST_REGEX_STANDALONE)
 target_link_libraries(textedit PUBLIC imgui)
 
 # editor
-add_executable(PremiumEngine WIN32 src/editor/main.cpp src/editor/editor.cpp src/editor/panels.cpp src/editor/dialogs.cpp src/editor/platform.cpp)
+add_executable(PremiumEngine WIN32 src/editor/main.cpp src/editor/editor.cpp src/editor/panels.cpp src/editor/dialogs.cpp src/editor/platform.cpp src/editor/console.cpp)
 target_link_libraries(PremiumEngine PRIVATE pgcore textedit SDL2::SDL2main)
 # game player (packaged games are this program + the project file)
 add_executable(PremiumEnginePlayer WIN32 src/player/main.cpp)

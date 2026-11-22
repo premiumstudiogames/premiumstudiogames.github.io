@@ -307,15 +307,17 @@ void Editor::playStandalone() {
 #else
   setenv("PREMIUM_CONSOLE", consolePreview ? "1" : "0", 1);
 #endif
-  if (!launchProgram(player.u8string(), {"--game", f.u8string(), "--windowed"}, &err)) { logMsg("error: " + err, LogKind::Error); notify(err); }
+  std::vector<std::string> args = {"--game", f.u8string()}; if (!console) args.push_back("--windowed");
+  if (!launchProgram(player.u8string(), args, &err)) { logMsg("error: " + err, LogKind::Error); notify(err); }
   else logMsg("Started " + P.name + " in a new window");
 }
 
 /* ------------------------------------------------------------------ prefs */
 void Editor::loadPrefs() {
-  std::ifstream i(fs::u8path(documentsDir()) / "editor-settings.json"); if (!i) return;
+  if (console) prefs.uiScale = 1.4f;   // read from the sofa
+  std::ifstream i(fs::u8path(documentsDir()) / "editor-settings.json"); if (!i) { ImGui::GetIO().FontGlobalScale = prefs.uiScale; return; }
   try { json j; i >> j; prefs.autosave = j.value("autosave", true); prefs.autosaveMinutes = j.value("autosaveMinutes", 2); prefs.invertY = j.value("invertY", false);
-    prefs.camSpeed = j.value("camSpeed", 4.f); prefs.showFps = j.value("showFps", false); prefs.uiScale = j.value("uiScale", 1.f);
+    prefs.camSpeed = j.value("camSpeed", 4.f); prefs.showFps = j.value("showFps", false); prefs.uiScale = j.value("uiScale", prefs.uiScale);
     if (j.contains("recent")) for (auto& r : j["recent"]) recent.push_back(r); } catch (...) {}
   showStats = prefs.showFps; ImGui::GetIO().FontGlobalScale = prefs.uiScale;
 }
@@ -327,7 +329,9 @@ void Editor::addRecent(const std::string& f) {
   if (f.empty()) return; recent.erase(std::remove(recent.begin(), recent.end(), f), recent.end()); recent.insert(recent.begin(), f); if (recent.size() > 12) recent.resize(12); savePrefs();
 }
 void Editor::notify(const std::string& t) { toast = t; toastUntil = SDL_GetTicks() / 1000.0 + 2.5; }
-void Editor::requestQuit() { if (dirty && hasProject) confirmQuit_ = true; else quit_ = true; }
+void Editor::requestQuit() {
+  if (console) { if (dirty && hasProject) save(); quit_ = true; return; }   // a console app saves itself when it is closed (Premium Games closes it from the Control Center)
+  if (dirty && hasProject) confirmQuit_ = true; else quit_ = true; }
 
 /* ------------------------------------------------------------------ commands */
 void Editor::run(const std::string& c) {
@@ -400,6 +404,7 @@ void Editor::shortcuts() {
 /* ------------------------------------------------------------------ events and frame */
 static float g_flyDx = 0, g_flyDy = 0;
 void Editor::event(const SDL_Event& e) {
+  if (console && consoleEvent(e)) return;
   bool captured = playing && game && !mouseFree && SDL_GetRelativeMouseMode();
   if (e.type == SDL_QUIT) { requestQuit(); return; }
   if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE && e.window.windowID == SDL_GetWindowID(win.win)) { requestQuit(); return; }
@@ -431,6 +436,7 @@ void Editor::frame() {
   fps_ = fps_ * 0.95f + (dt_ > 0 ? 1.f / dt_ : 0) * 0.05f;
   if (playing && game) { game->update(dt_); if (!game) playing = false; }
   if (playing && game && !mouseFree && SDL_GetRelativeMouseMode() && !game->wantsMouseLock()) { mouseFree = true; SDL_SetRelativeMouseMode(SDL_FALSE); }   // the game opened a menu
+  if (console) consoleFrame();
   beginFrame(); ImGuizmo::BeginFrame();
   { auto q = std::move(queued_); queued_.clear(); for (auto& c : q) run(c); }
   if (!hasProject) { drawProjectBrowser(); drawDialogs(); }
@@ -444,7 +450,7 @@ void Editor::frame() {
     if (wOutliner) drawOutliner(); if (wDetails) drawDetails(); if (wWorld) drawWorldSettings(); if (wContent) drawContent(); if (wLog) drawLog();
     if (wPlaceActors) drawPlaceActors(); if (wScripts) drawScripts(); if (wMaterial) drawMaterial();
     drawDialogs(); codeFocused = codeFocusedNext_;
-    if (pending_ && !ImGui::IsAnyItemActive() && !ImGuizmo::IsUsing() && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) commit();
+    if (pending_ && !padMove_ && !ImGui::IsAnyItemActive() && !ImGuizmo::IsUsing() && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) commit();
     double t = SDL_GetTicks() / 1000.0;
     if (prefs.autosave && dirty && !playing && t - lastAutosave_ > prefs.autosaveMinutes * 60.0 && !ImGui::IsAnyItemActive()) { logMsg("Autosave"); save(); }
   }
@@ -456,6 +462,7 @@ void Editor::frame() {
     if (ImGui::Button("Cancel", {90, 0})) ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
   }
+  if (console) drawConsole();
   if (!toast.empty() && SDL_GetTicks() / 1000.0 < toastUntil) {
     ImGuiViewport* v = ImGui::GetMainViewport(); ImVec2 s = ImGui::CalcTextSize(toast.c_str()); ImVec2 p(v->Pos.x + v->Size.x - s.x - 40, v->Pos.y + v->Size.y - s.y - 60);
     ImDrawList* dl = ImGui::GetForegroundDrawList(); dl->AddRectFilled(p, {p.x + s.x + 24, p.y + s.y + 16}, IM_COL32(20, 20, 20, 235), 6); dl->AddRect(p, {p.x + s.x + 24, p.y + s.y + 16}, IM_COL32(0, 112, 224, 255), 6);

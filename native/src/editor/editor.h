@@ -26,6 +26,7 @@ public:
   void frame();                      // one UI frame
   void event(const SDL_Event& e);    // raw SDL events (before ImGui gets them)
   bool wantsQuit() const { return quit_; }
+  bool console = false;              // the console version: full screen, run with the controller (on-screen keyboard), its own projects
   void requestQuit();
   bool openProjectFile(const std::string& file);
 
@@ -82,9 +83,18 @@ public:
   void drawMenuBar(); void drawToolbar(); void drawStatusBar(); void drawViewport();
   void drawOutliner(); void drawDetails(); void drawWorldSettings(); void drawContent(); void drawLog(); void drawPlaceActors();
   void drawScripts(); void drawMaterial(); void drawDialogs(); void drawProjectBrowser(); void addMenuItems(const glm::vec3* at);
+  // ---- the console version (console.cpp)
+  bool consoleEvent(const SDL_Event& e);   // true = used
+  void consoleFrame();                     // before the UI: camera / moving with the sticks, which device drives the menus
+  void drawConsole();                      // the controller hints and the on-screen keyboard
+  bool oskOpen() const { return oskOn_; }
+  bool focusNameField = false; std::string& projectNameField() { return browserName_; }   // tests
 private:
   std::vector<std::string> queued_;
   bool quit_ = false, confirmQuit_ = false, init_ = false; std::string pendingOpen_;
+  SDL_GameController* pad_ = nullptr; bool padNav_ = true, padFly_ = false, padMove_ = false, oskOn_ = false, oskShut_ = false, oskShift_ = false;
+  int oskR_ = 1, oskC_ = 0, oskHold_ = -1; float oskHoldT_ = 0; std::vector<int> keyUps_;
+  void oskPress(); void oskMove(int dir); void sendKey(int key);
   std::deque<std::string> undo_, redo_; std::string stable_; bool pending_ = false; std::string clip_;
   double lastAutosave_ = 0; Uint64 lastTick_ = 0; float fps_ = 0, dt_ = 0;
   bool gizmoWasUsing_ = false; std::string browserName_ = "MyProject"; int browserTemplate_ = 1; char pathBuf_[1024] = {0}; std::string browserErr_;

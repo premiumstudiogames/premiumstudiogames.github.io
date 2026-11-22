@@ -296,7 +296,10 @@ bool loadProjectFile(const std::string& file, Project& out, std::string* err) {
   std::stringstream ss; ss << i.rdbuf(); if (!fromJson(ss.str(), out, err)) return false; out.path = file; return true;
 }
 
+static std::string g_docs;
+void setDocumentsDir(const std::string& dir) { g_docs = dir; }
 std::string documentsDir() {
+  if (!g_docs.empty()) return g_docs;
 #ifdef _WIN32
   // the real Documents folder (also when moved to OneDrive or another drive), as UTF-8 so non-English user names work
   std::string base = ".";

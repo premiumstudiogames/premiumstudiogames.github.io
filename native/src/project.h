@@ -66,6 +66,7 @@ bool levelFromJson(const std::string& text, Level& out);
 
 // folders
 std::string documentsDir();              // ~/Documents/PremiumEngine
+void setDocumentsDir(const std::string& dir);   // the console version keeps its projects, builds, saves and settings in the console's own storage
 std::string projectsDir();
 std::string buildsDir();
 std::string exeDir();

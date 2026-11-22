@@ -55,6 +55,10 @@ jobs:
           mkdir -p selftest
           ./run/PremiumEngine.exe --selftest "$PWD/selftest" || { cat selftest/editor-result.txt; exit 1; }
           cat selftest/editor-result.txt | head -4
+          # the console version: full screen, its own folder, the on-screen keyboard and the sticks
+          mkdir -p selftest/console
+          ./run/PremiumEngine.exe --console --home "$PWD/selftest/console/home" --consoletest "$PWD/selftest/console" || { cat selftest/console/console-result.txt; exit 1; }
+          cat selftest/console/console-result.txt
 
       - name: Packaged game self-test (walks forward)
         timeout-minutes: 10

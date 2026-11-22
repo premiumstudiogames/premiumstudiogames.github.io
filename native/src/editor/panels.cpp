@@ -58,7 +58,7 @@ void Editor::drawMenuBar() {
   if (ImGui::BeginMenu("File")) {
     section("OPEN"); if (item("New Level...", "Ctrl+N")) run("newLevel"); if (item("Open Level...", "Ctrl+O")) run("openLevel");
     section("SAVE"); if (item("Save Current Level", "Ctrl+S")) run("save"); if (item("Save All", "Ctrl+Shift+S")) run("saveAll");
-    section("IMPORT / EXPORT"); if (item("Import Into Level...")) run("importLevel"); if (item("Open Project Folder")) openInExplorer(fs::u8path(P.path).parent_path().u8string());
+    if (!console) { section("IMPORT / EXPORT"); if (item("Import Into Level...")) run("importLevel"); if (item("Open Project Folder")) openInExplorer(fs::u8path(P.path).parent_path().u8string()); }
     section("PROJECT"); if (item("New Project...")) run("newProject"); if (item("Open Project...")) run("openProject"); if (item("Package Project")) run("package");
     if (ImGui::BeginMenu("Recent Projects")) { for (auto& r : recent) if (item(fs::u8path(r).stem().stem().u8string().c_str())) { if (dirty) save(); openProjectFile(r); break; } ImGui::EndMenu(); }
     ImGui::Separator(); if (item("Exit")) run("exit");
@@ -152,7 +152,7 @@ void Editor::drawToolbar() {
     ImGui::SameLine(); ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical); ImGui::SameLine();
     if (toolButton("##platforms", IC_Box, "Platforms", IM_COL32(230, 180, 80, 255), "Package the game")) ImGui::OpenPopup("platforms");
     if (ImGui::BeginPopup("platforms")) {
-      section("PACKAGE"); if (ImGui::MenuItem("Windows (.exe)")) packageProject(); if (ImGui::MenuItem("Console (controller, up to 2 GB)")) packageProject(true); if (ImGui::MenuItem("Open Builds Folder")) { std::error_code ec; fs::create_directories(fs::u8path(buildsDir()), ec); openInExplorer(buildsDir()); }
+      section("PACKAGE"); if (!console && ImGui::MenuItem("Windows (.exe)")) packageProject(); if (ImGui::MenuItem("Console (controller, up to 2 GB)")) packageProject(true); if (!console && ImGui::MenuItem("Open Builds Folder")) { std::error_code ec; fs::create_directories(fs::u8path(buildsDir()), ec); openInExplorer(buildsDir()); }
       section("SETTINGS"); if (ImGui::MenuItem("Packaging Settings...")) run("projectSettings");
       ImGui::EndPopup(); }
     float right = ImGui::GetWindowWidth() - 130; ImGui::SameLine(std::max(right, ImGui::GetCursorPosX()));

@@ -347,8 +347,8 @@ void Editor::drawDialogs() {
     ImGui::End(); }
   if (beginDialog("Package Project", &wPackage, {560 * s, 0})) {
     ImGui::TextWrapped("%s", packageResult.c_str()); ImGui::Spacing();
-    if (packageOk) { if (ImGui::Button("Open Folder", {130, 0})) openInExplorer(packageDir); ImGui::SameLine();
-      if (ImGui::Button("Run Game", {130, 0})) { std::string err; std::string exe = (fs::u8path(packageDir) / fs::u8path(sanitizeName(P.name) + exeSuffix())).u8string(); if (!launchProgram(exe, {"--windowed"}, &err)) notify(err); } ImGui::SameLine(); }
+    if (packageOk) { if (!console) { if (ImGui::Button("Open Folder", {130, 0})) openInExplorer(packageDir); ImGui::SameLine(); }
+      if (ImGui::Button("Run Game", {130, 0})) { std::string err; std::string exe = (fs::u8path(packageDir) / fs::u8path(sanitizeName(P.name) + exeSuffix())).u8string(); if (!launchProgram(exe, console ? std::vector<std::string>{} : std::vector<std::string>{"--windowed"}, &err)) notify(err); } ImGui::SameLine(); }
     if (ImGui::Button("Close", {100, 0})) wPackage = false; ImGui::End(); }
   if (beginDialog("Script API Reference", &wApi, {720 * s, 620 * s})) { ImGui::PushFont(ImGui::GetIO().Fonts->Fonts.Size > 2 ? ImGui::GetIO().Fonts->Fonts[2] : ImGui::GetFont()); ImGui::TextUnformatted(API_TEXT); ImGui::PopFont(); ImGui::End(); }
   if (beginDialog("Documentation", &wDocs, {720 * s, 420 * s})) { ImGui::TextWrapped("%s", DOCS_TEXT); ImGui::End(); }
@@ -385,16 +385,18 @@ void Editor::drawProjectBrowser() {
   if (items.empty()) ImGui::TextDisabled("No projects yet. Create one on the right.");
   float tile = 150 * s; int cols = std::max(1, (int)(ImGui::GetContentRegionAvail().x / (tile + 12))), n = 0;
   for (auto& it : items) { if (n % cols) ImGui::SameLine(); n++; ImGui::PushID(it.path.c_str()); ImVec2 p = ImGui::GetCursorScreenPos();
-    if (ImGui::Selectable("##p", false, ImGuiSelectableFlags_AllowDoubleClick, {tile, tile * 0.85f}) && ImGui::IsMouseDoubleClicked(0)) pendingOpen_ = it.path;
+    if (ImGui::Selectable("##p", false, ImGuiSelectableFlags_AllowDoubleClick, {tile, tile * 0.85f}) && (console || ImGui::IsMouseDoubleClicked(0))) pendingOpen_ = it.path;   // console: A opens
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\nDouble-click to open", it.path.c_str());
     ImDrawList* dl = ImGui::GetWindowDrawList(); dl->AddRectFilled({p.x + 4, p.y + 4}, {p.x + tile - 4, p.y + tile * 0.6f}, IM_COL32(16, 40, 70, 255), 4);
     dl->AddText(big, 34, {p.x + 14, p.y + 14}, IM_COL32(0, 140, 255, 255), it.name.substr(0, 2).c_str());
     ImGui::PushClipRect(p, {p.x + tile, p.y + tile}, true); dl->AddText({p.x + 6, p.y + tile * 0.63f}, IM_COL32_WHITE, it.name.c_str()); ImGui::PopClipRect();
     ImGui::PopID(); }
+  if (!console) {
   ImGui::Spacing(); ImGui::SeparatorText("OPEN");
   if (hasFileDialogs()) { if (ImGui::Button("Browse...", {140, 0})) { std::string f = openFileDialog("Open project", "Premium Engine project", "*.pge.json;*.json"); if (!f.empty()) pendingOpen_ = f; } }
   else { ImGui::SetNextItemWidth(-90); ImGui::InputTextWithHint("##op", "/path/to/Project.pge.json", pathBuf_, sizeof pathBuf_); ImGui::SameLine(); if (ImGui::Button("Open")) pendingOpen_ = pathBuf_; }
   ImGui::TextDisabled("Projects from Premium Engine 0.1 (web) open here too."); ImGui::TextDisabled("You can also drop a .pge.json file on this window.");
+  }
   ImGui::EndChild(); ImGui::SameLine();
   ImGui::BeginChild("new", {0, 0}, ImGuiChildFlags_Border);
   ImGui::SeparatorText("NEW PROJECT - GAMES");
@@ -411,7 +413,7 @@ void Editor::drawProjectBrowser() {
     ImGui::PushClipRect({p.x + h, p.y}, {p.x + w, p.y + h}, true); dl->AddText(nullptr, 0, {p.x + h + 6, p.y + 28}, ImGui::GetColorU32(ImGuiCol_TextDisabled), desc[i], nullptr, w - h - 12); ImGui::PopClipRect();
     ImGui::PopID(); }
   ImGui::Spacing(); ImGui::SeparatorText("PROJECT");
-  ImGui::Text("Name"); ImGui::SetNextItemWidth(-1); ImGui::InputText("##bn", &browserName_);
+  ImGui::Text("Name"); ImGui::SetNextItemWidth(-1); if (focusNameField) { ImGui::SetKeyboardFocusHere(); focusNameField = false; } ImGui::InputText("##bn", &browserName_);
   ImGui::TextDisabled("Folder: %s", (fs::u8path(projectsDir()) / fs::u8path(sanitizeName(browserName_))).u8string().c_str());
   ImGui::Spacing();
   if (ImGui::Button("Create", {160 * s, 34 * s})) { browserErr_.clear(); newProject(ids[browserTemplate_], browserName_, &browserErr_); }

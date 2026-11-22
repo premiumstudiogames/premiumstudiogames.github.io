@@ -9,4 +9,7 @@ bool hasFileDialogs();
 void openInExplorer(const std::string& path);
 bool launchProgram(const std::string& exe, const std::vector<std::string>& args, std::string* err = nullptr);
 std::string exeSuffix();   // ".exe" on Windows
+// the console version (Premium Games console mode): its own system - no Windows file dialogs or Explorer
+void setConsoleSystem(bool on);
+bool consoleSystem();
 }
