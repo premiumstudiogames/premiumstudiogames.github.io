@@ -16,6 +16,9 @@ const ICON = path.join(__dirname, 'build', 'icon.ico');
 protocol.registerSchemesAsPrivileged([{
   scheme: 'psgame',
   privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true }
+}, {   // the console's media gallery: screenshots and clips shown inside the console
+  scheme: 'psmedia',
+  privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true }
 }]);
 
 /* ---------------- paths + registry ---------------- */
@@ -217,24 +220,28 @@ function addPlaytime(r, ms) {
   return fbCommit([{ update: { name: `${FB_DB}/users/${currentUser.uid}/play/${r.game}`, fields: { game: { stringValue: r.game } } }, updateMask: { fieldPaths: ['game'] },
     updateTransforms: [{ fieldPath: 'minutes', increment: { integerValue: String(min) } }, { fieldPath: 'last', setToServerValue: 'REQUEST_TIME' }] }]);
 }
-const runningList = () => Object.fromEntries([...running].filter(([k]) => isCon(k) === consoleOn).map(([k, v]) => [plainKey(k), { since: v.since, game: v.game, closing: stopping.has(k) || !!v.closing }]));
+const runningList = () => Object.fromEntries([...running].filter(([k]) => isCon(k) === consoleOn).map(([k, v]) => [plainKey(k), { since: v.since, game: v.game, name: v.name, app: !!v.app, closing: stopping.has(k) || !!v.closing }]));
 function runningChanged() {
   syncPadWatch();
   if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('ps:running', runningList());
   updateTray();
 }
-function markRunning(key) {
+// app: a console app (YouTube, Premium Engine) - it runs in the console like a game (Home, Control Center, switcher)
+function markRunning(key, app) {
   if (running.has(key)) return;
-  const g = readReg()[key] || {};
-  running.set(key, { since: Date.now(), game: g.game || key.split('--')[0], name: g.name || key, console: isCon(key) });
+  const g = app || readReg()[key] || {};
+  running.set(key, { since: Date.now(), game: g.game || key.split('--')[0], name: g.name || key, console: isCon(key), app: !!app });
+  frontKey = key;
   pushPresence(); runningChanged();
   if (g.type === 'bf-launcher') { watchBf(); gameKeys(true); }
 }
 function markStopped(key) {
   const r = running.get(key); if (!r) return;
-  if (r.console) { const mins = Math.round((Date.now() - r.since) / 60000); csLog('game-stop', { game: r.game, key, minutes: mins }); csGame(r.game, x => ({ minutes: x.minutes + mins })); }
+  if (r.console && !r.app) { const mins = Math.round((Date.now() - r.since) / 60000); csLog('game-stop', { game: r.game, key, minutes: mins }); csGame(r.game, x => ({ minutes: x.minutes + mins })); }
   running.delete(key);
-  addPlaytime(r, Date.now() - r.since); pushPresence(); runningChanged();
+  if (!r.app) addPlaytime(r, Date.now() - r.since); pushPresence(); runningChanged();
+  if (frontKey === key) frontKey = '';
+  if (ccKey === key && ccWin && !ccWin.isDestroyed()) closeCC();
   if (ovKey === key) closeOverlay();
   if (recKey === key && recWin && !recWin.isDestroyed()) recWin.webContents.send('rec:stop');
   if (![...running.keys()].some(k => ['bf-launcher', 'pge'].includes((readReg()[k] || {}).type))) gameKeys(false);
@@ -326,6 +333,7 @@ ipcMain.on('game:cloud', e => {
 
 const stopping = new Set();
 async function stopGame(key) {
+  if (key === TV_KEY) { closeTv(); return; }
   const g = readReg()[key];
   if (g && g.type === 'bf-launcher') {
     if (stopping.has(key)) return; stopping.add(key); runningChanged();
@@ -417,6 +425,31 @@ async function screenshot(key) {
     return f;
   } catch (e) { return null; }
 }
+// psmedia://shot/<game>/<file>.png and psmedia://clip/<game>/<file>.webm - only files in those two folders; videos seek (ranges)
+const mediaRoot = kind => kind === 'shot' ? SHOTS() : kind === 'clip' ? CLIPS() : null;
+const mediaUrl = (kind, file) => 'psmedia://' + kind + '/' + path.relative(mediaRoot(kind), file).split(path.sep).map(encodeURIComponent).join('/');
+function serveMedia(req) {
+  const u = new URL(req.url), root = mediaRoot(u.hostname), no = s => new Response('', { status: s });
+  if (!root) return no(404);
+  let rel = ''; try { rel = decodeURIComponent(u.pathname).replace(/^\/+/, ''); } catch (e) { return no(400); }
+  const f = path.resolve(root, rel);
+  if (!f.startsWith(path.resolve(root) + path.sep) || !(u.hostname === 'shot' ? /\.png$/i : /\.webm$/i).test(f)) return no(404);
+  let st; try { st = fs.statSync(f); } catch (e) { return no(404); } if (!st.isFile()) return no(404);
+  const type = u.hostname === 'shot' ? 'image/png' : 'video/webm', size = st.size, { Readable } = require('stream');
+  const m = /^bytes=(\d*)-(\d*)$/.exec(req.headers.get('range') || '');
+  if (m && size) { let a = m[1] ? +m[1] : size - +m[2], b = m[1] && m[2] ? +m[2] : size - 1; if (!m[1]) b = size - 1; a = Math.max(0, a); b = Math.min(size - 1, b);
+    if (a > b) return new Response('', { status: 416, headers: { 'Content-Range': `bytes */${size}` } });
+    return new Response(Readable.toWeb(fs.createReadStream(f, { start: a, end: b })), { status: 206, headers: { 'Content-Type': type, 'Content-Length': String(b - a + 1), 'Content-Range': `bytes ${a}-${b}/${size}`, 'Accept-Ranges': 'bytes' } }); }
+  return new Response(Readable.toWeb(fs.createReadStream(f)), { status: 200, headers: { 'Content-Type': type, 'Content-Length': String(size), 'Accept-Ranges': 'bytes' } });
+}
+app.whenReady().then(() => protocol.handle('psmedia', serveMedia));
+// the clips (F9), newest first: shown and played inside the console
+ipcMain.handle('ps:clips', guard(async () => {
+  const out = [], root = CLIPS(); let dirs = []; try { dirs = await fsp.readdir(root, { withFileTypes: true }); } catch (e) { return out; }
+  for (const d of dirs) { if (!d.isDirectory()) continue; let files = []; try { files = await fsp.readdir(path.join(root, d.name)); } catch (e) { continue; }
+    for (const f of files.filter(f => /\.webm$/i.test(f))) { const file = path.join(root, d.name, f); try { const st = await fsp.stat(file); if (st.size) out.push({ url: mediaUrl('clip', file), name: f.replace(/\.webm$/i, ''), folder: d.name, size: st.size, at: st.mtimeMs }); } catch (e) {} } }
+  return out.sort((a, b) => b.at - a.at).slice(0, 60);
+}));
 ipcMain.handle('ps:screenshots', guard(async gid => {
   const out = [];
   for (const [k, v] of Object.entries(installedNow())) { if ((v.game || k.split('--')[0]) !== gid) continue;
@@ -424,7 +457,7 @@ ipcMain.handle('ps:screenshots', guard(async gid => {
     for (const f of files) out.push(path.join(dir, f)); }
   const uniq = [...new Set(out)].sort().reverse().slice(0, 24);
   const { nativeImage } = require('electron');
-  return uniq.map(f => { try { return { file: f, name: path.basename(f, '.png'), thumb: nativeImage.createFromPath(f).resize({ width: 360 }).toDataURL() }; } catch (e) { return null; } }).filter(Boolean);
+  return uniq.map(f => { try { return { file: f, url: mediaUrl('shot', f), name: path.basename(f, '.png'), thumb: nativeImage.createFromPath(f).resize({ width: 360 }).toDataURL() }; } catch (e) { return null; } }).filter(Boolean);
 }));
 ipcMain.handle('ps:openShots', guard(async file => { if (typeof file === 'string' && path.resolve(file).startsWith(SHOTS())) shell.showItemInFolder(file); else { await fsp.mkdir(SHOTS(), { recursive: true }); shell.openPath(SHOTS()); } return true; }));
 
@@ -583,25 +616,39 @@ ipcMain.handle('ps:setConsole', guard(async on => { const was = consoleOn; if (w
 // the page now shows the other system: its installs, its running games and its downloads
 function systemSwitched() {
   for (const [k, p] of progNow) { if (isCon(k) !== consoleOn) send('ps:progress', { id: plainKey(k), phase: 'clear' }); else send('ps:progress', { ...p, id: plainKey(k) }); }
-  send('ps:installed-changed', {}); runningChanged();
+  send('ps:installed-changed', {}); runningChanged(); engineChanged();
 }
-function gameWindowOf(key) { const w = gameWins.get(key); return w && !w.isDestroyed() ? w : null; }
+// the console's apps, by their keys in the console system
+const TV_KEY = 'youtube' + CON, ENG_KEY = 'premium-engine' + CON;
+let frontKey = '';   // the game / app the player last went into (Home opens the Control Center over it)
+function gameWindowOf(key) { if (key === TV_KEY) return tvWin && !tvWin.isDestroyed() ? tvWin : null; const w = gameWins.get(key); return w && !w.isDestroyed() ? w : null; }
 // the game the player is in: the focused game window, else the newest running game
 function currentGame() {
   for (const [k, w] of gameWins) if (w && !w.isDestroyed() && w.isFocused()) return k;
-  const ks = [...running.keys()].filter(k => !stopping.has(k) && isCon(k) === consoleOn); return ks[ks.length - 1] || '';
+  if (tvWin && !tvWin.isDestroyed() && tvWin.isFocused() && running.has(TV_KEY)) return TV_KEY;
+  const ok = k => running.has(k) && !stopping.has(k) && isCon(k) === consoleOn;
+  if (ok(frontKey)) return frontKey;
+  const ks = [...running.keys()].filter(ok); return ks[ks.length - 1] || '';
 }
-function homePressed(long, native) {
+// front: the program in front when Home was pressed (PremiumPad tells), so Home acts on what the player sees
+function homePressed(long, native, front) {
   const now = Date.now(); if (now - lastHome < 450) return; lastHome = now;
   if (ccWin && !ccWin.isDestroyed()) { const k = ccKey; closeCC(); if (long) consoleHome(k); csLog('home', { long: !!long, to: long ? 'home' : 'game' }); return; }
+  if (front && front !== process.pid) {   // not one of Premium Games' own windows
+    let k = ''; for (const [key, c] of pgeProcs) if (c && c.exitCode === null && c.pid === front && running.has(key)) k = key;
+    if (k) { frontKey = k; csLog('home', { long: !!long, game: (running.get(k) || {}).game || k }); if (long) consoleHome(k); else openCC(k); return; }
+    consoleHome(''); return;   // another program in front: Home always brings the console back
+  }
   const fw = BrowserWindow.getFocusedWindow();
-  if (fw && fw === tvWin) { if (native) closeTv(); return; }
   if (fw && fw === mainWin) { if (native) mainWin.webContents.send('bp:guide', { long: !!long }); return; }   // the console screen: its own Control Center
-  const k = currentGame(); if (!k) return;
+  // over a game or an app (YouTube, Premium Engine): its Control Center / the home screen. Nothing of the console's in
+  // front (another program, nothing running): Home always brings the console back
+  const k = currentGame(); if (!k) { if (consoleOn) consoleHome(''); return; }
   csLog('home', { long: !!long, game: (running.get(k) || {}).game || k });
   if (long) consoleHome(k); else openCC(k);
 }
 function focusGame(key) {
+  if (running.has(key)) frontKey = key;
   const w = gameWindowOf(key);
   if (w) { if (w.isMinimized()) w.restore(); w.show(); if (w.consoleMode) w.setFullScreen(true); w.focus(); return; }
   const g = readReg()[key];   // a game in its own program: ask it to come to the front
@@ -616,7 +663,7 @@ function consoleHome(key, page) {
 }
 // the controller watcher: PremiumPad.exe (SDL, reads every controller in the background, also the real Xbox button),
 // or - when it's missing (development) - a 1 x 1 px see-through window that reads the controller through Chromium
-let lastFocused = '', padProc = null, padDown = 0, padLongT = null, padLong = false, padKind = '';
+let lastFocused = '', padFront = 0, padProc = null, padDown = 0, padLongT = null, padLong = false, padKind = '';
 const PAD_EXE = () => app.isPackaged ? path.join(process.resourcesPath, 'PremiumPad.exe') : path.join(__dirname, 'build', 'PremiumPad.exe');
 function startPadProc() {
   if (padProc || process.platform !== 'win32' || !fs.existsSync(PAD_EXE())) return !!padProc;
@@ -633,8 +680,9 @@ function padLine(line) {
   if (line === 'ready') { if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('bp:nativePad', true); return; }
   if (line.startsWith('pad ')) { padKind = line.split(' ')[1]; return; }
   if (line.startsWith('focused ')) { lastFocused = line; return; }
-  if (line === 'home 1' && !padDown) { padDown = Date.now(); padLong = false; clearTimeout(padLongT); padLongT = setTimeout(() => { if (padDown) { padLong = true; homePressed(true, true); } }, 600); }
-  else if (line === 'home 0' && padDown) { padDown = 0; clearTimeout(padLongT); if (!padLong) homePressed(false, true); }
+  const hm = /^home 1(?: (\d+))?$/.exec(line);   // "home 1 <pid of the program in front>"
+  if (hm && !padDown) { padDown = Date.now(); padFront = +(hm[1] || 0); padLong = false; clearTimeout(padLongT); padLongT = setTimeout(() => { if (padDown) { padLong = true; homePressed(true, true, padFront); } }, 600); }
+  else if (line === 'home 0' && padDown) { padDown = 0; clearTimeout(padLongT); if (!padLong) homePressed(false, true, padFront); }
 }
 const nativePad = () => !!padProc;
 ipcMain.handle('ps:nativePad', guard(async () => nativePad()));
@@ -1201,25 +1249,29 @@ function guard(fn) {
    Versions:  engine/versions.json on the site (written by the engine's Windows build)
    Installed: %LOCALAPPDATA%\PremiumStudio\engine\<version>\PremiumEngine.exe   (list in engine.json)
    Projects:  Documents\PremiumEngine\Projects\<Name>\<Name>.pge.json (+ Saved\thumbnail.bmp) — where the editor saves them */
-const ENGINE_DIR = path.join(LOCAL, 'PremiumStudio', 'engine');
-const ENGINE_REG = path.join(ENGINE_DIR, 'engine.json');
+//  The console has its own Premium Engine (its console version): installed in the console's storage, its projects there too
+//  (console\engine\home: projects, builds, saves, settings), opened full screen and run with the controller, as a console app.
 const ENGINE_ID = 'premium-engine';
-const PROJECTS_DIR = () => path.join(app.getPath('documents'), 'PremiumEngine', 'Projects');
+const CON_ENGINE = path.join(LOCAL, 'PremiumStudio', 'console', 'engine'), CON_ENGINE_HOME = path.join(CON_ENGINE, 'home');
+const ENGINE_DIR_ = con => con ? CON_ENGINE : path.join(LOCAL, 'PremiumStudio', 'engine');
+const ENGINE_DIR = ENGINE_DIR_(false);
+const ENGINE_REG = con => path.join(ENGINE_DIR_(con), 'engine.json');
+const PROJECTS_DIR = con => con ? path.join(CON_ENGINE_HOME, 'Projects') : path.join(app.getPath('documents'), 'PremiumEngine', 'Projects');
 const validVer = v => typeof v === 'string' && /^\d{2}\.\d{2}\.\d{2}$/.test(v);
-const engineReg = () => { try { const j = JSON.parse(fs.readFileSync(ENGINE_REG, 'utf8')); return j && j.versions ? j : { versions: {} }; } catch (e) { return { versions: {} }; } };
-const engineExe = v => path.join(ENGINE_DIR, v, 'PremiumEngine.exe');
-const engineRunning = new Map();   // child pid -> { version, project }
-function engineInstalled() {
-  const r = engineReg(), out = {};
-  for (const [v, info] of Object.entries(r.versions)) if (validVer(v) && fs.existsSync(engineExe(v))) out[v] = info;
+const engineReg = con => { try { const j = JSON.parse(fs.readFileSync(ENGINE_REG(con), 'utf8')); return j && j.versions ? j : { versions: {} }; } catch (e) { return { versions: {} }; } };
+const engineExe = (v, con) => path.join(ENGINE_DIR_(con), v, 'PremiumEngine.exe');
+const engineRunning = new Map();   // child pid -> { version, project, con }
+function engineInstalled(con) {
+  const r = engineReg(con), out = {};
+  for (const [v, info] of Object.entries(r.versions)) if (validVer(v) && fs.existsSync(engineExe(v, con))) out[v] = info;
   return out;
 }
-async function saveEngineReg(fn) { const r = engineReg(); fn(r); await fsp.mkdir(ENGINE_DIR, { recursive: true }); const t = ENGINE_REG + '.tmp'; await fsp.writeFile(t, JSON.stringify(r, null, 1)); await fsp.rename(t, ENGINE_REG); }
+async function saveEngineReg(fn, con) { const r = engineReg(con); fn(r); await fsp.mkdir(ENGINE_DIR_(con), { recursive: true }); const t = ENGINE_REG(con) + '.tmp'; await fsp.writeFile(t, JSON.stringify(r, null, 1)); await fsp.rename(t, ENGINE_REG(con)); }
 async function engineVersions() { const j = await fetchJSON(SITE + 'engine/versions.json'); return { latest: j.latest || '', versions: (j.versions || []).filter(v => validVer(v.version)) }; }
 function engineChanged() { send('eng:changed', null); }
 
-async function engineProjects() {
-  const out = [], root = PROJECTS_DIR();
+async function engineProjects(con) {
+  const out = [], root = PROJECTS_DIR(con);
   let dirs = []; try { dirs = await fsp.readdir(root, { withFileTypes: true }); } catch (e) { return out; }
   for (const d of dirs) {
     if (!d.isDirectory()) continue;
@@ -1237,35 +1289,36 @@ async function engineProjects() {
   }
   return out.sort((a, b) => b.modified - a.modified);
 }
-const engineProjectOk = f => typeof f === 'string' && f.toLowerCase().endsWith('.pge.json') && path.resolve(f).startsWith(path.resolve(PROJECTS_DIR()) + path.sep) && fs.existsSync(f);
+const engineProjectOk = (f, con) => typeof f === 'string' && f.toLowerCase().endsWith('.pge.json') && path.resolve(f).startsWith(path.resolve(PROJECTS_DIR(con)) + path.sep) && fs.existsSync(f);
 
-async function engineInstall(ver) {
-  if (busy.has(ENGINE_ID)) return; busy.add(ENGINE_ID);
+async function engineInstall(ver, con) {
+  const bk = ENGINE_ID + (con ? CON : '');   // its downloads show in its own system
+  if (busy.has(bk)) return; busy.add(bk);
   let tmp = null, stage = null;
   try {
     const list = await engineVersions(); ver = ver || list.latest;
     const v = list.versions.find(x => x.version === ver); if (!v) throw new Error('هذي النسخة مو موجودة');
-    if (engineRunningVersion(ver)) throw new Error('اقفل المحرك أول');
+    if (engineRunningVersion(ver, con)) throw new Error('اقفل المحرك أول');
     let received = 0, last = 0; const total = v.size || 0;
-    send('ps:progress', { id: ENGINE_ID, phase: 'download', received: 0, total, name: 'Premium Engine ' + ver });
+    sendProg({ id: bk, phase: 'download', received: 0, total, name: 'Premium Engine ' + ver });
     tmp = path.join(app.getPath('temp'), `pe-${ver}-${Date.now()}.zip`);
-    await download(v.url, n => { received += n; const now = Date.now(); if (now - last > 150) { last = now; send('ps:progress', { id: ENGINE_ID, phase: 'download', received, total: total || received }); } }, tmp);
-    send('ps:progress', { id: ENGINE_ID, phase: 'extract', received, total: received });
+    await download(v.url, n => { received += n; const now = Date.now(); if (now - last > 150) { last = now; sendProg({ id: bk, phase: 'download', received, total: total || received }); } }, tmp);
+    sendProg({ id: bk, phase: 'extract', received, total: received });
     if (v.sha256) { const h = crypto.createHash('sha256'); await new Promise((res, rej) => fs.createReadStream(tmp).on('data', d => h.update(d)).on('end', res).on('error', rej));
       if (h.digest('hex') !== v.sha256) throw new Error('الملف وصل ناقص، جرّب مرة ثانية'); }
-    const dir = path.join(ENGINE_DIR, ver); stage = dir + '.new';
+    await fsp.mkdir(ENGINE_DIR_(con), { recursive: true }); const dir = path.join(ENGINE_DIR_(con), ver); stage = dir + '.new';
     await fsp.rm(stage, { recursive: true, force: true });
     await require('extract-zip')(tmp, { dir: stage });
     const inner = fs.existsSync(path.join(stage, 'PremiumEngine', 'PremiumEngine.exe')) ? path.join(stage, 'PremiumEngine') : stage;
     if (!fs.existsSync(path.join(inner, 'PremiumEngine.exe'))) throw new Error('ملف المحرك ناقص');
     await fsp.rm(dir, { recursive: true, force: true });
     await fsp.rename(inner, dir);
-    await saveEngineReg(r => { r.versions[ver] = { installedAt: Date.now(), size: v.size || 0 }; });
-    makeEngineShortcut(ver);
-    send('ps:progress', { id: ENGINE_ID, phase: 'done', received, total: received });
+    await saveEngineReg(r => { r.versions[ver] = { installedAt: Date.now(), size: v.size || 0 }; }, con);
+    if (!con) makeEngineShortcut(ver);   // the console's engine has no icons outside the console
+    sendProg({ id: bk, phase: 'done', received, total: received });
     engineChanged();
-  } catch (e) { send('ps:progress', { id: ENGINE_ID, phase: 'error', error: String(e && e.message || e) }); throw e; }
-  finally { busy.delete(ENGINE_ID); if (tmp) fsp.rm(tmp, { force: true }).catch(() => {}); if (stage) fsp.rm(stage, { recursive: true, force: true }).catch(() => {}); }
+  } catch (e) { sendProg({ id: bk, phase: 'error', error: String(e && e.message || e) }); throw e; }
+  finally { busy.delete(bk); if (tmp) fsp.rm(tmp, { force: true }).catch(() => {}); if (stage) fsp.rm(stage, { recursive: true, force: true }).catch(() => {}); }
 }
 // one Desktop / Start menu icon for the newest installed engine
 function makeEngineShortcut(ver) {
@@ -1283,10 +1336,20 @@ function removeEngineShortcutsIfTarget(ver) {
       if (real(shell.readShortcutLink(l).target) === real(engineExe(ver))) fs.rmSync(l, { force: true }); } catch (e) {}
   }
 }
-function engineRunningVersion(ver) { for (const r of engineRunning.values()) if (r.version === ver) return true; return false; }
-function engineLaunch(ver, args, project) {
-  const exe = engineExe(ver); if (!fs.existsSync(exe)) throw new Error('النسخة مو مثبتة');
+function engineRunningVersion(ver, con) { for (const r of engineRunning.values()) if (r.version === ver && !!r.con === !!con) return true; return false; }
+function engineLaunch(ver, args, project, con) {
+  const exe = engineExe(ver, con); if (!fs.existsSync(exe)) throw new Error('النسخة مو مثبتة');
   const { spawn } = require('child_process');
+  if (con) {   // the console version: one at a time, a console app (Home → Control Center over it, closed from there; it saves as it closes)
+    const old = pgeProcs.get(ENG_KEY); if (old && old.exitCode === null) { focusGame(ENG_KEY); return true; }
+    fs.mkdirSync(CON_ENGINE_HOME, { recursive: true });
+    const child = spawn(exe, ['--console', '--home', CON_ENGINE_HOME, ...args], { cwd: path.dirname(exe), stdio: 'ignore', windowsHide: false });
+    child.on('error', e => { child.spawnError = String(e && e.message || e); });
+    pgeProcs.set(ENG_KEY, child); engineRunning.set(child.pid, { version: ver, project: project || '', con: true });
+    markRunning(ENG_KEY, { name: 'Premium Engine', game: ENGINE_ID }); engineChanged();
+    child.on('exit', () => { if (pgeProcs.get(ENG_KEY) === child) pgeProcs.delete(ENG_KEY); engineRunning.delete(child.pid); markStopped(ENG_KEY); engineChanged(); });
+    return true;
+  }
   const child = spawn(exe, args, { cwd: path.dirname(exe), detached: true, stdio: 'ignore', windowsHide: false });
   child.on('error', () => {});
   engineRunning.set(child.pid, { version: ver, project: project || '' }); engineChanged();
@@ -1294,42 +1357,45 @@ function engineLaunch(ver, args, project) {
   child.unref();
   return true;
 }
-async function engineStatus() {
+async function engineStatus(con) {
   let list = { latest: '', versions: [] }, online = true; try { list = await engineVersions(); } catch (e) { online = false; }
-  const inst = engineInstalled();
+  const inst = engineInstalled(con);
   return { online, latest: list.latest, available: list.versions.map(v => ({ version: v.version, size: v.size || 0, at: v.at || '' })),
-    installed: Object.keys(inst).sort((a, b) => b.localeCompare(a, 'en', { numeric: true })).map(v => ({ version: v, installedAt: inst[v].installedAt || 0, dir: path.join(ENGINE_DIR, v) })),
-    running: [...engineRunning.values()], projects: await engineProjects(), projectsDir: PROJECTS_DIR() };
+    installed: Object.keys(inst).sort((a, b) => b.localeCompare(a, 'en', { numeric: true })).map(v => ({ version: v, installedAt: inst[v].installedAt || 0, dir: path.join(ENGINE_DIR_(con), v) })),
+    running: [...engineRunning.values()].filter(r => !!r.con === !!con), projects: await engineProjects(con), projectsDir: PROJECTS_DIR(con), console: !!con };
 }
-ipcMain.handle('eng:status', guard(async () => engineStatus()));
-ipcMain.handle('eng:install', guard(async ver => { if (ver != null && !validVer(ver)) throw new Error('bad version'); await engineInstall(ver); return true; }));
+// the page's engine calls go to the system that is open (the PC's engine, or the console's own)
+ipcMain.handle('eng:status', guard(async () => engineStatus(consoleOn)));
+ipcMain.handle('eng:install', guard(async ver => { if (ver != null && !validVer(ver)) throw new Error('bad version'); await engineInstall(ver, consoleOn); return true; }));
 ipcMain.handle('eng:uninstall', guard(async ver => {
-  if (!validVer(ver)) throw new Error('bad version'); if (engineRunningVersion(ver)) throw new Error('اقفل المحرك أول');
-  removeEngineShortcutsIfTarget(ver);
-  await fsp.rm(path.join(ENGINE_DIR, ver), { recursive: true, force: true }); await saveEngineReg(r => { delete r.versions[ver]; });
-  const left = Object.keys(engineInstalled()).sort((a, b) => b.localeCompare(a, 'en', { numeric: true })); if (left.length) makeEngineShortcut(left[0]);
+  const con = consoleOn;
+  if (!validVer(ver)) throw new Error('bad version'); if (engineRunningVersion(ver, con)) throw new Error('اقفل المحرك أول');
+  if (!con) removeEngineShortcutsIfTarget(ver);
+  await fsp.rm(path.join(ENGINE_DIR_(con), ver), { recursive: true, force: true }); await saveEngineReg(r => { delete r.versions[ver]; }, con);
+  const left = Object.keys(engineInstalled(con)).sort((a, b) => b.localeCompare(a, 'en', { numeric: true })); if (left.length && !con) makeEngineShortcut(left[0]);
   engineChanged(); return true; }));
 ipcMain.handle('eng:launch', guard(async (ver, project) => {
   if (!validVer(ver)) throw new Error('bad version');
-  if (project != null && !engineProjectOk(project)) throw new Error('المشروع مو موجود');
-  return engineLaunch(ver, project ? [project] : [], project); }));
+  if (project != null && !engineProjectOk(project, consoleOn)) throw new Error('المشروع مو موجود');
+  return engineLaunch(ver, project ? [project] : [], project, consoleOn); }));
 ipcMain.handle('eng:new', guard(async (ver, templ, name) => {
   if (!validVer(ver)) throw new Error('bad version');
   if (!['Blank', 'FirstPerson', 'ThirdPerson'].includes(templ)) throw new Error('قالب غير معروف');
   name = String(name || '').trim(); if (!name || name.length > 40 || /[\\/:*?"<>|]/.test(name)) throw new Error('اسم المشروع ما يصلح');
   // same folder name the editor makes (sanitizeName): ASCII symbols → '_', other letters stay, max 40 UTF-8 bytes
   let folder = name.replace(/[\x00-\x7f]/g, c => /[A-Za-z0-9_-]/.test(c) ? c : '_'); while (Buffer.byteLength(folder) > 40) folder = [...folder].slice(0, -1).join('');
-  if (fs.existsSync(path.join(PROJECTS_DIR(), folder))) throw new Error('فيه مشروع بنفس الاسم');
-  return engineLaunch(ver, ['--new', templ, name], ''); }));
+  if (fs.existsSync(path.join(PROJECTS_DIR(consoleOn), folder))) throw new Error('فيه مشروع بنفس الاسم');
+  return engineLaunch(ver, ['--new', templ, name], '', consoleOn); }));
 ipcMain.handle('eng:showFolder', guard(async what => {
-  if (what === 'projects') { await fsp.mkdir(PROJECTS_DIR(), { recursive: true }); shell.openPath(PROJECTS_DIR()); }
+  if (consoleOn) throw new Error('ملفات الكونسل تنفتح من داخل الكونسل');
+  if (what === 'projects') { await fsp.mkdir(PROJECTS_DIR(false), { recursive: true }); shell.openPath(PROJECTS_DIR(false)); }
   else if (validVer(what)) shell.openPath(path.join(ENGINE_DIR, what));
-  else if (engineProjectOk(what)) shell.showItemInFolder(what);
+  else if (engineProjectOk(what, false)) shell.showItemInFolder(what);
   return true; }));
 // projects change while the editor is open (save, new project): tell the page
 let engWatch = null;
-function watchProjects() { if (engWatch) return; try { fs.mkdirSync(PROJECTS_DIR(), { recursive: true }); let t = null;
-  engWatch = fs.watch(PROJECTS_DIR(), { recursive: true }, () => { clearTimeout(t); t = setTimeout(engineChanged, 600); }); } catch (e) {} }
+function watchProjects() { if (engWatch) return; try { fs.mkdirSync(PROJECTS_DIR(false), { recursive: true }); let t = null;
+  engWatch = fs.watch(PROJECTS_DIR(false), { recursive: true }, () => { clearTimeout(t); t = setTimeout(engineChanged, 600); }); } catch (e) {} }
 app.whenReady().then(watchProjects);
 
 // free / total space of the drive the games are installed on (console mode: "تخزين الجهاز")
@@ -1346,7 +1412,7 @@ ipcMain.handle('ps:launch', guard(async (id, edition, opts) => { const ver = opt
 ipcMain.handle('ps:features', guard(async () => ({ editions: true, running: true })));
 ipcMain.handle('ps:getRunning', guard(async () => runningList()));
 ipcMain.handle('ps:stop', guard(async id => { id = fromPage(id); if (!validId(id)) throw new Error('bad id'); stopGame(id); return true; }));
-ipcMain.handle('ps:showFolder', guard(async id => { id = fromPage(id); if (validId(id)) shell.openPath(gameDir(id, readReg()[id])); return true; }));
+ipcMain.handle('ps:showFolder', guard(async id => { id = fromPage(id); if (isCon(id)) throw new Error('ملفات الكونسل تبقى داخل الكونسل'); if (validId(id)) shell.openPath(gameDir(id, readReg()[id])); return true; }));
 ipcMain.handle('ps:setUser', guard(async u => { await setUser(u); return true; }));
 // the editions the player owns, per game (BLOCKFALL's launcher lets them pick among them)
 ipcMain.handle('ps:setOwned', guard(async o => {
@@ -1464,16 +1530,17 @@ let tvWin = null;
 function closeTv() { if (tvWin && !tvWin.isDestroyed()) tvWin.close(); }
 function openTv(app) {
   const a = TV_APPS[app]; if (!a) throw new Error('bad app');
-  if (tvWin && !tvWin.isDestroyed()) { tvWin.show(); tvWin.focus(); return; }
+  if (tvWin && !tvWin.isDestroyed()) { focusGame(TV_KEY); return; }
   const w = tvWin = new BrowserWindow({ fullscreen: true, backgroundColor: '#000000', title: a.title, autoHideMenuBar: true, show: false,
     webPreferences: { partition: a.partition, preload: path.join(__dirname, 'tv-preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false, backgroundThrottling: false } });
-  w.tvApp = app; w.setMenu(null);
+  w.tvApp = app; w.consoleMode = true; w.setMenu(null);
+  markRunning(TV_KEY, { name: 'YouTube', game: 'youtube' });
   w.webContents.setUserAgent(TV_UA);
   w.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   w.webContents.on('will-navigate', (e, url) => { try { if (!a.hosts.test(new URL(url).hostname)) e.preventDefault(); } catch (x) { e.preventDefault(); } });
-  w.webContents.on('before-input-event', (e, i) => { if (i.type === 'keyDown' && (i.key === 'Home' || i.key === 'F1')) { e.preventDefault(); closeTv(); } });
+  w.webContents.on('before-input-event', (e, i) => { if (i.type === 'keyDown' && (i.key === 'Home' || i.key === 'F1')) { e.preventDefault(); homePressed(false); } });
   w.once('ready-to-show', () => { if (!w.isDestroyed()) { w.show(); w.focus(); } });
-  w.on('closed', () => { if (tvWin === w) tvWin = null;
+  w.on('closed', () => { if (tvWin === w) tvWin = null; markStopped(TV_KEY);
     if (mainWin && !mainWin.isDestroyed()) { mainWin.show(); mainWin.focus(); mainWin.webContents.send('tv:closed', app); } });
   w.loadURL(a.url);
 }
@@ -1484,7 +1551,7 @@ ipcMain.handle('tv:state', guard(async () => tvWin && !tvWin.isDestroyed() ? { a
 const TV_KEYS = { up: 'Up', down: 'Down', left: 'Left', right: 'Right', a: 'Enter', b: 'Escape', x: 'MediaPlayPause', lb: 'MediaPreviousTrack', rb: 'MediaNextTrack' };
 ipcMain.on('tv:pad', (e, k) => {
   if (!tvWin || tvWin.isDestroyed() || e.sender !== tvWin.webContents) return;
-  if (k === 'guide') return closeTv();
+  if (k === 'guide') { if (!nativePad()) homePressed(false); return; }   // Home over YouTube: the Control Center (YouTube keeps playing)
   const code = TV_KEYS[k]; if (!code) return;
   tvWin.webContents.sendInputEvent({ type: 'keyDown', keyCode: code });
   if (code === 'Enter') tvWin.webContents.sendInputEvent({ type: 'char', keyCode: '\r' });

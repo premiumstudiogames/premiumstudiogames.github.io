@@ -45,6 +45,7 @@ if (ok) {
     setConsole: on => ipcRenderer.invoke('ps:setConsole', !!on),   // the console screen is open (games start full screen, Home opens the Control Center over them)
     onConsoleHome: cb => { const f = (e, d) => cb(d); ipcRenderer.on('bp:home', f); return () => ipcRenderer.removeListener('bp:home', f); },
     openShots: file => ipcRenderer.invoke('ps:openShots', file),
+    clips: () => ipcRenderer.invoke('ps:clips'),
     openClips: () => ipcRenderer.invoke('ps:openClips'),
     disk: () => ipcRenderer.invoke('ps:disk'),
     tv: { open: app => ipcRenderer.invoke('tv:open', app), close: () => ipcRenderer.invoke('tv:close'), apps: ['youtube'],

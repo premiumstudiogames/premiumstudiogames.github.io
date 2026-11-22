@@ -1,7 +1,7 @@
 /* PremiumPad: the controllers' Home button for Premium Games (console mode).
    SDL reads every controller in the background (also while another program - a game - has the focus):
    Xbox pads (the Xbox button, through XInput) and PlayStation pads (the PS button, through HID).
-   Out (stdout, one line each):  "ready", "pad <ps|xbox|other> <name>", "unpad", "home 1" (pressed), "home 0" (let go).
+   Out (stdout, one line each):  "ready", "pad <ps|xbox|other> <name>", "unpad", "home 1 <pid>" (pressed; pid = the program in front, 0 if none), "home 0" (let go).
    View + Menu (Back + Start) together also count as Home.
    In (stdin): "test" -> a short Home press (for the tests); "focus <pid>" -> that program's window to the front
    (a game in its own program, back from the console); the program ends when stdin closes (the app quit).
@@ -39,12 +39,16 @@ static int focusPid(DWORD pid) {
   }
   return GetForegroundWindow() == f.w;
 }
+/* the program in front when Home is pressed: Premium Games then knows whether it was over a game, an app or something else */
+static void homeDown(void) { char line[48]; DWORD pid = 0; HWND fg = GetForegroundWindow(); if (fg) GetWindowThreadProcessId(fg, &pid); snprintf(line, sizeof line, "home 1 %lu", (unsigned long)pid); out(line); }
 static DWORD WINAPI readIn(LPVOID p) { (void)p; char b[64];
   while (fgets(b, sizeof b, stdin)) {
     if (!strncmp(b, "test", 4)) test = 1;
     else if (!strncmp(b, "focus ", 6)) { char line[64]; DWORD pid = (DWORD)strtoul(b + 6, NULL, 10); snprintf(line, sizeof line, "focused %lu %d", (unsigned long)pid, pid ? focusPid(pid) : 0); out(line); }
   }
   quit = 1; return 0; }
+#else
+static void homeDown(void) { out("home 1 0"); }
 #endif
 
 int main(int argc, char** argv) {
@@ -80,8 +84,8 @@ int main(int argc, char** argv) {
       if (SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_GUIDE)) now = 1;
       if (SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_BACK) && SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_START)) cb = 1; }
     now = now || cb;
-    if (test) { test = 0; out("home 1"); SDL_Delay(80); out("home 0"); }
-    if (now != home) { home = now; out(home ? "home 1" : "home 0"); }
+    if (test) { test = 0; homeDown(); SDL_Delay(80); out("home 0"); }
+    if (now != home) { home = now; if (home) homeDown(); else out("home 0"); }
   }
   SDL_Quit();
   return 0;

@@ -341,8 +341,57 @@ app.whenReady().then(async () => {
     es = await call('eng:status');
     ok('engine: removed (files + icon), project kept', es.installed.length === 0 && !fs.existsSync(engLnk) && fs.existsSync(path.join(projDir, 'E2E_Game.pge.json')), `installed=${es.installed.length} icon=${fs.existsSync(engLnk)} project=${fs.existsSync(path.join(projDir, 'E2E_Game.pge.json'))}`);
     fs.rmSync(projDir, { recursive: true, force: true });
+    // ---- the console's own Premium Engine (its console version): installed in the console, opened there, Home over it
+    {
+      const cdir = path.join(process.env.LOCALAPPDATA, 'PremiumStudio', 'console', 'engine'), ckey = 'premium-engine--console';
+      const sent = []; { const wc = BrowserWindow.getAllWindows()[0].webContents; for (const w of BrowserWindow.getAllWindows()) { const c = w.webContents, o = c.send.bind(c); c.send = (ch, x) => { if (ch === 'bp:home') sent.push(x); return o(ch, x); }; } }
+      await call('ps:setConsole', true);
+      let ces = await call('eng:status');
+      ok('console engine: its own (nothing installed in the console yet)', ces.console === true && ces.installed.length === 0, JSON.stringify(ces.installed));
+      await call('eng:install', ces.latest); ces = await call('eng:status');
+      ok('console engine: installs into the console', ces.installed.length === 1 && ces.installed[0].dir.startsWith(cdir) && fs.existsSync(path.join(ces.installed[0].dir, 'PremiumEngine.exe')), ces.installed[0] && ces.installed[0].dir);
+      ok('console engine: no desktop icon', !fs.existsSync(engLnk));
+      await call('eng:new', ces.latest, 'FirstPerson', 'Console Game');
+      const cp = path.join(cdir, 'home', 'Projects', 'Console_Game', 'Console_Game.pge.json');
+      const ch = () => T.pgeProc(ckey), alive = () => !!ch() && ch().exitCode === null;
+      ok('console engine: opens as a console app (full screen, controller)', alive() && (ch().spawnargs || []).includes('--console') && !!(await call('ps:getRunning'))['premium-engine'], (ch() && ch().spawnargs || []).join(' '));
+      ok('console engine: its project is in the console', await waitFor(() => fs.existsSync(cp), 90000), cp);
+      await sleep(3000);
+      T.padLine('home 1 ' + ch().pid); await sleep(150); T.padLine('home 0');
+      const ccOpen = () => BrowserWindow.getAllWindows().find(w => !w.isDestroyed() && /cc\.html$/.test(w.webContents.getURL()) && w.isVisible());
+      ok('console engine: Home opens the Control Center over it', await waitFor(ccOpen, 8000));
+      const ecd = await call('cc:data'); ok('console engine: the Control Center knows it', ecd && ecd.key === ckey && ecd.name === 'Premium Engine', ecd && ecd.key);
+      await sleep(600); T.padLine('home 1 ' + process.pid); await sleep(150); T.padLine('home 0');
+      ok('console engine: Home again goes back to it', await waitFor(() => !ccOpen(), 6000));
+      let busyC = false; try { await call('eng:uninstall', ces.latest); } catch (e) { busyC = true; }
+      ok('console engine: can\'t remove while it is open', busyC);
+      await call('ps:stop', 'premium-engine');
+      ok('console engine: closes from the console (and saves itself)', await waitFor(() => !alive(), 30000) && !(await call('ps:getRunning'))['premium-engine']);
+      // Home over a program that isn't the console's: the console comes back
+      const n0 = sent.length; await sleep(600); T.padLine('home 1 4'); await sleep(150); T.padLine('home 0');
+      ok('Home over another program brings the console back', await waitFor(() => sent.length > n0, 5000), JSON.stringify(sent.slice(-1)));
+      await call('eng:uninstall', ces.latest); ces = await call('eng:status');
+      ok('console engine: removed from the console, projects kept', ces.installed.length === 0 && !fs.existsSync(path.join(cdir, ces.latest || 'x', 'PremiumEngine.exe')) && fs.existsSync(cp));
+      await call('ps:setConsole', false);
+      ok('console engine: not the PC\'s', (await call('eng:status')).console === false);
+    }
+    // ---- the console's media: clips and screenshots shown inside the console (psmedia://)
+    {
+      const cd = path.join(app.getPath('videos'), 'Premium Games', 'E2E'); fs.mkdirSync(cd, { recursive: true });
+      fs.writeFileSync(path.join(cd, '2026-01-01 10.00.00.webm'), Buffer.alloc(100, 7));
+      await call('ps:setConsole', true);
+      const clips = await call('ps:clips'), c = clips.find(x => x.folder === 'E2E');
+      ok('console media: clips listed', !!c && c.url.startsWith('psmedia://clip/'), c && c.url);
+      const mw = BrowserWindow.getAllWindows().find(w => /premiumstudiogames/.test(w.webContents.getURL()));
+      const got = mw && c ? await mw.webContents.executeJavaScript(`Promise.all([fetch(${JSON.stringify(c.url)}, {headers:{Range:'bytes=10-19'}}).then(async r => r.status + ' ' + r.headers.get('content-range') + ' ' + (await r.arrayBuffer()).byteLength), fetch('psmedia://clip/..%2F..%2F..%2Fwin.ini').then(r => r.status).catch(() => 'blocked')])`) : null;
+      ok('console media: a clip plays from the console page (seeking works)', got && got[0] === '206 bytes 10-19/100 10', JSON.stringify(got));
+      ok('console media: nothing outside the media folders', got && got[1] !== 200, JSON.stringify(got));
+      await call('ps:setConsole', false);
+      fs.rmSync(cd, { recursive: true, force: true });
+    }
     // ---- YouTube in console mode: the TV version, full screen, controller-driven, closes back to the console
     const tvShots = path.join(__dirname, 'shots'); fs.mkdirSync(tvShots, { recursive: true });
+    await call('ps:setConsole', true);   // YouTube is one of the console's apps
     await call('tv:open', 'youtube');
     const tvOk = await waitFor(async () => { const t = await call('tv:state'); return t && /youtube\.com\/tv/.test(t.url) && t.visible && /youtube/i.test(t.title); }, 45000);
     let tv = await call('tv:state');
@@ -359,8 +408,18 @@ app.whenReady().then(async () => {
     try { fs.writeFileSync(path.join(tvShots, 'youtube-moved.png'), (await tvw.webContents.capturePage()).toPNG()); } catch (e) {}
     const fake = await (async () => { ipcMain.emit('tv:pad', { sender: { id: -1 } }, 'guide'); await new Promise(r => setTimeout(r, 500)); return !!(await call('tv:state')); })();
     ok('youtube: other pages can\'t drive it', fake);
-    ipcMain.emit('tv:pad', { sender: tvw.webContents }, 'guide');
-    ok('youtube: guide button closes it, back to the console', await waitFor(async () => !(await call('tv:state')), 10000));
+    // a console app: it runs like a game - Home opens the Control Center over it (it keeps playing), closed from there
+    ok('youtube: runs as a console app', !!((await call('ps:getRunning')).youtube || {}).app);
+    tvw.focus(); await sleep(500);
+    T.padLine('home 1 ' + process.pid); await sleep(150); T.padLine('home 0');
+    const ccTv = () => BrowserWindow.getAllWindows().find(w => !w.isDestroyed() && /cc\.html$/.test(w.webContents.getURL()) && w.isVisible());
+    ok('youtube: Home opens the Control Center over it (still playing)', await waitFor(ccTv, 8000) && !!(await call('tv:state')), JSON.stringify(await call('cc:data').catch(() => null)).slice(0, 120));
+    ok('youtube: the Control Center knows it', ((await call('cc:data')) || {}).key === 'youtube--console');
+    await sleep(600); T.padLine('home 1 ' + process.pid); await sleep(150); T.padLine('home 0');
+    ok('youtube: Home again back to YouTube', await waitFor(() => !ccTv() && tvw.isVisible(), 6000));
+    await call('ps:stop', 'youtube');
+    ok('youtube: closes from the console, back to the console', await waitFor(async () => !(await call('tv:state')) && !(await call('ps:getRunning')).youtube, 10000));
+    await call('ps:setConsole', false);
   } catch (e) { ok('no crash', false, e && e.stack || String(e)); }
   fs.writeFileSync(path.join(__dirname, 'e2e-result.txt'), results.join('\n') + '\n');
   console.log('\n' + results.join('\n') + `\n${failed ? failed + ' FAILED' : 'ALL PASSED'}`);

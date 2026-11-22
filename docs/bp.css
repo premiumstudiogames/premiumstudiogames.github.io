@@ -147,7 +147,7 @@
 .ps-cover{position:relative;aspect-ratio:1;border-radius:.5vw;overflow:visible;background:rgba(255,255,255,.04)!important;transition:transform .12s}
 .ps-cover.shot{aspect-ratio:16/9}
 .ps-cover .art{position:absolute;inset:0;display:block;border-radius:.5vw;overflow:hidden}
-.ps-cover .art canvas,.ps-cover .art svg,.ps-cover img{width:100%!important;height:100%!important;object-fit:cover;display:block;border-radius:.5vw}
+.ps-cover .art canvas,.ps-cover .art svg,.ps-cover img,.ps-cover video{width:100%!important;height:100%!important;object-fit:cover;display:block;border-radius:.5vw}
 .ps-cover .nm{position:absolute;left:0;right:0;bottom:0;padding:2.4vw .9vw .8vw;background:linear-gradient(0deg,rgba(0,0,0,.92),transparent);border-radius:0 0 .5vw .5vw;font-size:1.3vw;opacity:0;transition:opacity .15s;display:flex;flex-direction:column;direction:ltr}
 .ps-cover .nm small{font-size:.95vw;color:var(--dim);direction:rtl;text-align:left}
 .ps-cover:focus{box-shadow:var(--ring);transform:scale(1.03);z-index:1}.ps-cover:focus .nm,.ps-cover:hover .nm{opacity:1}
@@ -203,7 +203,7 @@
 .ps-mi small{color:var(--dim)}.ps-mi.sel{background:rgba(31,134,255,.25)!important}
 .ps-mi.danger{color:#ff8d8d!important}
 .ps-mi:focus{background:#fff!important;color:#111!important}
-.ps-view{position:absolute;inset:0;display:grid;place-items:center}.ps-view img{max-width:100%;max-height:100%}
+.ps-view{position:absolute;inset:0;display:grid;place-items:center;background:#000}.ps-view img,.ps-view video{max-width:100%;max-height:100%}.ps-cover video{pointer-events:none;background:#000}
 .ps-view .cap{position:absolute;bottom:2vw;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.7);padding:.8vw 1.4vw;border-radius:99px;display:flex;gap:1.2vw;align-items:center;font-size:1.1vw}
 .ps-test .tb{display:flex;flex-wrap:wrap;gap:.5vw;direction:ltr}.ps-test .tb span{padding:.5vw .9vw;border-radius:.4vw;background:#24272f;color:#8b93a6;font-size:1vw}.ps-test .tb span.on{background:#ffd257;color:#1a1405}
 .ps-test .ta{display:flex;gap:3vw;margin-top:1.4vw;direction:ltr}.ps-test .stick{width:7vw;height:7vw;border-radius:50%;background:#24272f;display:grid;place-items:center}.ps-test .stick i{width:2vw;height:2vw;border-radius:50%;background:#ffd257}

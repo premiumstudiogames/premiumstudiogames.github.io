@@ -4,9 +4,11 @@
 export function makeBP(H){
   const {esc, GAMES, ownedEds, instOf, ED_TAG, PS, toast, cover, money, ent, state} = H;
   let on = false, root = null, host = null, sheet = null, raf = 0, wallRaf = 0, hideT = 0, fresh = false, lastRun = {};
-  let tvOpen = false;
+  let tvOpen = false, ENG = null;
+  // the console's Premium Engine (installed? which version? its projects)
+  async function loadEng(){ try { ENG = await PS.engine.status(); } catch(e) { ENG = ENG || {}; } if (on) draw(); return ENG; }
   if (PS && PS.tv && PS.tv.onClosed) PS.tv.onClosed(() => { tvOpen = false; if (on) { if (PS.fullscreen) PS.fullscreen(true).catch(() => {}); fresh = true; draw(); } });
-  let space = "games", sel = {games:-1, media:0}, pages = [], stack = [], toasts = [], unProg = null, unHome = null, unNat = null, unGuide = null, nativeHome = false, launching = null;
+  let space = "games", sel = {games:-1, media:0}, pages = [], stack = [], toasts = [], unProg = null, unHome = null, unNat = null, unGuide = null, unEng = null, nativeHome = false, launching = null;
   const pad = {last:{}, held:{}}, ST = {glyphs:"auto", sounds:true, wall:"autumn"};
   try { Object.assign(ST, JSON.parse(localStorage.getItem("bp-ui") || "{}")); } catch(e) {}
 const CF = () => PS && PS.consoleFiles;   // the console's own files on the PC (the app); the browser keeps a copy
@@ -112,6 +114,7 @@ const CF = () => PS && PS.consoleFiles;   // the console's own files on the PC (
     try { if (PS && PS.getSettings) Object.assign(ST, await PS.getSettings()); } catch(e) {}
     await loadFiles();
     if (PS && PS.setConsole) PS.setConsole(true).catch(() => {});
+    ENG = null; if (PS && PS.engine && PS.engine.onChanged && !unEng) unEng = PS.engine.onChanged(() => { if (on) loadEng(); });
     if (PS && PS.nativePad) PS.nativePad().then(v => { nativeHome = !!v; }).catch(() => {});
     if (PS && PS.onNativePad && !unNat) unNat = PS.onNativePad(v => { nativeHome = v; });
     if (PS && PS.onGuide && !unGuide) unGuide = PS.onGuide(d => { if (!on) return; if (d.long) { if (!onUsers()) { stack = []; pages = []; fresh = true; beep("back"); draw(); } } else context("guide"); });
@@ -120,6 +123,7 @@ const CF = () => PS && PS.consoleFiles;   // the console's own files on the PC (
     fresh = true; draw(); beep("open"); }
   function close(){ if (!on) return; on = false; document.body.classList.remove("bp-on"); stopWall(); if (host) host.remove(); host = null; root = null; pages = []; stack = [];
     document.removeEventListener("keydown", key, true); cancelAnimationFrame(raf); if (unProg) { unProg(); unProg = null; }
+    if (unEng) { unEng(); unEng = null; }
     if (unHome) { unHome(); unHome = null; } if (unNat) { unNat(); unNat = null; } if (unGuide) { unGuide(); unGuide = null; } if (PS && PS.setConsole) PS.setConsole(false).catch(() => {}); delete window.__bpCC;
     if (PS && PS.fullscreen) PS.fullscreen(false).catch(() => {}); else { try { if (document.fullscreenElement) document.exitFullscreen(); } catch(e) {} }
     if (location.hash === "#bigpicture") location.hash = "#library"; }
@@ -128,7 +132,10 @@ const CF = () => PS && PS.consoleFiles;   // the console's own files on the PC (
   function wheel(e){ const r = e.target.closest(".ps-row"); if (r && !stack.length && !pages.length) { e.preventDefault(); const it = rowItems(), i = cur(); const n = Math.max(0, Math.min(it.length - 1, i + (e.deltaY > 0 || e.deltaX > 0 ? 1 : -1))); focusTile(n); } }
 
   /* ---------- a game in front: its Home button comes here (the app shows the console over the game) ---------- */
-  function selectGame(gid){ const i = rowItems().findIndex(x => x.k === "game" && x.g === gid); if (i >= 0) { space = "games"; sel.games = i; } }
+  function selectGame(gid){
+    const app = {youtube:"youtube", "premium-engine":"engine"}[gid];   // a console app: its tile in Media
+    if (app) { const prev = space; space = "media"; const i = rowItems().findIndex(x => x.k === app); if (i >= 0) sel.media = i; else space = prev; return; }
+    const prev = space; space = "games"; const i = rowItems().findIndex(x => x.k === "game" && x.g === gid); if (i >= 0) sel.games = i; else space = prev; }
   function onHomeFromGame(d){ if (!on) return; const g = (d.key || "").split("--")[0]; stack = []; pages = []; launching = null; busy = "";
     if (g) selectGame(g); fresh = true; beep("open");
     if (d.page === "notes") { draw(); return push({t:"cc", panel:"notes"}); }
@@ -203,8 +210,13 @@ const CF = () => PS && PS.consoleFiles;   // the console's own files on the PC (
         ${cat.length ? `<div class="ps-sec">كتالوج الألعاب</div><div class="ps-cards mini">${cat.slice(0, 6).map(plusMini).join("")}</div>` : ""}
         ${!mon.length && !cat.length ? '<p class="ps-note">ألعاب بريميوم بلس تنعلن قريبًا.</p>' : ""}</div>`; }
     if (x.k === "youtube") return `<div class="ps-hub"><div class="ps-hubtitle ltr">YouTube</div><p class="ps-sub">شاهد على الشاشة الكبيرة وتنقّل بيد التحكم، مثل الكونسل. ${G("guide")} أو Home يرجعك هنا.</p><div class="ps-acts"><button class="ps-btn play" data-bp="tv" data-a="youtube">افتح</button></div></div>`;
-    if (x.k === "clips") return `<div class="ps-hub"><div class="ps-hubtitle">المقاطع</div><p class="ps-sub">سجّل وأنت تلعب بـ F9، والمقاطع تنحفظ في مجلد الفيديوهات.</p><div class="ps-acts"><button class="ps-btn play" data-bp="clips">افتح المجلد</button></div></div>`;
-    if (x.k === "engine") return `<div class="ps-hub"><div class="ps-hubtitle">Premium Engine</div><p class="ps-sub">اصنع ألعابك للكمبيوتر. يفتح المحرر على سطح المكتب.</p><div class="ps-acts"><button class="ps-btn play" data-bp="engine">افتح المحرك</button></div></div>`;
+    if (x.k === "clips") return `<div class="ps-hub"><div class="ps-hubtitle">المقاطع</div><p class="ps-sub">سجّل وأنت تلعب بـ F9، وشغّل مقاطعك هنا.</p><div class="ps-acts"><button class="ps-btn play" data-bp="clips">افتح</button></div></div>`;
+    if (x.k === "engine") { if (!ENG && PS && PS.engine) loadEng(); const e = ENG || {}, v = (e.installed || [])[0], p = S().PROGRESS["premium-engine"];
+      const upd = v && e.latest && e.latest.localeCompare(v.version, "en", {numeric:true}) > 0, n = (e.projects || []).length;
+      const acts = p ? `<button class="ps-btn" data-bp="none">${p.phase === "extract" ? "يثبّت…" : "ينزّل… " + (p.total ? Math.round(100 * p.received / p.total) + "%" : "")}</button>`
+        : v ? `<button class="ps-btn play" data-bp="engine">افتح</button>${upd ? `<button class="ps-btn" data-bp="enginst">حدّث إلى ${esc(e.latest)}</button>` : ""}<button class="ps-btn ghost" data-bp="engdel">احذف</button>`
+        : `<button class="ps-btn play" data-bp="enginst">نزّل نسخة الكونسل</button>`;
+      return `<div class="ps-hub"><div class="ps-hubtitle">Premium Engine</div><p class="ps-sub">نسخة الكونسل: تشتغل هنا بملء الشاشة وبيد التحكم، ومشاريعها في تخزين الكونسل.${v ? ` <span class="num">${esc(v.version)}</span> · ${n} ${n === 1 ? "مشروع" : "مشاريع"}` : ""}</p><div class="ps-acts">${acts}</div></div>`; }
     return ""; }
 
   function troCounts(ach){ const t = {platinum:0, gold:0, silver:0, bronze:0}; ach.list.forEach(a => { if (a.got) t[a.tier] = (t[a.tier] || 0) + 1; });
@@ -237,6 +249,9 @@ const CF = () => PS && PS.consoleFiles;   // the console's own files on the PC (
     return `<span class="sbg waves">${wavesSVG()}</span><i class="shade soft"></i>`; }
   const PLUSBG = '<span class="sbg plus"><i></i><i></i><b></b></span>';
   const bgKey = x => !x || x.k === "welcome" ? "w" : x.k === "game" ? "g" + x.g : x.k === "store" ? "s" : x.k === "plus" ? "p" : x.k === "youtube" ? "y" : "v";
+  let CLIPS = null, clipsLoading = false;
+  function loadClips(){ if (CLIPS || clipsLoading) return; if (!PS || !PS.clips) { CLIPS = []; return; } clipsLoading = true;
+    PS.clips().then(l => { CLIPS = l || []; }).catch(() => { CLIPS = []; }).finally(() => { clipsLoading = false; if (on) softRefresh(); }); }
   function loadShots(){ if (SHOTS || !PS || !PS.screenshots) return; SHOTS = [];
     Promise.all(mine().map(g => PS.screenshots(g.id).then(l => l.map(x => Object.assign(x, {g:g.id}))).catch(() => []))).then(r => { SHOTS = r.flat().sort((a, b) => b.name.localeCompare(a.name)); if (on) softRefresh(); }); }
   function bannerHTML(){ loadShots(); const x = SHOTS && SHOTS[0];
@@ -288,6 +303,9 @@ const CF = () => PS && PS.consoleFiles;   // the console's own files on the PC (
     if (P.t === "friends") { const s = S(), fr = Object.entries(s.FRIENDS).filter(([, f]) => f.status === "ok").sort((a, b) => s.online(b[0]) - s.online(a[0]));
       return `<div class="ps-page"><header class="ps-ph"><span class="pic">${I.base}</span><h1>قاعدة الألعاب</h1></header><div class="ps-count"><span>الأصدقاء: <b class="num">${fr.length}</b></span><span>متصل: <b class="num">${fr.filter(([id]) => s.online(id)).length}</b></span></div>
         <div class="ps-list">${fr.map(([id, f]) => friendRow(id, f)).join("") || '<p class="ps-empty">ما عندك أصدقاء للحين. أضفهم من المتجر.</p>'}</div></div>`; }
+    if (P.t === "clips") { loadClips();
+      return `<div class="ps-page"><header class="ps-ph"><span class="pic">${I.clip}</span><h1>المقاطع</h1></header>
+        ${!CLIPS ? '<p class="ps-empty">يحمّل…</p>' : CLIPS.length ? `<div class="ps-count"><span>المقاطع: <b class="num">${CLIPS.length}</b></span></div><div class="ps-grid shots">${CLIPS.map((x, i) => `<button class="ps-cover shot" data-bp="clip" data-i="${i}"><video src="${x.url}#t=0.5" muted preload="metadata"></video><span class="nm"><bdi dir="ltr">${esc(x.folder)}</bdi></span></button>`).join("")}</div>` : '<p class="ps-empty">ما عندك مقاطع. اضغط F9 وأنت تلعب عشان تسجّل.</p>'}</div>`; }
     if (P.t === "gallery") { loadShots();
       return `<div class="ps-page"><header class="ps-ph"><span class="pic">${I.shot}</span><h1>معرض الوسائط</h1></header>
         ${!PS || !PS.screenshots ? '<p class="ps-empty">المعرض في تطبيق Premium Games.</p>' : !SHOTS ? '<p class="ps-empty">يحمّل…</p>' : SHOTS.length ? `<div class="ps-count"><span>اللقطات: <b class="num">${SHOTS.length}</b></span></div><div class="ps-grid shots">${SHOTS.map((x, i) => `<button class="ps-cover shot" data-bp="shot" data-i="${i}"><img src="${x.thumb}" alt=""><span class="nm">${esc((H.byId(x.g) || {}).en || "")}</span></button>`).join("")}</div>` : '<p class="ps-empty">ما عندك لقطات. اضغط F12 وأنت تلعب.</p>'}</div>`; }
@@ -427,7 +445,7 @@ const CF = () => PS && PS.consoleFiles;   // the console's own files on the PC (
         + `<div class="ps-sec">شكل أزرار اليد</div>` + pick(ST.glyphs || "auto", [["auto","تلقائي حسب اليد"],["xbox","إكس بوكس (A B X Y)"],["ps","بلايستيشن (✕ ○ □ △)"]], "glyphset"); }
     else if (c[0] === "notes") body = sw("toasts", "الإشعارات المنبثقة", "تطلع فوق يمين الشاشة: تنزيلات، أصدقاء، يد التحكم", "lset");
     else if (c[0] === "capture") body = row("لقطة شاشة", "وأنت تلعب", "<kbd class=\"g\">F12</kbd>") + row("سجّل مقطع", "اضغط مرة تبدأ ومرة توقف", "<kbd class=\"g\">F9</kbd>")
-        + `<button class="ps-set" data-bp="page" data-p="gallery"><span><b>معرض الوسائط</b><small>كل لقطاتك</small></span><i class="val">${G("a")}</i></button><button class="ps-set" data-bp="clips"><span><b>مجلد المقاطع</b><small>ينفتح على سطح المكتب</small></span><i class="val">${G("a")}</i></button>`;
+        + `<button class="ps-set" data-bp="page" data-p="gallery"><span><b>معرض الوسائط</b><small>كل لقطاتك</small></span><i class="val">${G("a")}</i></button><button class="ps-set" data-bp="clips"><span><b>المقاطع</b><small>كل مقاطعك</small></span><i class="val">${G("a")}</i></button>`;
     return `<div class="ps-page light set sub"><header class="ps-shd"><span class="ic">${I[c[2]]}</span><h1>${c[1]}</h1></header><div class="ps-list set">${body}</div></div>`; }
   function profileHTML(){ const s = S(), p = s.PROFILE || {}, own = mine(), tot = own.reduce((a, g) => a + mins(g.id), 0), tro = own.reduce((a, g) => a + H.achOf(g.id).got, 0);
     const n = p.name || (s.user && s.user.displayName) || "ضيف";
@@ -467,7 +485,7 @@ const CF = () => PS && PS.consoleFiles;   // the console's own files on the PC (
         <button class="ps-mi" data-bp="gpage" data-g="${g.id}">تفاصيل اللعبة</button>
         ${eds.length ? `<button class="ps-mi" data-bp="addto" data-g="${g.id}">أضف إلى قائمة ألعاب</button>` : ""}
         ${inList ? `<button class="ps-mi" data-bp="rmfrom" data-g="${g.id}" data-id="${inList}">احذف من هذي القائمة</button>` : ""}
-        ${st.inst && PS ? `<button class="ps-mi" data-bp="mact" data-a="shortcut" data-k="${st.k}">أيقونة على سطح المكتب</button><button class="ps-mi" data-bp="mact" data-a="folder" data-k="${st.k}">افتح مكان الملفات</button><button class="ps-mi" data-bp="mact" data-a="verify" data-k="${st.k}">تحقّق من ملفات اللعبة</button><button class="ps-mi danger" data-bp="mact" data-a="uninstall" data-k="${st.k}">احذف</button>` : ""}
+        ${st.inst && PS ? `<button class="ps-mi" data-bp="mact" data-a="verify" data-k="${st.k}">تحقّق من ملفات اللعبة</button><button class="ps-mi danger" data-bp="mact" data-a="uninstall" data-k="${st.k}">احذف</button>` : ""}
         ${st.run ? `<button class="ps-mi danger" data-bp="act" data-a="stop" data-g="${g.id}" data-e="${st.ed}">إغلاق اللعبة</button>` : ""}
         <button class="ps-mi" data-bp="buy" data-g="${g.id}">صفحة المتجر</button></div>`; }
     if (L.t === "lists") { const lists = LISTS.all();
@@ -492,7 +510,9 @@ const CF = () => PS && PS.consoleFiles;   // the console's own files on the PC (
         ${L.err ? `<p class="err">${esc(L.err)}</p>` : ""}
         <button class="ps-mi ok" data-bp="lgo">تسجيل الدخول</button><button class="ps-mi" data-bp="lnew">ما عندك حساب؟ أنشئ حساب جديد</button></div>`;
     if (L.t === "confirm") return `<div class="ps-dlg"><h2>${esc(L.title)}</h2><p>${esc(L.text || "")}</p><button class="ps-mi danger" data-bp="yes">${esc(L.ok)}</button><button class="ps-mi" data-bp="back">إلغاء</button></div>`;
-    if (L.t === "view") { const x = SHOTS[L.i]; return `<div class="ps-view"><img src="${x.thumb}" alt=""><div class="cap">${esc(x.name)} · <span class="num">${L.i + 1}/${SHOTS.length}</span><button class="ps-btn ghost" data-bp="showshot">افتح في المجلد</button></div></div>`; }
+    if (L.t === "view") { const x = SHOTS[L.i]; return `<div class="ps-view"><img src="${x.url || x.thumb}" alt=""><div class="cap">${esc(x.name)} · <span class="num">${L.i + 1}/${SHOTS.length}</span></div></div>`; }
+    // a clip plays here, in the console: A play / pause, left / right 10 seconds, LB / RB the clip before / after
+    if (L.t === "clip") { const x = CLIPS[L.i]; return `<div class="ps-view"><video id="psClip" src="${x.url}" autoplay playsinline></video><div class="cap"><bdi dir="ltr">${esc(x.folder)}</bdi> · <bdi dir="ltr">${esc(x.name)}</bdi> · <span class="num">${L.i + 1}/${CLIPS.length}</span> · ${G("a")} تشغيل/إيقاف · ${G("left")}${G("right")} ١٠ ثواني</div></div>`; }
     if (L.t === "friend") { const f = S().FRIENDS[L.f] || {}, quick = ["يلا نلعب؟", "دقيقة وجاي", "أحسنت 👏", "باي، أشوفك بعدين"];
       return `<div class="ps-dlg"><h2>@${esc(f.username || "")}</h2><button class="ps-mi" data-bp="call" data-f="${L.f}">📞 مكالمة صوتية</button>
         ${quick.map(t => `<button class="ps-mi" data-bp="qmsg" data-f="${L.f}" data-m="${esc(t)}">💬 ${esc(t)}</button>`).join("")}<button class="ps-mi" data-bp="qtype" data-f="${L.f}">⌨ اكتب رسالة</button></div>`; }
@@ -766,9 +786,14 @@ const CF = () => PS && PS.consoleFiles;   // the console's own files on the PC (
     if (k === "qtype") { const f = el.dataset.f; stack.pop(); return push({t:"kbd", v:"", lang:"ar", ph:"اكتب رسالتك…", done:async v => { if (v.trim()) { try { await H.sendMsg(f, v.trim()); notify(I.friends, "انرسلت ✓"); } catch(e) { notify(I.friends, "ما انرسلت"); } } }}); }
     if (k === "shot") { if (!SHOTS || !SHOTS[+el.dataset.i]) return; stack = stack.filter(L => L.t !== "cc"); return push({t:"view", i:+el.dataset.i}); }
     if (k === "showshot") { const x = SHOTS[top.i]; if (PS && PS.openShots) PS.openShots(x.file); return; }
-    if (k === "clips") { if (PS && PS.openClips) PS.openClips().catch(() => {}); else notify(I.clip, "المقاطع في تطبيق Premium Games"); return; }
+    if (k === "clips") { CLIPS = null; return openPage({t:"clips"}); }   // played here, not in a folder on the PC
+    if (k === "clip") { if (!CLIPS || !CLIPS[+el.dataset.i]) return; return push({t:"clip", i:+el.dataset.i}); }
+    // Premium Engine's console version: its own install in the console, opened here as a console app
     if (k === "engine") { if (!PS || !PS.engine) return notify(I.eng, "المحرك في تطبيق Premium Games");
-      try { const s = await PS.engine.status(); const v = s.installed[0]; if (!v) { notify(I.eng, "ثبّت Premium Engine من تبويب Engine في التطبيق"); return; } await PS.engine.launch(v.version); notify(I.eng, "يفتح Premium Engine على سطح المكتب…"); } catch(e) { notify(I.eng, String(e && e.message || e)); } return; }
+      try { const s = ENG = await PS.engine.status(); const v = s.installed[0]; if (!v) return activate(fake({bp:"enginst"})); await PS.engine.launch(v.version); notify(I.eng, "يفتح Premium Engine…"); } catch(e) { notify(I.eng, String(e && e.message || e)); } return; }
+    if (k === "enginst") { try { notify(I.eng, "ينزّل Premium Engine للكونسل…"); await PS.engine.install(); await loadEng(); notify(I.eng, "Premium Engine جاهز ✓"); } catch(e) { notify(I.eng, String(e && e.message || e)); } return draw(); }
+    if (k === "engdel") { const v = ((ENG || {}).installed || [])[0]; if (!v) return;
+      return push({t:"confirm", title:"تحذف Premium Engine من الكونسل؟", text:"مشاريعك في الكونسل تبقى.", ok:"احذف", yes:async () => { try { await PS.engine.uninstall(v.version); await loadEng(); notify(I.eng, "انحذف"); } catch(e) { notify(I.eng, String(e && e.message || e)); } }}); }
     if (k === "set") { ST[el.dataset.k] = !ST[el.dataset.k]; if (PS && PS.setSettings) { try { Object.assign(ST, await PS.setSettings({[el.dataset.k]:ST[el.dataset.k]})); } catch(e) {} } return draw(); }
     if (k === "glyph") return push({t:"glyph"});
     if (k === "glyphset") { ST.glyphs = el.dataset.v; if (PS && PS.setSettings) PS.setSettings({glyphs:ST.glyphs}).catch(() => {}); return top && top.t === "glyph" ? pop() : draw(); }
@@ -847,6 +872,12 @@ const CF = () => PS && PS.consoleFiles;   // the console's own files on the PC (
     if (space === "media") return setSpace("games");
     if (cur() !== welcomeAt() && space === "games") { focusTile(welcomeAt()); return; }
     beep("back"); }
+  function clipVideo(){ return root && root.getElementById ? root.getElementById("psClip") : document.getElementById("psClip"); }
+  function clipKey(k){ const top = stack[stack.length - 1]; if (!top || top.t !== "clip") return false; const v = clipVideo(); if (!v) return false;
+    if (k === "a") { if (v.paused) v.play().catch(() => {}); else v.pause(); }
+    else if (k === "left" || k === "right") v.currentTime = Math.max(0, Math.min((v.duration || 0) - 0.1, v.currentTime + (k === "right" ? 10 : -10)));
+    else if (k === "lb" || k === "rb") { top.i = (top.i + (k === "rb" ? 1 : -1) + CLIPS.length) % CLIPS.length; draw(); }
+    else return false; return true; }
   function viewStep(d){ const top = stack[stack.length - 1]; if (top && top.t === "view") { top.i = (top.i + d + SHOTS.length) % SHOTS.length; draw(); return true; } return false; }
   function shoulder(d){ const P = pages[pages.length - 1]; if (onUsers()) return;
     if (P && P.t === "store") { const t = [...STABS.map(x => x[0]), "wish"]; P.tab = t[(t.indexOf(P.tab || "new") + d + t.length) % t.length]; fresh = true; beep("move"); return draw(); }
@@ -890,12 +921,13 @@ const CF = () => PS && PS.consoleFiles;   // the console's own files on the PC (
       const now = performance.now();
       for (const [k, v] of Object.entries(st)) {
         const prev = pad.last[p.index + k]; pad.last[p.index + k] = v;
-        if (tvOpen) continue;   // YouTube has the controller
+        if (tvOpen && !document.hasFocus()) continue;   // YouTube has the controller (not when Home brought the console over it)
         const rep = ["up","down","left","right","lt","rt"].includes(k);
         if (v && !prev) pad.held[p.index + k] = now + 280;
         const fire = v && (!prev || (rep && now > pad.held[p.index + k]));
         if (!fire) continue; if (prev) pad.held[p.index + k] = now + 85;
         if (host) host.classList.add("nomouse");
+        if (clipKey(k)) continue;   // a clip is playing: the buttons drive it
         if (k === "up") move(0, -1); else if (k === "down") move(0, 1);
         else if (k === "left") { if (!viewStep(-1)) move(-1, 0); } else if (k === "right") { if (!viewStep(1)) move(1, 0); }
         else if (k === "a") { const a = root.activeElement; if (a && a.dataset && a.dataset.bp) activate(a); }
