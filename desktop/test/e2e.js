@@ -244,6 +244,8 @@ app.whenReady().then(async () => {
       ok('engine game: still running after 8 s (the world loads)', alive());
       try { fs.mkdirSync(path.join(__dirname, 'shots'), { recursive: true }); const img = await require('electron').desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1280, height: 720 } }); if (img[0]) fs.writeFileSync(path.join(__dirname, 'shots', 'engine-game.png'), img[0].thumbnail.toPNG()); } catch (e) {}
       const ccW2 = () => BrowserWindow.getAllWindows().find(w => !w.isDestroyed() && /cc\.html$/.test(w.webContents.getURL()) && w.isVisible());
+      T.padProc().stdin.write('focus ' + T.pgeProc(ckey).pid + '\n');   // the game in front, as the player sees it
+      ok('engine game: in front', await waitFor(() => T.lastFocused() === 'focused ' + T.pgeProc(ckey).pid + ' 1', 8000), T.lastFocused());
       T.padPress();
       ok('engine game: Home opens the Control Center over it', await waitFor(ccW2, 10000));
       const ecd = await call('cc:data');
