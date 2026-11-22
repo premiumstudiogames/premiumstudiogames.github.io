@@ -44,6 +44,7 @@ private:
   static constexpr int SHADOW_SIZE = 2048;   // one cascade; the shadow texture holds 2 x 2
   struct Post { int w = 0, h = 0, samples = 0, want = -1; unsigned msFbo = 0, msColor = 0, msDepth = 0, hdrFbo = 0, hdrTex = 0, depthTex = 0, aoFbo[2] = {0, 0}, aoTex[2] = {0, 0};
     unsigned bloomFbo[6] = {0}, bloomTex[6] = {0}; int bloomN = 0, bw[6] = {0}, bh[6] = {0}; } post_;
+  unsigned sky_ = 0;   // the sky behind everything (world.setSky skyTop / sun / moon / stars)
   unsigned postVao_ = 0, ssao_ = 0, aoBlur_ = 0, bloomPre_ = 0, bloomDown_ = 0, bloomUp_ = 0, compose_ = 0;
   glm::mat4 casc_[4]; float split_[4] = {0, 0, 0, 0}, texel_[4] = {0, 0, 0, 0}; int cascN_ = 0;
   void ensurePost(int w, int h);

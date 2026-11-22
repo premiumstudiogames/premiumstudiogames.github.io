@@ -170,6 +170,17 @@ uniform vec4 uColor; out vec4 frag; void main(){ frag = uColor; })";
 // ---- post passes (a triangle that covers the screen)
 static const char* POST_VS = R"(#version 330 core
 out vec2 vUv; void main(){ vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2)); vUv = p; gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0); })";
+// the sky: from the horizon colour to the top colour, the sun's disc with a glow, the moon (opposite the sun), stars that come out at night
+static const char* SKY_FS = R"(#version 330 core
+in vec2 vUv; out vec4 frag; uniform mat4 uInvVP; uniform vec3 uTop, uHor, uSunC, uSunD; uniform float uSunR, uMoon, uStars;
+float h3(vec3 p){ p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+void main(){ vec4 a = uInvVP * vec4(vUv * 2.0 - 1.0, -1.0, 1.0), b = uInvVP * vec4(vUv * 2.0 - 1.0, 1.0, 1.0); vec3 d = normalize(b.xyz / b.w - a.xyz / a.w);
+  float h = max(d.y, 0.0); vec3 c = mix(uHor, uTop, pow(h, 0.55));
+  if (uStars > 0.0 && d.y > 0.05) { vec3 g = floor(d * 180.0); float r = h3(g); if (r > 0.985) { vec3 cc = (g + 0.5) / 180.0; float k = smoothstep(0.0035, 0.0, length(d - normalize(cc))); c += vec3(k * uStars * (0.6 + 0.4 * h3(g + 7.0))) * 2.0; } }
+  float cs = dot(d, uSunD);
+  if (dot(uSunC, uSunC) > 0.0) { float disc = smoothstep(cos(uSunR), cos(uSunR * 0.9), cs); float halo = pow(max(cs, 0.0), 220.0) * 0.6 + pow(max(cs, 0.0), 1400.0) * 0.8; c = mix(c, uSunC, disc) + uSunC * halo * 0.35; }
+  if (uMoon > 0.0) { float m = smoothstep(cos(uSunR * 0.75), cos(uSunR * 0.68), -cs); c = mix(c, vec3(1.6, 1.7, 1.85), m * uMoon); }
+  frag = vec4(c, 1.0); })";
 // ambient occlusion from the depth buffer: 12 samples in the half sphere over each pixel (view space), turned per pixel
 static const char* SSAO_FS = R"(#version 330 core
 in vec2 vUv; out vec4 frag; uniform sampler2D uDepth; uniform mat4 uProj, uInvProj; uniform vec2 uTexel; uniform float uRadius;
@@ -252,7 +263,7 @@ static void V3(unsigned p, const char* n, const glm::vec3& v) { glUniform3f(U(p,
 bool Renderer::init() {
   std::string litFs = std::string(LIT_FS_HEAD) + LIGHT_LIB + LIT_FS_MAIN, voxFs = std::string(VOX_FS_HEAD) + LIGHT_LIB + VOX_FS_MAIN, watFs = std::string(VOX_FS_HEAD) + LIGHT_LIB + WAT_FS_MAIN;
   lit_ = compile(LIT_VS, litFs.c_str(), "lit"); vox_ = compile(VOX_VS, voxFs.c_str(), "voxels"); wat_ = compile(VOX_VS, watFs.c_str(), "water"); flat_ = compile(FLAT_VS, FLAT_FS, "flat"); depth_ = compile(DEPTH_VS, DEPTH_FS, "depth"); vdepth_ = compile(VDEPTH_VS, VDEPTH_FS, "voxel depth"); idp_ = compile(DEPTH_VS, ID_FS, "id"); text_ = compile(TEXT_VS, TEXT_FS, "text");
-  ssao_ = compile(POST_VS, SSAO_FS, "ssao"); aoBlur_ = compile(POST_VS, AOBLUR_FS, "ao blur"); bloomPre_ = compile(POST_VS, BLOOMPRE_FS, "bloom"); bloomDown_ = compile(POST_VS, BLOOMDOWN_FS, "bloom down"); bloomUp_ = compile(POST_VS, BLOOMUP_FS, "bloom up"); compose_ = compile(POST_VS, COMPOSE_FS, "compose");
+  ssao_ = compile(POST_VS, SSAO_FS, "ssao"); aoBlur_ = compile(POST_VS, AOBLUR_FS, "ao blur"); bloomPre_ = compile(POST_VS, BLOOMPRE_FS, "bloom"); bloomDown_ = compile(POST_VS, BLOOMDOWN_FS, "bloom down"); bloomUp_ = compile(POST_VS, BLOOMUP_FS, "bloom up"); compose_ = compile(POST_VS, COMPOSE_FS, "compose"); sky_ = compile(POST_VS, SKY_FS, "sky");
   glGenVertexArrays(1, &postVao_);
   glGenVertexArrays(1, &textVao_); glBindVertexArray(textVao_); glGenBuffers(1, &textVbo_); glBindBuffer(GL_ARRAY_BUFFER, textVbo_);
   glEnableVertexAttribArray(0); glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 20, (void*)0); glEnableVertexAttribArray(1); glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 20, (void*)12); glBindVertexArray(0);
@@ -283,7 +294,7 @@ bool Renderer::init() {
   return true;
 }
 void Renderer::shutdown() { glDeleteProgram(vox_); glDeleteProgram(wat_); glDeleteProgram(text_); glDeleteVertexArrays(1, &textVao_); glDeleteBuffers(1, &textVbo_); glDeleteProgram(lit_); glDeleteProgram(flat_); glDeleteProgram(depth_); glDeleteProgram(vdepth_); glDeleteProgram(idp_); glDeleteFramebuffers(1, &shadowFbo_); glDeleteTextures(1, &shadowTex_);
-  for (unsigned q : {ssao_, aoBlur_, bloomPre_, bloomDown_, bloomUp_, compose_}) glDeleteProgram(q); glDeleteVertexArrays(1, &postVao_); freePost();
+  for (unsigned q : {ssao_, aoBlur_, bloomPre_, bloomDown_, bloomUp_, compose_, sky_}) glDeleteProgram(q); glDeleteVertexArrays(1, &postVao_); freePost();
   for (GpuMesh* m : {&wireBox_, &wireCapsule_, &arrow_, &axes_, &wireCam_, &grid_}) destroy(*m); releasePrimitives(); }
 
 // quads for each glyph of the ImGui font atlas (the big font, index 1 when loaded), centred on the origin, 1 unit = text size
@@ -345,7 +356,7 @@ static glm::vec3 untonemap(glm::vec3 display, float exposure) {
 
 void Renderer::shadowPass(const Frame& f, const Camera& cam, bool& has) {
   has = false; cascN_ = 0; const LightItem* sun = nullptr; for (auto& l : f.lights) if (l.type == 0) { sun = &l; break; }
-  if (!sun || !sun->shadows || f.viewMode != VM_Lit) return;
+  if (!sun || !sun->shadows || f.viewMode != VM_Lit || quality.shadowDistance <= 0) return;   // shadowDistance 0: no sun shadows (settings)
   if (f.voxels.empty() && f.draws.empty()) return;
   glm::vec3 d = glm::normalize(sun->dir); glm::vec3 up = std::abs(d.y) > 0.99f ? glm::vec3(0, 0, 1) : glm::vec3(0, 1, 0);
   glm::mat4 inv = glm::inverse(cam.proj * cam.view); glm::vec3 fwd = -glm::vec3(glm::inverse(cam.view)[2]);
@@ -436,6 +447,13 @@ void Renderer::render(const Frame& f, const Camera& cam, int w, int h, const Ren
     glm::vec3 fogLin = f.viewMode == VM_Lit ? untonemap(f.world.fogColor, expo) : lin(f.world.fogColor);
     glBindFramebuffer(GL_FRAMEBUFFER, P.samples ? P.msFbo : P.hdrFbo); glViewport(0, 0, w, h);
     glClearColor(bgLin.r, bgLin.g, bgLin.b, 1); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    if (f.viewMode == VM_Lit && f.world.skyTop.x >= 0 && sky_) {   // the sky (scripts): drawn first, everything else covers it
+      glDisable(GL_DEPTH_TEST); glDepthMask(GL_FALSE); glDisable(GL_BLEND); glUseProgram(sky_); glBindVertexArray(postVao_);
+      bool under = glm::distance(f.world.sky, f.world.fogColor) < 1e-4f && f.world.fogDensity > 0.05f;   // under water: just the water colour
+      M4(sky_, "uInvVP", glm::inverse(vp)); V3(sky_, "uTop", under ? bgLin : untonemap(f.world.skyTop, expo)); V3(sky_, "uHor", bgLin);
+      V3(sky_, "uSunC", under ? glm::vec3(0) : lin(f.world.sunDisc) * 4.f); V3(sky_, "uSunD", glm::normalize(f.world.sunDiscDir)); glUniform1f(U(sky_, "uSunR"), f.world.sunSize);
+      glUniform1f(U(sky_, "uMoon"), under ? 0.f : f.world.moon); glUniform1f(U(sky_, "uStars"), under ? 0.f : f.world.stars);
+      glDrawArrays(GL_TRIANGLES, 0, 3); glDepthMask(GL_TRUE); glEnable(GL_DEPTH_TEST); }
     glEnable(GL_DEPTH_TEST); glDepthFunc(GL_LEQUAL); glDepthMask(GL_TRUE); glDisable(GL_CULL_FACE); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glm::vec3 camFwd = -glm::vec3(glm::inverse(cam.view)[2]);
     auto common = [&](unsigned p) {

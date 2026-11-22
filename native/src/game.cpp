@@ -3,6 +3,7 @@
 #include "arabic.h"
 #include <imgui.h>
 #include <nlohmann/json.hpp>
+#include <chrono>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <algorithm>
@@ -88,6 +89,7 @@ void Game::clear() {
   if (audio_) audio_->stopAll();
   if (models_) { models_->setBlocks(nullptr); models_->clear(); }
   if (scripts_ && started_) for (int b = 0; b < scripts_->count(); b++) scripts_->call(b, EV_Stop);   // last chance to save
+  if (net_) { net_->stop(); net_->lanSearch(false); net_->take(); }
   if (ui_) { ui_->setVoxels(nullptr); ui_->reset(); }
   if (scripts_) scripts_->shutdown();
   scripts_.reset();
@@ -106,7 +108,7 @@ bool Game::start() {
   if (!pad_) for (int i = 0; i < SDL_NumJoysticks(); i++) padOpen(i);
   clear();
   const Level* L = project_.level(levelName); if (!L) { logMsg("error: level \"" + levelName + "\" not found", LogKind::Error); return false; }
-  level_ = *L; time_ = 0; restartRequested_ = false; tune_ = Tune(); grounded_ = running_ = sneaking_ = tapRun_ = false;
+  level_ = *L; time_ = 0; restartRequested_ = false; tune_ = Tune(); sunSet_ = false; mouseSens_ = 1; grounded_ = running_ = sneaking_ = tapRun_ = false;
   for (auto& a : level_.actors) { auto o = std::make_unique<Obj>(); o->a = a; o->p = a.p; o->r = glm::radians(a.r); o->s = a.s; o->visible = a.visible; byId_[a.id] = o.get(); objs_.push_back(std::move(o)); }
   phys_.reset(new Physics()); phys_->init(level_.world.gravity); gravity_ = level_.world.gravity; swimming_ = false;
   for (size_t i = 0; i < objs_.size(); i++) { Obj& o = *objs_[i]; if (o.a.type == "StaticMesh" && (o.a.physics.collision || o.a.physics.simulate)) addBody(o); }
@@ -215,6 +217,7 @@ void Game::rumble(float lo, float hi, float sec) { if (pad_) SDL_GameControllerR
 void Game::update(float dt) {
   if (!started_) return;
   dt = std::min(dt, 0.05f);
+  netPump();
   // the game's menus: animations, then what the player did in them goes to the scripts' handlers
   if (ui_) { ui_->update(dt); auto ev = ui_->takeEvents();
     if (!ev.empty()) { json a = json::array(); for (auto& e : ev) a.push_back({{"id", e.id}, {"type", e.type}, {"data", e.data}, {"path", e.path}}); scripts_->uiDispatch(a.dump()); scripts_->runJobs(); }
@@ -225,7 +228,7 @@ void Game::update(float dt) {
   if (vox_) { vox_->update(playerPos()); for (auto& l : vox_->takeLogs()) logMsg(l, l.rfind("error", 0) == 0 ? LogKind::Error : l.rfind("warning", 0) == 0 ? LogKind::Warn : LogKind::Info); }
   // look
   if (ui_ && ui_->modal()) lookDx_ = lookDy_ = 0;
-  const float sens = 0.0022f; mouseState_.x = lookDx_; mouseState_.y = lookDy_;
+  const float sens = 0.0022f * mouseSens_; mouseState_.x = lookDx_; mouseState_.y = lookDy_;
   yaw_ -= lookDx_ * sens; pitch_ = glm::clamp(pitch_ - lookDy_ * sens, -1.45f, 1.45f); lookDx_ = lookDy_ = 0;
   glm::vec3 fwd(-std::sin(yaw_), 0, -std::cos(yaw_)), right(-fwd.z, 0, fwd.x), mv(0);
   auto k = [&](const char* c) { return keys_.count(c) > 0; };
@@ -318,6 +321,8 @@ void Game::buildFrame(Frame& f, Camera& cam, float aspect) const {
     bool vis = o.visible; int guard = 0; for (Obj* p = get(o.a.parent); p && vis && guard < 64; p = get(p->a.parent), guard++) vis = p->visible;
     if (!vis) continue;
     addActorVisual(f, project_, o.a, world(o), false, 0, o.hasColor ? &o.color : nullptr); }
+  if (sunSet_) { bool done = false; for (auto& l : f.lights) if (l.type == 0) { l.dir = sunDir_; l.color = sunColor_; l.intensity = sunInt_; done = true; break; }
+    if (!done) { LightItem l; l.type = 0; l.dir = sunDir_; l.color = sunColor_; l.intensity = sunInt_; l.shadows = true; f.lights.insert(f.lights.begin(), l); } }
   glm::vec3 eye;
   if (mode_ == "Spectator") eye = specPos_; else eye = phys_->position(player_) + glm::vec3(0, 0.7f, 0);
   glm::mat4 camW;
@@ -440,6 +445,7 @@ std::string Game::playerGet() { const Tune& t = tune_; glm::vec3 v = player_ != 
     {"gravity", t.gravity}, {"accel", t.accel}, {"runKey", t.runKey}, {"sneakKey", t.sneakKey}, {"doubleTapRun", t.doubleTapRun}, {"yaw", yaw_}, {"pitch", pitch_},
     {"grounded", grounded_}, {"running", running_}, {"sneaking", sneaking_}, {"velocity", {v.x, v.y, v.z}}}.dump(); }
 void Game::playerSet(const std::string& js) { json o = json::parse(js, nullptr, false); if (!o.is_object()) return; Tune& t = tune_;
+  if (o.contains("mouseSensitivity") && o["mouseSensitivity"].is_number()) mouseSens_ = std::clamp(o["mouseSensitivity"].get<float>(), 0.05f, 6.f);
   auto f = [&](const char* k, float& d) { if (o.contains(k) && o[k].is_number()) d = o[k].get<float>(); };
   auto b = [&](const char* k, bool& d) { if (o.contains(k) && o[k].is_boolean()) d = o[k].get<bool>(); };
   auto s = [&](const char* k, std::string& d) { if (o.contains(k) && o[k].is_string()) d = o[k].get<std::string>(); };
@@ -458,6 +464,34 @@ std::string Game::storage(const std::string& op, const std::string& key, const s
   if (op == "keys") { json a = json::array(); for (auto& e : fs::directory_iterator(dir, ec)) { std::string n = e.path().filename().u8string(); if (n.size() < 5 || n.substr(n.size() - 4) != ".txt") continue; std::string k = unname(n.substr(0, n.size() - 4)); if (k.rfind(key, 0) == 0) a.push_back(k); } return a.dump(); }
   return ""; }
 void Game::log(const std::string& t) { logMsg(t); }
+static double wallClock() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+void Game::netPump() { if (net_) net_->update(wallClock()); }
+// net.*: one player hosts a game (TCP), the others join by address or find it on the LAN; messages are text (JSON from scripts)
+std::string Game::net(const std::string& op, const std::string& a, const std::string& b) {
+  if (!net_) net_ = std::make_unique<Net>(); Net& n = *net_;
+  if (op == "host") { json o = json::parse(a, nullptr, false); if (!o.is_object()) o = json::object();
+    return n.host(o.value("port", 46600), o.value("name", project_.name), o.value("max", 8), o.value("info", std::string())) ? "1" : "0"; }
+  if (op == "join") return n.join(a, b.empty() ? 46600 : std::atoi(b.c_str())) ? "1" : "0";
+  if (op == "stop") { n.stop(); return ""; }
+  if (op == "send") return n.send(a, b.empty() ? -1 : std::atoi(b.c_str())) ? "1" : "0";
+  if (op == "kick") { n.kick(std::atoi(a.c_str())); return ""; }
+  if (op == "take") { json r = json::array(); for (auto& e : n.take()) r.push_back({{"type", e.type}, {"id", e.id}, {"data", e.data}}); return r.dump(); }
+  if (op == "lan") { n.lanSearch(a == "1"); return ""; }
+  if (op == "list") { json r = json::array(); for (auto& g : n.lan(wallClock())) r.push_back({{"name", g.name}, {"address", g.address}, {"port", g.port}, {"players", g.players}, {"max", g.max}, {"info", g.info}}); return r.dump(); }
+  if (op == "info") { n.setInfo(a, std::atoi(b.c_str())); return ""; }
+  if (op == "state") { json p = json::array(); for (int id : n.peers()) p.push_back(id); return json{{"role", n.role()}, {"id", n.id()}, {"peers", p}, {"connected", n.connected()}, {"error", n.error}}.dump(); }
+  return ""; }
+// world.setSky({ sky, fogColor, fog, fogDensity, skyLight, groundLight, ambient, exposure, fov, sun: { dir: [x, y, z] (from the sun), color, intensity } })
+void Game::setSky(const std::string& js) {
+  json j = json::parse(js, nullptr, false); if (!j.is_object()) return; WorldSettings& w = level_.world;
+  auto col = [&](const json& o, const char* k, glm::vec3& v) { if (!o.contains(k)) return; const json& c = o[k];
+    if (c.is_string()) v = hexColor(c.get<std::string>(), v); else if (c.is_array() && c.size() == 3 && c[0].is_number()) v = {c[0].get<float>(), c[1].get<float>(), c[2].get<float>()}; };
+  auto num = [&](const json& o, const char* k, float& v) { if (o.contains(k) && o[k].is_number()) v = o[k].get<float>(); };
+  col(j, "sky", w.sky); col(j, "skyTop", w.skyTop); col(j, "sunDisc", w.sunDisc); num(j, "moon", w.moon); num(j, "stars", w.stars); num(j, "sunSize", w.sunSize);
+  col(j, "fogColor", w.fogColor); col(j, "skyLight", w.skyLight); col(j, "groundLight", w.groundLight);
+  num(j, "fogDensity", w.fogDensity); num(j, "ambient", w.ambient); num(j, "exposure", w.exposure); num(j, "fov", w.fov); if (j.contains("fog") && j["fog"].is_boolean()) w.fog = j["fog"].get<bool>();
+  if (j.contains("sun") && j["sun"].is_object()) { const json& o = j["sun"]; glm::vec3 d = sunDir_; col(o, "dir", d); if (glm::length(d) > 1e-4f) sunDir_ = glm::normalize(d);
+    col(o, "color", sunColor_); num(o, "intensity", sunInt_); sunSet_ = true; w.sunDiscDir = -sunDir_; } }
 std::string Game::createVoxels(const std::string& opts) {
   if (vox_) { if (ui_) ui_->setVoxels(nullptr); vox_.reset(); voxHold_ = false; }   // a new block world replaces the old one (another saved world)
   json o = json::object(); try { o = json::parse(opts); if (!o.is_object()) o = json::object(); } catch (...) { return "voxels.create: options are not valid"; }

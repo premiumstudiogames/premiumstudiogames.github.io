@@ -42,7 +42,7 @@ world
   world.player                   .position, .teleport(x, y, z), .launch(x, y, z)
   world.player.fly = true        flying: no falling, Space goes up, the sneak key (or Shift) down
   world.player.set({ walkSpeed: 4.3, runSpeed: 5.6, sneakSpeed: 1.3, jumpSpeed: 8.4, gravity: -32, accel: 46, runKey: 'Control', sneakKey: 'Shift',
-                     doubleTapRun: true, flySpeed: 8, flyRun: 1.6, flyClimb: 6, yaw: 0, pitch: 0 })   how the player moves (any of them)
+                     doubleTapRun: true, flySpeed: 8, flyRun: 1.6, flyClimb: 6, yaw: 0, pitch: 0, mouseSensitivity: 1 })   how the player moves (any of them)
   world.player.settings          all of them, and .grounded .running .sneaking .velocity .yaw .pitch
   storage.set('key', 'text')  storage.get('key')  storage.setJSON('key', obj)  storage.getJSON('key', default)  storage.remove('key')  storage.keys('prefix')
                                  the game's own saved values (settings, world list, inventories), in Documents\PremiumEngine\Saves\<game>\store
@@ -51,12 +51,23 @@ world
   world.findAll('tag')           actors with a tag (or that name)
   world.spawn('Cube', { position: [0, 5, 0], scale: [1, 1, 1], color: '#ff0000', physics: true, name: 'Box', script: 'SC_Name' })
   world.destroy(actor)
+  net.host({ port: 46600, name: 'My world', max: 8, info: '' })   play together: host a game (others on the LAN see it; over the internet they need
+                                 your address and the port open)     net.join('192.168.1.5', 46600)   join one
+  net.searchLan()  net.lan       games on this network: [{ name, address, port, players, max, info }]
+  net.send(obj, to)  net.receive()   send (the host: to = a player's id or everyone; a player: to the host) / what arrived:
+                                 [{ type: 'join' | 'leave' | 'msg' | 'connected' | 'closed' | 'error', id, data }]
+  net.role ('' | 'host' | 'client')  net.id (0 = the host)  net.peers  net.connected  net.error  net.kick(id)  net.stop()
   world.message('Text', seconds) big message in the middle of the screen
   world.hud('id', 'Text')        a line in the corner (empty text removes it)
   premium.trophy('id')           a trophy on the player's Premium Games account (id from the store's list)
   premium.console / .store       true when started from Premium Games' console mode / from Premium Games
   world.restart()                restart the level
   world.setGravity(-9.81)
+  world.setSky({ sky: '#9ccbe6', fogColor: '#c4e4f1', fog: true, fogDensity: 0.006, skyLight: '#e6f2ff', groundLight: '#4a4636', ambient: 0.8, exposure: 1, fov: 75,
+                 sun: { dir: [0.3, -0.8, 0.2], color: '#fff4e0', intensity: 2.4 } })   time of day and weather (any of them; dir points from the sun; colours also as [r, g, b])
+  world.setQuality({ msaa: 4, ssao: true, bloom: true, shadowDistance: 160 })   picture quality (a settings menu); shadowDistance 0 = no sun shadows
+  world.setSky({ skyTop: '#3d8fd6', sunDisc: '#fff4c9', sunSize: 0.035, moon: 1, stars: 0.8 })   a sky drawn behind everything: top colour (sky = the horizon),
+                                 the sun's disc and glow where the sun is, the moon opposite it, stars (0 .. 1)
 
 input
   input.key('w')                 held down?  ('space', 'shift', 'up', 'a'..'z', '0'..'9')
@@ -227,6 +238,8 @@ BLOCKFALL's world fits: voxels.create({ bottom: -98, top: 302, nearLayer: [-2, 2
   voxels.save(name)              the player's changes (only changed chunks) -> Documents\PremiumEngine\Saves\<game>\<name>.pgworld
   voxels.load(name)              puts them back over the generated world (after voxels.create and defineBlock). false + lastError
   voxels.deleteSave(name)        deletes that saved world file (true if there was one)
+  voxels.saveData() / voxels.loadData(text)   the world's changes as text and back (send a world to a player who joins)
+  voxels.setViewDistance(8)       how many chunks around the player are drawn (1 .. 32; a settings menu)
   voxels.items([id, x, y, z, sx, sy, sz, yaw, pitch, tile, r, g, b, ...])   small blocks drawn with the world until the next call (items on the ground,
                                  pieces flying off, a crack: tile = an atlas tile on every face, -1 = the block's own; 13 numbers each, Float32Array is fastest)
   voxels.stats                   { chunks, meshed, generating, meshing, triangles, bricks, generateMs, meshMs, memoryMB, changedChunks }

@@ -29,6 +29,16 @@ static bool hasLog(const char* s) { for (auto& l : logLines()) if (l.text.find(s
 
 int main(int argc, char** argv) {
   if (argc == 4 && !std::strcmp(argv[1], "--write-template")) { Project p = makeTemplate(argv[2], argv[2]); std::string err; return saveProjectFile(p, argv[3], &err) ? 0 : 1; }
+  {   // playing together: a host and a player on this computer, messages both ways, the LAN beacon, leaving
+    pge::Net h, c; double t = 0; CHECK(h.host(46655, "Test world", 4, "info"), "net: host a game");
+    c.lanSearch(true); CHECK(c.join("127.0.0.1", 46655), "net: join it");
+    std::vector<pge::NetEvent> he, ce; auto pump = [&](int n) { for (int i = 0; i < n; i++) { t += 0.05; h.update(t); c.update(t); for (auto& e : h.take()) he.push_back(e); for (auto& e : c.take()) ce.push_back(e); std::this_thread::sleep_for(std::chrono::milliseconds(5)); } };
+    pump(40); auto has = [](const std::vector<pge::NetEvent>& v, const std::string& ty, const std::string& d = "") { for (auto& e : v) if (e.type == ty && (d.empty() || e.data == d)) return true; return false; };
+    CHECK(has(he, "join") && has(ce, "connected") && c.id() == 1 && c.connected(), "net: the host sees the player join, the player gets its id");
+    std::string big(300000, 'x'); c.send("{\"hi\":1}", -1); h.send(big, 1); h.send("{\"all\":2}", -1); pump(60);
+    CHECK(has(he, "msg", "{\"hi\":1}") && has(ce, "msg", big) && has(ce, "msg", "{\"all\":2}"), "net: messages both ways, a big one whole, in order");
+    bool lan = false; for (auto& g : c.lan(t)) lan = lan || (g.name == "Test world" && g.port == 46655 && g.players == 2); CHECK(lan, "net: the game shows on the LAN with its players");
+    c.stop(); pump(20); CHECK(has(he, "leave"), "net: the host sees the player leave"); h.stop(); }
 
   std::printf("project files\n");
   for (const char* t : {"Blank", "FirstPerson", "ThirdPerson"}) {

@@ -1,4 +1,5 @@
 #include <filesystem>
+#include <fstream>
 #include "script.h"
 #include "log.h"
 #include <quickjs.h>
@@ -14,6 +15,14 @@
 #include "project.h"
 #include <nlohmann/json.hpp>
 
+// text form of binary data (a saved block world sent over the network)
+static std::string base64Encode(const std::string& in) { static const char* T = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"; std::string out; out.reserve((in.size() + 2) / 3 * 4);
+  size_t i = 0; for (; i + 2 < in.size(); i += 3) { uint32_t n = ((uint8_t)in[i] << 16) | ((uint8_t)in[i + 1] << 8) | (uint8_t)in[i + 2]; out += T[n >> 18]; out += T[(n >> 12) & 63]; out += T[(n >> 6) & 63]; out += T[n & 63]; }
+  if (i < in.size()) { uint32_t n = (uint8_t)in[i] << 16; if (i + 1 < in.size()) n |= (uint8_t)in[i + 1] << 8; out += T[n >> 18]; out += T[(n >> 12) & 63]; out += i + 1 < in.size() ? T[(n >> 6) & 63] : '='; out += '='; }
+  return out; }
+static bool base64Decode(const std::string& in, std::string& out) { int v[256]; for (int& x : v) x = -1; const char* T = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"; for (int i = 0; i < 64; i++) v[(uint8_t)T[i]] = i;
+  out.clear(); uint32_t acc = 0; int bits = 0; for (char ch : in) { if (ch == '=' || ch == '\n' || ch == '\r') continue; int x = v[(uint8_t)ch]; if (x < 0) return false; acc = (acc << 6) | x; bits += 6; if (bits >= 8) { bits -= 8; out += (char)((acc >> bits) & 255); } }
+  return true; }
 namespace pge {
 
 std::string keyAlias(const std::string& k0) {
@@ -86,6 +95,14 @@ const storage = { get(k) { const r = __n.storage('get', String(k), ''); return r
   getJSON(k, d) { const r = this.get(k); if (r === null) return d === undefined ? null : d; try { return JSON.parse(r); } catch (e) { return d === undefined ? null : d; } },
   setJSON(k, v) { this.set(k, JSON.stringify(v)); } };
 globalThis.storage = storage;
+// playing together: one hosts, the others join (address or LAN); messages are any JSON value (or text)
+const net = { host(o) { return __n.net('host', JSON.stringify(o || {}), '') === '1'; }, join(address, port) { return __n.net('join', String(address), String(port || 46600)) === '1'; },
+  stop() { __n.net('stop', '', ''); }, send(data, to) { return __n.net('send', typeof data === 'string' ? data : JSON.stringify(data), String(to == null ? -1 : to)) === '1'; },
+  kick(id) { __n.net('kick', String(id), ''); }, receive() { return JSON.parse(__n.net('take', '', '')); }, searchLan(on) { __n.net('lan', on === false ? '0' : '1', ''); },
+  get lan() { return JSON.parse(__n.net('list', '', '')); }, setInfo(info, players) { __n.net('info', String(info || ''), String(players || 0)); },
+  get state() { return JSON.parse(__n.net('state', '', '')); }, get role() { return this.state.role; }, get id() { return this.state.id; }, get peers() { return this.state.peers; },
+  get connected() { return this.state.connected; }, get error() { return this.state.error; } };
+globalThis.net = net;
 function __api(id) {
   if (!id) return null; if (id === '@player') return __player;
   let a = __apis.get(id); if (a) return a;
@@ -117,7 +134,9 @@ const world = { vars: {}, get voxels() { return voxels; },
   message(t, sec = 3) { __n.message(String(t), +sec || 3); },
   hud(id, t) { __n.hud(String(id), String(t)); },
   restart() { __n.restart(); },
-  setGravity(y) { __n.setGravity(+y); } };
+  setGravity(y) { __n.setGravity(+y); },
+  setSky(o) { __n.setSky(JSON.stringify(o || {})); },
+  setQuality(o) { __n.setQuality(JSON.stringify(o || {})); } };
 // the block world (BLOCKFALL style): 16 m chunks, 20 cm blocks in the near layer, 1 m blocks above and below
 const voxels = { lastError: '',
   create(o = {}) { const e = __n.voxCreate(JSON.stringify(o || {})); this.lastError = e; if (e) __n.log('[voxels] ' + e); return !e; },
@@ -150,7 +169,10 @@ const voxels = { lastError: '',
   // the player's changes, in Documents/PremiumEngine/Saves/<game>/<name>.pgworld
   save(name = 'world') { const r = __n.voxSave(String(name)); this.lastError = r === true ? '' : String(r); return r === true; },
   deleteSave(name = 'world') { return __n.voxDelete(String(name)); },
+  setViewDistance(n) { __n.voxView(+n); },
   load(name = 'world') { const r = __n.voxLoad(String(name)); this.lastError = r === true ? '' : String(r); return r === true; },
+  saveData() { const r = __n.voxSaveData(); if (r[0] === '!') { this.lastError = r.slice(1); return null; } this.lastError = ''; return r; },
+  loadData(text) { const r = __n.voxLoadData(String(text || '')); this.lastError = r === true ? '' : String(r); return r === true; },
   items(list) { __n.voxItems(list instanceof Float32Array ? list : new Float32Array(list || [])); },
   get stats() { return JSON.parse(__n.voxStats()); } };
 const input = { key(k) { return __n.key(String(k)); }, pressed(k) { return __n.pressed(String(k)); },
@@ -324,6 +346,9 @@ static void bindNatives(JSContext* c) {
   FN("message", 2, W(c)->message(S(c, a[0]), (float)D(c, a[1])); return JS_UNDEFINED;);
   FN("hud", 2, W(c)->hud(S(c, a[0]), S(c, a[1])); return JS_UNDEFINED;);
   FN("restart", 0, W(c)->restart(); return JS_UNDEFINED;);
+  FN("net", 3, { std::string r = W(c)->net(S(c, a[0]), S(c, a[1]), S(c, a[2])); return JS_NewStringLen(c, r.data(), r.size()); });
+  FN("setQuality", 1, W(c)->setQuality(S(c, a[0])); return JS_UNDEFINED;);
+  FN("setSky", 1, W(c)->setSky(S(c, a[0])); return JS_UNDEFINED;);
   FN("setGravity", 1, W(c)->setGravity((float)D(c, a[0])); return JS_UNDEFINED;);
   FN("time", 0, return JS_NewFloat64(c, W(c)->time()););
   FN("playerPos", 0, return A3(c, W(c)->playerPos()););
@@ -486,7 +511,16 @@ static void bindNatives(JSContext* c) {
     return v->save(W(c)->savePath(S(c, a[0])), &why) ? JS_TRUE : JS_NewStringLen(c, why.data(), why.size()); });
   FN("voxLoad", 1, { VoxelWorld* v = W(c)->voxels(); if (!v) return JS_NewString(c, "call voxels.create() first"); std::string why;
     return v->load(W(c)->savePath(S(c, a[0])), &why) ? JS_TRUE : JS_NewStringLen(c, why.data(), why.size()); });
+  FN("voxSaveData", 0, { VoxelWorld* v = W(c)->voxels(); if (!v) return JS_NewString(c, "!call voxels.create() first"); std::string why, path = W(c)->savePath("__share_out");
+    if (!v->save(path, &why)) { why = "!" + why; return JS_NewStringLen(c, why.data(), why.size()); }
+    std::ifstream in(std::filesystem::u8path(path), std::ios::binary); std::string bin((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>()); in.close(); std::error_code ec; std::filesystem::remove(std::filesystem::u8path(path), ec);
+    std::string r = base64Encode(bin); return JS_NewStringLen(c, r.data(), r.size()); });
+  FN("voxLoadData", 1, { VoxelWorld* v = W(c)->voxels(); if (!v) return JS_NewString(c, "call voxels.create() first"); std::string why, path = W(c)->savePath("__share_in"), bin;
+    if (!base64Decode(S(c, a[0]), bin)) return JS_NewString(c, "not a saved block world");
+    { std::error_code ec; std::filesystem::create_directories(std::filesystem::u8path(path).parent_path(), ec); std::ofstream o(std::filesystem::u8path(path), std::ios::binary); o.write(bin.data(), bin.size()); }
+    bool ok = v->load(path, &why); std::error_code ec; std::filesystem::remove(std::filesystem::u8path(path), ec); return ok ? JS_TRUE : JS_NewStringLen(c, why.data(), why.size()); });
   FN("swimming", 0, return JS_NewBool(c, W(c)->playerSwimming()););
+  FN("voxView", 1, { if (VoxelWorld* v = W(c)->voxels()) v->setViewDistance((int)D(c, a[0])); return JS_UNDEFINED; });
   FN("voxDelete", 1, { std::error_code ec; return JS_NewBool(c, std::filesystem::remove(std::filesystem::u8path(W(c)->savePath(S(c, a[0]))), ec)); });
   FN("playerGet", 0, { std::string s = W(c)->playerGet(); return JS_NewStringLen(c, s.data(), s.size()); });
   FN("playerSet", 1, { W(c)->playerSet(S(c, a[0])); return JS_UNDEFINED; });

@@ -10,6 +10,7 @@
 #include "project.h"
 #include "renderer.h"
 #include "physics.h"
+#include "net.h"
 #include "script.h"
 #include "voxel.h"
 #include "ui.h"
@@ -99,6 +100,11 @@ public:
   const std::vector<std::pair<std::string, std::string>>& hudLines() const { return hud_; }
   void playerSet(const std::string& json) override;
   std::string storage(const std::string& op, const std::string& key, const std::string& val) override;
+  void setSky(const std::string& json) override;
+  void setQuality(const std::string& json) override { quality_ = json; qualityVer_++; }   // world.setQuality: the player applies it to the renderer
+  const std::string& quality(int& ver) const { ver = qualityVer_; return quality_; }
+  std::string net(const std::string& op, const std::string& a, const std::string& b) override;   // net.*: playing together (net.h)
+  void netPump();   // the network keeps going while the game is paused (the player calls it every frame)   // world.setSky: sky and fog colours, light, the sun's direction and colour (time of day, weather)
 
 private:
   struct Obj {
@@ -112,8 +118,10 @@ private:
   std::string mode_; uint32_t player_ = NO_BODY; float yaw_ = 0, pitch_ = 0; glm::vec3 specPos_{0, 2, 5}, moveDir_{0};
   double time_ = 0; bool restartRequested_ = false, started_ = false;
   std::set<std::string> keys_, pressed_; glm::vec4 mouseState_{0}; float lookDx_ = 0, lookDy_ = 0;
-  std::set<std::string> trophies_; std::unique_ptr<Ui> ui_; std::unique_ptr<Audio> audio_; std::unique_ptr<Models> models_; bool wasModal_ = false;
+  std::set<std::string> trophies_; std::unique_ptr<Ui> ui_; std::unique_ptr<Audio> audio_; std::unique_ptr<Models> models_; bool wasModal_ = false; std::unique_ptr<Net> net_;
   // player movement (scripts can change it: world.player.set); the defaults are the engine's usual ones
+  std::string quality_; int qualityVer_ = 0; float mouseSens_ = 1;
+  bool sunSet_ = false; glm::vec3 sunDir_{0, -1, 0}, sunColor_{1}; float sunInt_ = 1;   // world.setSky({ sun })
   struct Tune { bool fly = false, doubleTapRun = false; float walk = 5, run = 9, sneak = 2, jump = 5.2f, flySpeed = 10, flyRun = 1.6f, flyClimb = 6, gravity = 0, accel = 0;
     std::string runKey = "Shift", sneakKey = ""; } tune_; bool grounded_ = false, running_ = false, sneaking_ = false, wHeld_ = false, tapRun_ = false; double wTap_ = -1;
   std::string msg_; double msgUntil_ = 0; std::vector<std::pair<std::string, std::string>> hud_;

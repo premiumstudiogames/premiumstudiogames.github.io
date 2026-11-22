@@ -111,6 +111,7 @@ public:
   VoxelWorld(const VoxelConfig& c, Physics* phys);
   ~VoxelWorld();
   const VoxelConfig& config() const { return cfg_; }
+  void setViewDistance(int chunks) { cfg_.viewDistance = std::max(1, std::min(chunks, 32)); }   // the settings menu: nearer chunks come first, far ones are dropped
 
   void defineBlock(int id, const BlockType& t);
   const BlockType& block(int id) const;
