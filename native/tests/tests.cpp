@@ -9,6 +9,7 @@
 #include "ui.h"
 #include "audio.h"
 #include "models.h"
+#include "blueprint.h"
 #include <imgui.h>
 #include <chrono>
 #include <cstdio>
@@ -29,6 +30,70 @@ static bool hasLog(const char* s) { for (auto& l : logLines()) if (l.text.find(s
 
 int main(int argc, char** argv) {
   if (argc == 4 && !std::strcmp(argv[1], "--write-template")) { Project p = makeTemplate(argv[2], argv[2]); std::string err; return saveProjectFile(p, argv[3], &err) ? 0 : 1; }
+  {   // Blueprints: nodes and wires compiled to the script code, run in a real game
+    std::printf("blueprints\n");
+    Blueprint bp; int id = 1;
+    auto node = [&](const std::string& type, float x, float y, json v = json::object()) { BpNode n; n.id = id++; n.type = type; n.x = x; n.y = y; n.values = v; bp.nodes.push_back(n); return n.id; };
+    auto wire = [&](int a, const std::string& ap, int b, const std::string& bpn) { bp.links.push_back({a, ap, b, bpn}); };
+    bp.vars.push_back({"Score", PinType::Number, 5});
+    bp.vars.push_back({"Spins", PinType::Number, 0});
+    int begin = node("Event.BeginPlay", 0, 0), tick = node("Event.Tick", 0, 300);
+    int setS = node("Var.Set", 300, 0, {{"Var", "Score"}}), getS = node("Var.Get", 100, 100, {{"Var", "Score"}}), add = node("Math.Add", 200, 100, {{"B", 37}});
+    int app = node("String.Append", 400, 100, {{"A", "Score: "}}), print = node("Utilities.PrintString", 600, 0);
+    wire(begin, "then", setS, "exec"); wire(getS, "Value", add, "A"); wire(add, "ReturnValue", setS, "Value"); wire(setS, "then", print, "exec");
+    wire(setS, "Output", app, "B"); wire(app, "ReturnValue", print, "InString");
+    // a For Loop that spawns three boxes named Box0..Box2 on a line
+    int loop = node("Flow.ForLoop", 800, 0, {{"FirstIndex", 0}, {"LastIndex", 2}}), spawn = node("World.SpawnActor", 1000, 0, {{"Mesh", "Cube"}});
+    int mk = node("Vector.Make", 900, 200, {{"Y", 1}}), mul = node("Math.Multiply", 850, 250, {{"B", 3}}), nm = node("String.Append", 900, 300, {{"A", "Box"}});
+    wire(print, "then", loop, "exec"); wire(loop, "LoopBody", spawn, "exec"); wire(loop, "Index", mul, "A"); wire(mul, "ReturnValue", mk, "X"); wire(mk, "ReturnValue", spawn, "Location");
+    wire(loop, "Index", nm, "B"); wire(nm, "ReturnValue", spawn, "Name");
+    // Tick: move up 2 m/s while below 3 m (Branch), then a Delay of 0.5 s and Do Once → Show Message, and Set Game Value
+    int getLoc = node("Actor.GetLocation", 100, 400), brk = node("Vector.Break", 200, 400), less = node("Math.Less", 300, 400, {{"B", 3}});
+    int br = node("Flow.Branch", 400, 300), off = node("Actor.AddOffset", 600, 300), up = node("Vector.Make", 500, 450), dtm = node("Math.Multiply", 450, 500, {{"B", 2}});
+    int dly = node("Flow.Delay", 600, 600, {{"Duration", 0.5}}), once = node("Flow.DoOnce", 800, 600), msg = node("Utilities.SetGlobal", 1000, 600, {{"Name", "done"}, {"Value", 1}});
+    wire(tick, "then", br, "exec"); wire(getLoc, "ReturnValue", brk, "InVec"); wire(brk, "Y", less, "A"); wire(less, "ReturnValue", br, "Condition");
+    wire(br, "True", off, "exec"); wire(tick, "DeltaSeconds", dtm, "A"); wire(dtm, "ReturnValue", up, "Y"); wire(up, "ReturnValue", off, "DeltaLocation");
+    wire(br, "False", dly, "exec"); wire(dly, "Completed", once, "exec"); wire(once, "Completed", msg, "exec");
+    // a custom event on a looping timer counts spins; key R puts the actor at z = 7
+    int ce = node("Event.Custom", 0, 800, {{"Name", "Spin"}}), getSp = node("Var.Get", 100, 900, {{"Var", "Spins"}}), inc = node("Math.Add", 200, 900, {{"B", 1}});
+    int setSp = node("Var.Set", 300, 800, {{"Var", "Spins"}}), hud = node("World.Hud", 500, 800, {{"Id", "spins"}});
+    wire(ce, "then", setSp, "exec"); wire(getSp, "Value", inc, "A"); wire(inc, "ReturnValue", setSp, "Value"); wire(setSp, "then", hud, "exec"); wire(setSp, "Output", hud, "Text");
+    int timer = node("Flow.SetTimer", 1200, 0, {{"Event", "Spin"}, {"Time", 0.25}, {"Looping", true}}); wire(loop, "Completed", timer, "exec");
+    int key = node("Event.KeyPressed", 0, 1000, {{"Key", "KeyR"}}), setL = node("Actor.SetLocation", 300, 1000, {{"NewLocation", {0, 3, 7}}}); wire(key, "then", setL, "exec");
+    std::vector<BpMessage> msgs; std::string code = bpCompile(bp, "BP_Test", msgs);
+    int errs = 0; std::string all; for (auto& m : msgs) { errs += m.error; all += m.text + "; "; }
+    CHECK(errs == 0, ("a Blueprint compiles (" + all + ")").c_str());
+    CHECK(ScriptHost::check(code).empty(), ("its code is valid: " + ScriptHost::check(code)).c_str());
+    CHECK(bpFromJson(bpToJson(bp)).nodes.size() == bp.nodes.size() && bpFromJson(bpToJson(bp)).links.size() == bp.links.size(), "a Blueprint saves and loads");
+    Project q = makeTemplate("Blank", "BPT");
+    q.scripts["BP_Test"] = {"BP_Test", code}; q.scripts["BP_Test"].graph = bpToJson(bp);
+    Actor a = newActor("Empty", "Thinker"); a.script = "BP_Test"; q.levels[0].second.actors.push_back(a);
+    { std::string file = (std::filesystem::temp_directory_path() / "bp-test.pge.json").string(), e; CHECK(saveProjectFile(q, file, &e), "a project with a Blueprint saves");
+      Project r; CHECK(loadProjectFile(file, r, &e) && r.scripts["BP_Test"].blueprint() && r.scripts["BP_Test"].code == code, "…and loads with its graph"); }
+    Game g(q, "Main"); logClear(); CHECK(g.start(), "a game with a Blueprint starts");
+    CHECK(hasLog("Score: 42"), "BeginPlay → Set (5 + 37) → Print String");
+    CHECK(!g.find("Box0").empty() && !g.find("Box2").empty() && g.find("Box3").empty(), "For Loop spawned Box0..Box2");
+    CHECK(std::abs(g.worldPos(g.find("Box2")).x - 6) < 1e-3f, "…at Index × 3");
+    run(g, 1.0f); float y1 = g.worldPos(g.find("Thinker")).y; CHECK(y1 > 1.7f && y1 < 2.3f, ("Tick moves it up 2 m/s: " + std::to_string(y1)).c_str());
+    run(g, 1.5f); float y2 = g.worldPos(g.find("Thinker")).y; CHECK(y2 >= 3 && y2 < 3.1f, ("Branch stops it at 3 m: " + std::to_string(y2)).c_str());
+    int spins = 0; for (auto& l : logLines()) (void)l; (void)spins;
+    SDL_Event kd = keyEv(SDL_KEYDOWN, SDL_SCANCODE_R); g.event(kd); run(g, 0.05f);
+    CHECK(std::abs(g.worldPos(g.find("Thinker")).z - 7) < 1e-3f, "Key Pressed (KeyR) → Set Actor Location");
+    // the HUD line counts timer ticks: about 4 a second
+    std::string hudSpins; for (auto& h : g.hudLines()) if (h.first == "spins") hudSpins = h.second; int n = hudSpins.empty() ? 0 : std::atoi(hudSpins.c_str());
+    CHECK(n >= 9 && n <= 12, ("a looping timer runs the custom event (" + hudSpins + " spins in ~2.6 s)").c_str());
+    // mistakes are found and named on their node
+    Blueprint bad = bp; bad.links.push_back({getS, "Value", br, "Condition"});
+    std::vector<BpMessage> m2; bpCompile(bad, "Bad", m2); bool twoIn = false; for (auto& m : m2) twoIn = twoIn || (m.error && m.node == br);
+    CHECK(twoIn, "two wires into one input is an error on that node");
+    Blueprint bad2 = bp; for (auto& nn : bad2.nodes) if (nn.id == getSp) nn.values["Var"] = "Gone";
+    bpCompile(bad2, "Bad2", m2); bool gone = false; for (auto& m : m2) gone = gone || (m.error && m.node == getSp && !m.textAr.empty()); CHECK(gone, "a missing variable is an error (with Arabic text)");
+    Blueprint loopy; loopy.nodes = {BpNode{1, "Math.Add"}, BpNode{2, "Math.Add"}}; loopy.links = {{1, "ReturnValue", 2, "A"}, {2, "ReturnValue", 1, "A"}};
+    int pr = 3; BpNode pn; pn.id = pr; pn.type = "Utilities.PrintString"; loopy.nodes.push_back(pn); BpNode ev; ev.id = 4; ev.type = "Event.BeginPlay"; loopy.nodes.push_back(ev);
+    loopy.links.push_back({4, "then", 3, "exec"}); loopy.links.push_back({1, "ReturnValue", 3, "InString"});
+    bpCompile(loopy, "Loopy", m2); bool circ = false; for (auto& m : m2) circ = circ || m.error; CHECK(circ, "pure nodes feeding each other in a circle is an error, not a hang");
+    int ar = 0; for (auto& d : bpLibrary()) ar += !d.ar.empty() && !d.descAr.empty() && !d.descEn.empty(); CHECK(ar == (int)bpLibrary().size() && ar > 90, ("every node has English and Arabic names and explanations (" + std::to_string(ar) + ")").c_str());
+  }
   {   // playing together: a host and a player on this computer, messages both ways, the LAN beacon, leaving
     pge::Net h, c; double t = 0; CHECK(h.host(46655, "Test world", 4, "info"), "net: host a game");
     c.lanSearch(true); CHECK(c.join("127.0.0.1", 46655), "net: join it");

@@ -36,7 +36,7 @@ void loadFonts(const std::string& assets, float scale) {
     // Arabic letters and their joined forms come from Noto Sans Arabic, merged into each font
     std::string ar = assets + "/NotoSansArabic-Medium.ttf"; bool hasAr = std::filesystem::exists(ar);
     static const ImWchar arabic[] = {0x0600, 0x06FF, 0xFB50, 0xFBFF, 0xFE70, 0xFEFF, 0};
-    auto addArabic = [&](float size) { if (!hasAr) return; ImFontConfig m; m.MergeMode = true; m.OversampleH = 2; m.GlyphOffset.y = size * 0.04f; io.Fonts->AddFontFromFileTTF(ar.c_str(), size * 1.22f, &m, arabic); };   // a bit bigger: Arabic letters are small next to Latin capitals
+    auto addArabic = [&](float size) { if (!hasAr) return; ImFontConfig m; m.MergeMode = true; m.OversampleH = 2; m.GlyphOffset.y = size * 0.04f; io.Fonts->AddFontFromFileTTF(ar.c_str(), size * 1.3f, &m, arabic); };   // bigger: Arabic letters are small next to Latin ones next to Latin capitals
     ImFontConfig c; c.OversampleH = 2;
     io.Fonts->AddFontFromFileTTF(f.c_str(), 15.f * scale, &c, ranges); addArabic(15.f * scale);
     ImFontConfig b; b.OversampleH = 2; io.Fonts->AddFontFromFileTTF(f.c_str(), 72.f, &b, ranges); addArabic(72.f);   // 3D text and HUD (scaled down when drawn)

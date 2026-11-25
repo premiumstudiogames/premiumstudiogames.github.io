@@ -11,12 +11,14 @@
 #include "project.h"
 #include "renderer.h"
 #include "game.h"
+#include "bp_editor.h"
 
 class TextEditor;
 namespace pge {
 
 struct ScriptTab { std::string id; std::unique_ptr<TextEditor> ed; std::string savedText, error; int errorLine = 0; bool focus = false; };
-struct Prefs { bool autosave = true; int autosaveMinutes = 2; bool invertY = false; float camSpeed = 4; bool showFps = false; float uiScale = 1; };
+struct Prefs { bool autosave = true; int autosaveMinutes = 2; bool invertY = false; float camSpeed = 4; bool showFps = false; float uiScale = 1; int bpLang = 0; };   // bpLang: Blueprint names 0 English, 1 Arabic, 2 both
+struct BpTab;
 
 class Editor {
 public:
@@ -45,6 +47,7 @@ public:
   // windows
   bool wPlaceActors = false, wOutliner = true, wDetails = true, wWorld = true, wContent = true, wLog = true, wScripts = false, wMaterial = false;
   bool wPrefs = false, wProjectSettings = false, wStats = false, wApi = false, wDocs = false, wShortcuts = false, wAbout = false, wMapCheck = false, wPackage = false;
+  bool wBlueprints = false, wNewBlueprint = false; std::vector<std::unique_ptr<BpTab>> bpTabs;   // the Blueprint Editor (bp_editor.cpp)
   bool wNewLevel = false, wOpenLevel = false, wNewScript = false, wNewMaterial = false, wRename = false, wImport = false;
   std::string materialOpen; std::vector<ScriptTab> tabs; std::string rename; std::string newName;
   std::vector<std::string> mapCheck; std::string packageResult, packageDir; bool packageOk = false;
@@ -73,6 +76,7 @@ public:
   void play(); void stopPlay(); void playStandalone();
   void openLevel(const std::string& name); void newLevel(const std::string& name, bool templ);
   void openScript(const std::string& id); std::string newScript(const std::string& name);
+  void openBlueprint(const std::string& id); std::string newBlueprint(const std::string& name); bool compileBlueprint(const std::string& id, bool report);
   std::string newMaterial(const std::string& name);
   void compileScripts(bool quiet); void runMapCheck(); void packageProject(bool console = false);
   void notify(const std::string& t);
@@ -82,7 +86,7 @@ public:
   // ---- UI (panels.cpp / dialogs.cpp)
   void drawMenuBar(); void drawToolbar(); void drawStatusBar(); void drawViewport();
   void drawOutliner(); void drawDetails(); void drawWorldSettings(); void drawContent(); void drawLog(); void drawPlaceActors();
-  void drawScripts(); void drawMaterial(); void drawDialogs(); void drawProjectBrowser(); void addMenuItems(const glm::vec3* at);
+  void drawScripts(); void drawBlueprints(); void drawMaterial(); void drawDialogs(); void drawProjectBrowser(); void addMenuItems(const glm::vec3* at);
   // ---- the console version (console.cpp)
   bool consoleEvent(const SDL_Event& e);   // true = used
   void consoleFrame();                     // before the UI: camera / moving with the sticks, which device drives the menus
@@ -92,8 +96,8 @@ public:
 private:
   std::vector<std::string> queued_;
   bool quit_ = false, confirmQuit_ = false, init_ = false; std::string pendingOpen_;
-  SDL_GameController* pad_ = nullptr; bool padNav_ = true, padFly_ = false, padMove_ = false, oskOn_ = false, oskShut_ = false, oskShift_ = false;
-  int oskR_ = 1, oskC_ = 0, oskHold_ = -1; float oskHoldT_ = 0; std::vector<int> keyUps_;
+  SDL_GameController* pad_ = nullptr; bool padNav_ = true, padFly_ = false, padMove_ = false, padMouse_ = false, oskOn_ = false, oskShut_ = false, oskShift_ = false;
+  float pmX_ = 0, pmY_ = 0; int oskR_ = 1, oskC_ = 0, oskHold_ = -1; float oskHoldT_ = 0; std::vector<int> keyUps_;
   void oskPress(); void oskMove(int dir); void sendKey(int key);
   std::deque<std::string> undo_, redo_; std::string stable_; bool pending_ = false; std::string clip_;
   double lastAutosave_ = 0; Uint64 lastTick_ = 0; float fps_ = 0, dt_ = 0;

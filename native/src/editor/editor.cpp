@@ -1,4 +1,5 @@
 #include "editor.h"
+#include "bp_editor.h"
 #include "platform.h"
 #include "gl.h"
 #include "log.h"
@@ -36,7 +37,7 @@ bool Editor::init() {
 void Editor::setProject(Project&& p) {
   if (game) stopPlay();
   P = std::move(p); hasProject = true; level = P.level(P.startLevel) ? P.startLevel : P.levels[0].first; sel.clear();
-  undo_.clear(); redo_.clear(); stable_ = toJson(P, -1); pending_ = false; dirty = false; tabs.clear(); materialOpen.clear(); wScripts = wMaterial = false;
+  undo_.clear(); redo_.clear(); stable_ = toJson(P, -1); pending_ = false; dirty = false; tabs.clear(); bpTabs.clear(); materialOpen.clear(); wScripts = wMaterial = wBlueprints = false;
   frameAll(); SDL_SetWindowTitle(win.win, (P.name + " - Premium Engine").c_str());
   addRecent(P.path); lastAutosave_ = SDL_GetTicks() / 1000.0;
 }
@@ -198,7 +199,8 @@ std::string Editor::newMaterial(const std::string& name) {
   Material m; m.name = id; P.materials[id] = m; touch(); logMsg("Created material " + id); return id;
 }
 void Editor::openScript(const std::string& id) {
-  if (!P.scripts.count(id)) return; wScripts = true;
+  if (!P.scripts.count(id)) return; if (P.scripts[id].blueprint()) { openBlueprint(id); return; }   // a Blueprint opens in the Blueprint Editor
+  wScripts = true;
   for (auto& t : tabs) if (t.id == id) { t.focus = true; return; }
   ScriptTab t; t.id = id; t.ed.reset(new TextEditor()); t.ed->SetLanguageDefinition(TextEditor::LanguageDefinitionId::JavaScript); t.ed->SetPalette(TextEditor::PaletteId::Dark);
   t.ed->SetTabSize(2); t.ed->SetShowWhitespacesEnabled(false); t.ed->SetText(P.scripts[id].code); t.savedText = t.ed->GetText(); t.focus = true; tabs.push_back(std::move(t));
@@ -206,6 +208,7 @@ void Editor::openScript(const std::string& id) {
 void Editor::compileScripts(bool quiet) {
   for (auto& t : tabs) { auto it = P.scripts.find(t.id); if (it == P.scripts.end()) continue; std::string txt = t.ed->GetText(); if (it->second.code != txt) { it->second.code = txt; touch(); } t.savedText = txt; }
   int bad = 0;
+  for (auto& [id, s] : P.scripts) if (s.blueprint() && !compileBlueprint(id, true)) bad++;   // Blueprints: the graph → its code
   for (auto& [id, s] : P.scripts) {
     std::string e = ScriptHost::check(s.code);
     for (auto& t : tabs) if (t.id == id) { t.error = e; t.errorLine = 0; auto p = e.find("(line "); if (p != std::string::npos) t.errorLine = std::atoi(e.c_str() + p + 6); }
@@ -228,6 +231,9 @@ void Editor::runMapCheck() {
     if (!ps && lv.world.gameMode != "Spectator") { mapCheck.push_back("warning: " + ln + ": no Player Start, the player will start at (0, 2, 5)"); warns++; }
   }
   for (auto& [id, s] : P.scripts) { std::string e = ScriptHost::check(s.code); if (!e.empty()) { mapCheck.push_back("error: script " + s.name + ": " + e); errs++; } }
+  for (auto& [id, s] : P.scripts) if (s.blueprint()) { std::vector<BpMessage> m; bpCompile(bpFromJson(s.graph), id, m); Blueprint g = bpFromJson(s.graph);
+    for (auto& x : m) { const BpNode* n = g.node(x.node); const BpNodeDef* d = n ? bpDef(n->type) : nullptr;
+      mapCheck.push_back(std::string(x.error ? "error: " : "warning: ") + "Blueprint " + id + ": " + (d ? d->en + ": " : "") + x.text); (x.error ? errs : warns)++; } }
   mapCheck.insert(mapCheck.begin(), "Map check: " + std::to_string(errs) + " error(s), " + std::to_string(warns) + " warning(s)");
   for (auto& m : mapCheck) logMsg(m); wMapCheck = true;
 }
@@ -317,12 +323,12 @@ void Editor::loadPrefs() {
   if (console) prefs.uiScale = 1.4f;   // read from the sofa
   std::ifstream i(fs::u8path(documentsDir()) / "editor-settings.json"); if (!i) { ImGui::GetIO().FontGlobalScale = prefs.uiScale; return; }
   try { json j; i >> j; prefs.autosave = j.value("autosave", true); prefs.autosaveMinutes = j.value("autosaveMinutes", 2); prefs.invertY = j.value("invertY", false);
-    prefs.camSpeed = j.value("camSpeed", 4.f); prefs.showFps = j.value("showFps", false); prefs.uiScale = j.value("uiScale", prefs.uiScale);
+    prefs.camSpeed = j.value("camSpeed", 4.f); prefs.showFps = j.value("showFps", false); prefs.uiScale = j.value("uiScale", prefs.uiScale); prefs.bpLang = std::clamp(j.value("bpLang", 0), 0, 2);
     if (j.contains("recent")) for (auto& r : j["recent"]) recent.push_back(r); } catch (...) {}
   showStats = prefs.showFps; ImGui::GetIO().FontGlobalScale = prefs.uiScale;
 }
 void Editor::savePrefs() {
-  json j = {{"autosave", prefs.autosave}, {"autosaveMinutes", prefs.autosaveMinutes}, {"invertY", prefs.invertY}, {"camSpeed", prefs.camSpeed}, {"showFps", prefs.showFps}, {"uiScale", prefs.uiScale}, {"recent", recent}};
+  json j = {{"autosave", prefs.autosave}, {"autosaveMinutes", prefs.autosaveMinutes}, {"invertY", prefs.invertY}, {"camSpeed", prefs.camSpeed}, {"showFps", prefs.showFps}, {"uiScale", prefs.uiScale}, {"bpLang", prefs.bpLang}, {"recent", recent}};
   std::error_code ec; fs::create_directories(fs::u8path(documentsDir()), ec); std::ofstream o(fs::u8path(documentsDir()) / "editor-settings.json"); o << j.dump(1);
 }
 void Editor::addRecent(const std::string& f) {
@@ -348,7 +354,7 @@ void Editor::run(const std::string& c) {
   else if (c == "worldSettings") { wWorld = true; ImGui::SetWindowFocus("World Settings"); }
   else if (c == "toggleContent") { wContent = !wContent; if (wContent) ImGui::SetWindowFocus("Content Browser"); }
   else if (c == "showLog") { wLog = true; focusLog = true; } else if (c == "resetLayout") resetLayout = true;
-  else if (c == "newScript") { newName = "SC_NewScript"; wNewScript = true; } else if (c == "newMaterial") { newName = "M_NewMaterial"; wNewMaterial = true; }
+  else if (c == "newScript") { newName = "SC_NewScript"; wNewScript = true; } else if (c == "newBlueprint") { newName = "BP_NewBlueprint"; wNewBlueprint = true; } else if (c == "newMaterial") { newName = "M_NewMaterial"; wNewMaterial = true; }
   else if (c == "apiRef") wApi = true; else if (c == "stats") wStats = true; else if (c == "toggleFps") { showStats = !showStats; prefs.showFps = showStats; savePrefs(); }
   else if (c == "buildAll" || c == "mapCheck") runMapCheck(); else if (c == "compile") compileScripts(false);
   else if (c == "deselect") sel.clear();
@@ -448,7 +454,7 @@ void Editor::frame() {
     if (resetLayout) { defaultLayout(dock); resetLayout = false; }
     codeFocusedNext_ = false; drawViewport();
     if (wOutliner) drawOutliner(); if (wDetails) drawDetails(); if (wWorld) drawWorldSettings(); if (wContent) drawContent(); if (wLog) drawLog();
-    if (wPlaceActors) drawPlaceActors(); if (wScripts) drawScripts(); if (wMaterial) drawMaterial();
+    if (wPlaceActors) drawPlaceActors(); if (wScripts) drawScripts(); if (wBlueprints) drawBlueprints(); if (wMaterial) drawMaterial();
     drawDialogs(); codeFocused = codeFocusedNext_;
     if (pending_ && !padMove_ && !ImGui::IsAnyItemActive() && !ImGuizmo::IsUsing() && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) commit();
     double t = SDL_GetTicks() / 1000.0;
@@ -480,7 +486,7 @@ void Editor::defaultLayout(unsigned dockId) {
   rightBottom = ImGui::DockBuilderSplitNode(right, ImGuiDir_Down, 0.62f, nullptr, &right);
   bottom = ImGui::DockBuilderSplitNode(main, ImGuiDir_Down, 0.27f, nullptr, &main);
   left = ImGui::DockBuilderSplitNode(main, ImGuiDir_Left, 0.16f, nullptr, &main);
-  ImGui::DockBuilderDockWindow("Viewport", main); ImGui::DockBuilderDockWindow("Script Editor", main); ImGui::DockBuilderDockWindow("Material Editor", main);
+  ImGui::DockBuilderDockWindow("Viewport", main); ImGui::DockBuilderDockWindow("Script Editor", main); ImGui::DockBuilderDockWindow("Blueprint Editor", main); ImGui::DockBuilderDockWindow("Material Editor", main);
   ImGui::DockBuilderDockWindow("Outliner", right);
   ImGui::DockBuilderDockWindow("Details", rightBottom); ImGui::DockBuilderDockWindow("World Settings", rightBottom);
   ImGui::DockBuilderDockWindow("Content Browser", bottom); ImGui::DockBuilderDockWindow("Output Log", bottom);

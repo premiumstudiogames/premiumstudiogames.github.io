@@ -73,12 +73,12 @@ void Editor::drawMenuBar() {
   }
   if (ImGui::BeginMenu("Window")) {
     section("LEVEL EDITOR"); ImGui::MenuItem("Place Actors", nullptr, &wPlaceActors); ImGui::MenuItem("Outliner", nullptr, &wOutliner); ImGui::MenuItem("Details", nullptr, &wDetails); ImGui::MenuItem("World Settings", nullptr, &wWorld);
-    section("GENERAL"); ImGui::MenuItem("Content Browser", "Ctrl+Space", &wContent); ImGui::MenuItem("Output Log", nullptr, &wLog); ImGui::MenuItem("Script Editor", nullptr, &wScripts);
+    section("GENERAL"); ImGui::MenuItem("Content Browser", "Ctrl+Space", &wContent); ImGui::MenuItem("Output Log", nullptr, &wLog); ImGui::MenuItem("Script Editor", nullptr, &wScripts); ImGui::MenuItem("Blueprint Editor", nullptr, &wBlueprints);
     section("LAYOUT"); if (item("Load Layout: Default")) run("resetLayout");
     ImGui::EndMenu();
   }
   if (ImGui::BeginMenu("Tools")) {
-    section("SCRIPTING"); if (item("New Script...")) run("newScript"); if (item("New Material...")) run("newMaterial"); if (item("Script API Reference")) run("apiRef");
+    section("SCRIPTING"); if (item("New Blueprint...")) run("newBlueprint"); if (item("New Script...")) run("newScript"); if (item("New Material...")) run("newMaterial"); if (item("Script API Reference")) run("apiRef");
     section("DEBUG"); if (item("Statistics")) run("stats"); if (item("Toggle FPS Counter", nullptr, true, showStats)) run("toggleFps");
     ImGui::EndMenu();
   }
@@ -132,11 +132,11 @@ void Editor::drawToolbar() {
     if (toolButton("##mode", IC_Select, "Selection Mode", IM_COL32(210, 210, 210, 255), "Editing mode")) {}
     ImGui::SameLine(); ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical); ImGui::SameLine();
     if (toolButton("##add", IC_Add, nullptr, GREEN, "Quick Add to the Project")) ImGui::OpenPopup("quickAdd");
-    if (ImGui::BeginPopup("quickAdd")) { addMenuItems(nullptr); section("CONTENT"); if (ImGui::MenuItem("New Material")) run("newMaterial"); if (ImGui::MenuItem("New Script")) run("newScript"); if (ImGui::MenuItem("New Level")) run("newLevel"); ImGui::EndPopup(); }
+    if (ImGui::BeginPopup("quickAdd")) { addMenuItems(nullptr); section("CONTENT"); if (ImGui::MenuItem("New Material")) run("newMaterial"); if (ImGui::MenuItem("New Blueprint")) run("newBlueprint"); if (ImGui::MenuItem("New Script")) run("newScript"); if (ImGui::MenuItem("New Level")) run("newLevel"); ImGui::EndPopup(); }
     ImGui::SameLine();
     if (toolButton("##scripts", IC_Script, nullptr, IM_COL32(100, 170, 255, 255), "Scripts")) ImGui::OpenPopup("scriptsPop");
     if (ImGui::BeginPopup("scriptsPop")) {
-      section("SCRIPTS"); if (ImGui::MenuItem("New Script...")) run("newScript");
+      section("SCRIPTS"); if (ImGui::MenuItem("New Blueprint...")) run("newBlueprint"); if (ImGui::MenuItem("New Script...")) run("newScript");
       if (Actor* a = actor(sel)) if (ImGui::MenuItem("Open Script of Selected Actor", nullptr, false, !a->script.empty())) openScript(a->script);
       section("PROJECT SCRIPTS"); for (auto& [id, s] : P.scripts) if (ImGui::MenuItem(s.name.c_str())) openScript(id);
       ImGui::EndPopup(); }
@@ -409,7 +409,8 @@ void Editor::drawDetails() {
     if (ImGui::BeginCombo("##scr", a->script.empty() ? "None" : a->script.c_str())) {
       if (ImGui::Selectable("None", a->script.empty())) { a->script.clear(); ch = true; }
       for (auto& [id, s] : P.scripts) if (ImGui::Selectable(id.c_str(), a->script == id)) { a->script = id; ch = true; }
-      ImGui::Separator(); if (ImGui::Selectable("+ New Script...")) { std::string id = newScript("SC_" + sanitizeName(a->name)); a->script = id; ch = true; openScript(id); }
+      ImGui::Separator(); if (ImGui::Selectable("+ New Blueprint...")) { std::string id = newBlueprint("BP_" + sanitizeName(a->name)); a->script = id; ch = true; openBlueprint(id); }
+      if (ImGui::Selectable("+ New Script...")) { std::string id = newScript("SC_" + sanitizeName(a->name)); a->script = id; ch = true; openScript(id); }
       ImGui::EndCombo(); }
     if (ImGui::BeginDragDropTarget()) { if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("PGE_SCRIPT")) { a->script.assign((const char*)p->Data, p->DataSize); ch = true; } ImGui::EndDragDropTarget(); }
     ImGui::SameLine(); ImGui::BeginDisabled(a->script.empty()); if (ImGui::Button("Edit##s")) openScript(a->script); ImGui::EndDisabled();
@@ -482,7 +483,7 @@ void Editor::drawContent() {
   if (ImGui::Button("+ Add")) ImGui::OpenPopup("cbAdd"); ImGui::SameLine(); if (ImGui::Button("Save All")) save(); ImGui::SameLine();
   ImGui::SetNextItemWidth(220); ImGui::InputTextWithHint("##cbf", "Search Content", &cbFilter);
   ImGui::SameLine(); ImGui::TextDisabled("Content > %s", cbFolder.c_str());
-  if (ImGui::BeginPopup("cbAdd")) { if (ImGui::MenuItem("Level")) run("newLevel"); if (ImGui::MenuItem("Material")) run("newMaterial"); if (ImGui::MenuItem("Script")) run("newScript"); ImGui::EndPopup(); }
+  if (ImGui::BeginPopup("cbAdd")) { if (ImGui::MenuItem("Level")) run("newLevel"); if (ImGui::MenuItem("Material")) run("newMaterial"); if (ImGui::MenuItem("Blueprint")) run("newBlueprint"); if (ImGui::MenuItem("Script")) run("newScript"); ImGui::EndPopup(); }
   ImGui::Separator();
   ImGui::BeginChild("folders", {170, 0}, ImGuiChildFlags_ResizeX);
   if (ImGui::TreeNodeEx("Content", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth)) {
@@ -517,7 +518,7 @@ void Editor::drawContent() {
     tileItem(id, id, "Material", IM_COL32(60, 180, 90, 255), "PGE_MAT", [&, mid] { materialOpen = mid; wMaterial = true; ImGui::SetWindowFocus("Material Editor"); },
       [&, mid] { if (ImGui::MenuItem("Duplicate")) dupMat = mid; if (ImGui::MenuItem("Delete", nullptr, false, mid != "M_Default")) delMat = mid; }); }
   if (cbFolder == "Scripts") for (auto& [id, s] : P.scripts) { std::string sid = id;
-    tileItem(id, s.name, "Script", IM_COL32(60, 130, 230, 255), "PGE_SCRIPT", [&, sid] { openScript(sid); }, [&, sid] { if (ImGui::MenuItem("Delete")) delScript = sid; }); }
+    tileItem(id, s.name, s.blueprint() ? "Blueprint" : "Script", s.blueprint() ? IM_COL32(60, 120, 255, 255) : IM_COL32(60, 130, 230, 255), "PGE_SCRIPT", [&, sid] { openScript(sid); }, [&, sid] { if (ImGui::MenuItem("Delete")) delScript = sid; }); }
   if (cbFolder == "Shapes") for (int i = 0; i < MESH_COUNT; i++) { std::string m = MESHES[i];
     tileItem("StaticMesh|" + m, m, "Static Mesh", IM_COL32(40, 180, 220, 255), "PGE_ADD", [&, m] { addActor("StaticMesh", m); }, [] {}); }
   if (!n) ImGui::TextDisabled(flt.empty() ? "This folder is empty. Use + Add." : "Nothing matches the search.");
@@ -529,7 +530,7 @@ void Editor::drawContent() {
     P.materials.erase(delMat); if (materialOpen == delMat) { materialOpen.clear(); wMaterial = false; } touch(); logMsg("Deleted " + delMat + (k ? " (" + std::to_string(k) + " actor(s) now use M_Default)" : "")); }
   if (!delScript.empty()) { int k = inUse([&](const Actor& a) { return a.script == delScript; });
     for (auto& [ln, lv] : P.levels) for (auto& a : lv.actors) if (a.script == delScript) a.script.clear();
-    P.scripts.erase(delScript); tabs.erase(std::remove_if(tabs.begin(), tabs.end(), [&](const ScriptTab& t) { return t.id == delScript; }), tabs.end()); touch();
+    P.scripts.erase(delScript); bpTabs.erase(std::remove_if(bpTabs.begin(), bpTabs.end(), [&](auto& t) { return t->id == delScript; }), bpTabs.end()); tabs.erase(std::remove_if(tabs.begin(), tabs.end(), [&](const ScriptTab& t) { return t.id == delScript; }), tabs.end()); touch();
     logMsg("Deleted " + delScript + (k ? " (removed from " + std::to_string(k) + " actor(s))" : "")); }
   if (!delLevel.empty()) { auto& v = P.levels; v.erase(std::remove_if(v.begin(), v.end(), [&](auto& x) { return x.first == delLevel; }), v.end());
     if (P.startLevel == delLevel) P.startLevel = v[0].first; if (level == delLevel) openLevel(P.startLevel); touch(); logMsg("Deleted level " + delLevel); }

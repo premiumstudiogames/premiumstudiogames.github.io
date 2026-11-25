@@ -1,4 +1,5 @@
 #include "project.h"
+#include "blueprint.h"
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <sstream>
@@ -202,6 +203,14 @@ Project makeTemplate(const std::string& kind, const std::string& name) {
     for (int i = 0; i < 4; i++) A.push_back(mesh("Step", "Cube", {7, 0.25f + i * 0.5f, -2.f - i}, {3, 0.5f + i, 1}, "M_Wall"));
     for (int i = 0; i < 6; i++) { Actor c = mesh("PhysicsCube", "Cube", {-2 + (i % 3) * 1.1f, 0.5f + (i / 3) * 1.05f, -2}, glm::vec3(1), "M_Accent"); c.physics.simulate = true; c.physics.mass = 5; A.push_back(c); }
     { Actor b = mesh("PhysicsBall", "Sphere", {3, 3, 0}, glm::vec3(1.2f), "M_Red"); b.physics.simulate = true; A.push_back(b); }
+    // a Blueprint to start from: Event Tick → Add Actor Rotation (Speed degrees a second, a variable you can change)
+    { Blueprint bp; bp.vars.push_back({"Speed", PinType::Number, 90});
+      auto node = [&](int id, const char* type, float x, float y, json v = json::object()) { BpNode n; n.id = id; n.type = type; n.x = x; n.y = y; n.values = v; bp.nodes.push_back(n); };
+      node(1, "Event.Tick", 0, 0); node(2, "Actor.AddRotation", 448, 0); node(3, "Var.Get", 0, 176, {{"Var", "Speed"}}); node(4, "Math.Multiply", 160, 160); node(5, "Vector.Make", 304, 144);
+      node(6, "Comment", -32, -64, {{"Text", "Spins this actor: Speed degrees a second"}}); bp.nodes.back().w = 720; bp.nodes.back().h = 320;
+      bp.links = {{1, "then", 2, "exec"}, {1, "DeltaSeconds", 4, "A"}, {3, "Value", 4, "B"}, {4, "ReturnValue", 5, "Y"}, {5, "ReturnValue", 2, "DeltaRotation"}}; bp.nextId = 7;
+      std::vector<BpMessage> m; Script sc{"BP_Rotator", bpCompile(bp, "BP_Rotator", m)}; sc.graph = bpToJson(bp); P.scripts["BP_Rotator"] = sc;
+      Actor sp = mesh("Spinner", "Cube", {10, 1.5f, 0}, glm::vec3(1), "M_Accent"); sp.script = "BP_Rotator"; A.push_back(sp); }
     P.scripts["SC_Pickup"] = {"SC_Pickup", SC_PICKUP}; P.scripts["SC_Rotator"] = {"SC_Rotator", SC_ROTATOR}; P.scripts["SC_Goal"] = {"SC_Goal", SC_GOAL}; P.scripts["SC_JumpPad"] = {"SC_JumpPad", SC_LAUNCH};
     float C[5][3] = {{-7, 2.6f, -9}, {7, 2.6f, -5}, {0, 1, -8}, {10, 1, 8}, {-10, 1, 8}};
     for (auto& c : C) { Actor x = mesh("Coin", "Torus", {c[0], c[1], c[2]}, glm::vec3(0.8f), "M_Gold"); x.script = "SC_Pickup"; x.physics.collision = false; A.push_back(x); }
@@ -258,7 +267,7 @@ bool levelFromJson(const std::string& t, Level& out) { try { out = levelF(json::
 std::string toJson(const Project& p, int indent) {
   json levels = json::object(); for (auto& [n, l] : p.levels) levels[n] = levelJ(l);
   json mats = json::object(); for (auto& [id, m] : p.materials) mats[id] = {{"name", m.name}, {"color", colorHex(m.color)}, {"metalness", m.metalness}, {"roughness", m.roughness}, {"emissive", colorHex(m.emissive)}, {"emissiveIntensity", m.emissiveIntensity}, {"opacity", m.opacity}};
-  json scr = json::object(); for (auto& [id, s] : p.scripts) scr[id] = {{"name", s.name}, {"code", s.code}};
+  json scr = json::object(); for (auto& [id, s] : p.scripts) { scr[id] = {{"name", s.name}, {"code", s.code}}; if (s.blueprint()) scr[id]["blueprint"] = s.graph; }
   json j = {{"id", p.id}, {"name", p.name}, {"template", p.templ}, {"engine", PGE_VERSION}, {"created", p.created}, {"updated", p.updated}, {"description", p.description},
             {"startLevel", p.startLevel}, {"levelOrder", json::array()}, {"levels", levels}, {"assets", {{"materials", mats}, {"scripts", scr}}}};
   for (auto& l : p.levels) j["levelOrder"].push_back(l.first);
@@ -277,7 +286,7 @@ bool fromJson(const std::string& text, Project& P, std::string* err) {
     if (j.contains("assets")) {
       auto& as = j["assets"];
       if (as.contains("materials")) for (auto& [id, m] : as["materials"].items()) { Material x; x.name = get<std::string>(m, "name", id); x.color = col(m, "color", x.color); x.metalness = get<float>(m, "metalness", 0); x.roughness = get<float>(m, "roughness", 0.6f); x.emissive = col(m, "emissive", glm::vec3(0)); x.emissiveIntensity = get<float>(m, "emissiveIntensity", 1); x.opacity = get<float>(m, "opacity", 1); p.materials[id] = x; }
-      if (as.contains("scripts")) for (auto& [id, s] : as["scripts"].items()) p.scripts[id] = {get<std::string>(s, "name", id), get<std::string>(s, "code", "")};
+      if (as.contains("scripts")) for (auto& [id, s] : as["scripts"].items()) { p.scripts[id] = {get<std::string>(s, "name", id), get<std::string>(s, "code", "")}; if (s.contains("blueprint") && s["blueprint"].is_object()) p.scripts[id].graph = s["blueprint"]; }
     }
     if (!p.materials.count("M_Default")) p.materials["M_Default"] = Material();
     P = std::move(p); return true;

@@ -4,6 +4,8 @@
 //   LT held: fly the camera (left stick move, right stick look, LB / RB down / up);
 //   RT held: move the selected actor (left stick along the floor, LB / RB down / up, right stick turns it; snaps when let go);
 //   View: play / stop · Menu: save · text fields open the on-screen keyboard. Home (Premium Games) opens the Control Center.
+//   R3 (right stick click): a mouse pointer for things made for a mouse (the Blueprint graph): left stick moves it,
+//   A clicks (hold to drag), X right-clicks, right stick zooms / scrolls, B or R3 goes back to the menus.
 #include "editor.h"
 #include "platform.h"
 #include "log.h"
@@ -74,6 +76,16 @@ bool Editor::consoleEvent(const SDL_Event& e) {
     }
     return true;
   }
+  // the pointer: A / X are the mouse buttons (held = dragging a node or a wire)
+  if (b == SDL_CONTROLLER_BUTTON_RIGHTSTICK && down) { padMouse_ = !padMouse_; if (padMouse_) { int mx, my; SDL_GetMouseState(&mx, &my); pmX_ = (float)mx; pmY_ = (float)my;
+      if (pmX_ <= 0 && pmY_ <= 0) { int w, h; SDL_GetWindowSize(win.win, &w, &h); pmX_ = w * 0.5f; pmY_ = h * 0.5f; } } return true; }
+  if (padMouse_) {
+    ImGuiIO& io = ImGui::GetIO();
+    if (b == SDL_CONTROLLER_BUTTON_A) { io.AddMouseButtonEvent(0, down); return true; }
+    if (b == SDL_CONTROLLER_BUTTON_X) { io.AddMouseButtonEvent(1, down); return true; }
+    if (b == SDL_CONTROLLER_BUTTON_B && down) { padMouse_ = false; return true; }
+    if (b == SDL_CONTROLLER_BUTTON_Y && down) { io.AddKeyEvent(ImGuiMod_Alt, true); io.AddMouseButtonEvent(0, true); io.AddMouseButtonEvent(0, false); keyUps_.push_back(ImGuiMod_Alt); return true; }   // Y = Alt+click (break a pin's wires)
+  }
   if (down && b == SDL_CONTROLLER_BUTTON_BACK && hasProject) { play(); return true; }
   if (down && b == SDL_CONTROLLER_BUTTON_START && hasProject) { if (save()) notify("Saved"); return true; }
   return false;   // the rest drives the menus (Dear ImGui reads the controller itself)
@@ -118,8 +130,14 @@ void Editor::consoleFrame() {
     if (snapR && snapRv > 0) a->r.y = std::round(a->r.y / snapRv) * snapRv;
     touch();
   }
+  if (padMouse_ && !playing && !oskOn_) {   // the pointer moves with the left stick (faster the further it's pushed); the right stick scrolls / zooms
+    int w, h; SDL_GetWindowSize(win.win, &w, &h); float sp = 1300 * dt_;
+    pmX_ = glm::clamp(pmX_ + lx * std::fabs(lx) * sp, 0.f, (float)w - 1); pmY_ = glm::clamp(pmY_ + ly * std::fabs(ly) * sp, 0.f, (float)h - 1);
+    if (lx != 0 || ly != 0) { SDL_WarpMouseInWindow(win.win, (int)pmX_, (int)pmY_); io.AddMousePosEvent(pmX_, pmY_); }
+    if (ry != 0) io.AddMouseWheelEvent(0, -ry * dt_ * 6);
+  } else if (playing || oskOn_) padMouse_ = false;
   // the menus get the controller only when nothing else has it
-  bool nav = !playing && !oskOn_ && !padFly_ && !padMove_;
+  bool nav = !playing && !oskOn_ && !padFly_ && !padMove_ && !padMouse_;
   if (nav != padNav_) {
     padNav_ = nav;
     if (nav) io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
@@ -161,7 +179,13 @@ void Editor::drawConsole() {
   float y = v->Pos.y + v->Size.y - fs - 8 * s - (hasProject ? ImGui::GetFrameHeight() + 12 * s : 10 * s), x = v->Pos.x + 14 * s;
   float bw = v->Size.x - 28 * s; dl->AddRectFilled({x - 6 * s, y - 4 * s}, {x + bw, y + fs + 12 * s}, IM_COL32(10, 10, 12, 200), 6 * s);
   if (playing) { x = pill({x, y}, "View", "Stop playing"); pill({x, y}, "Home", "Premium Games"); return; }
+  if (padMouse_) {   // the pointer, and what its buttons do
+    ImVec2 m = ImGui::GetIO().MousePos; ImVec2 tri[3] = {m, {m.x, m.y + 22 * s}, {m.x + 15 * s, m.y + 15 * s}};
+    dl->AddTriangleFilled(tri[0], tri[1], tri[2], IM_COL32_WHITE); dl->AddTriangle(tri[0], tri[1], tri[2], IM_COL32(0, 0, 0, 255), 1.5f * s);
+    x = pill({x, y}, "L", "Move pointer"); x = pill({x, y}, "A", "Click / drag"); x = pill({x, y}, "X", "Right-click"); x = pill({x, y}, "Y", "Alt+click"); x = pill({x, y}, "R", "Zoom / scroll");
+    pill({x, y}, "B", "Back to menus"); return; }
   x = pill({x, y}, "A", "Select"); x = pill({x, y}, "B", "Back"); x = pill({x, y}, "X", "Menus (hold: windows)"); x = pill({x, y}, "Y", "Type");
+  x = pill({x, y}, "R3", "Pointer");
   if (hasProject) { x = pill({x, y}, "LT", "Fly camera"); x = pill({x, y}, "RT", "Move selected"); x = pill({x, y}, "View", "Play"); x = pill({x, y}, "Menu", "Save"); }
   pill({x, y}, "Home", "Premium Games");
 }

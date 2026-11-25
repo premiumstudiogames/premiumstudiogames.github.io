@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(PremiumEngine VERSION 0.12.1 LANGUAGES C CXX)
+project(PremiumEngine VERSION 0.13.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -73,7 +73,7 @@ target_link_libraries(imgui PUBLIC SDL2::SDL2-static)
 
 # ---- the engine (shared by the editor and the game player)
 add_library(pgcore STATIC
-  src/gl.cpp src/project.cpp src/mesh.cpp src/renderer.cpp src/physics.cpp src/script.cpp src/game.cpp src/log.cpp src/ui_style.cpp src/app.cpp src/voxel.cpp src/arabic.cpp src/ui.cpp src/audio.cpp src/miniaudio_impl.c src/models.cpp src/net.cpp)
+  src/gl.cpp src/project.cpp src/mesh.cpp src/renderer.cpp src/physics.cpp src/script.cpp src/game.cpp src/log.cpp src/ui_style.cpp src/app.cpp src/voxel.cpp src/arabic.cpp src/ui.cpp src/audio.cpp src/miniaudio_impl.c src/models.cpp src/net.cpp src/blueprint.cpp)
 target_include_directories(pgcore PUBLIC src third_party/gl ${stb_SOURCE_DIR} ${miniaudio_SOURCE_DIR})
 target_link_libraries(pgcore PUBLIC imgui Jolt qjs nlohmann_json::nlohmann_json glm::glm)
 if(UNIX)
@@ -103,7 +103,7 @@ target_compile_definitions(textedit PUBLIC BOOST_REGEX_STANDALONE)
 target_link_libraries(textedit PUBLIC imgui)
 
 # editor
-add_executable(PremiumEngine WIN32 src/editor/main.cpp src/editor/editor.cpp src/editor/panels.cpp src/editor/dialogs.cpp src/editor/platform.cpp src/editor/console.cpp)
+add_executable(PremiumEngine WIN32 src/editor/main.cpp src/editor/editor.cpp src/editor/panels.cpp src/editor/dialogs.cpp src/editor/platform.cpp src/editor/console.cpp src/editor/bp_editor.cpp)
 target_link_libraries(PremiumEngine PRIVATE pgcore textedit SDL2::SDL2main)
 # game player (packaged games are this program + the project file)
 add_executable(PremiumEnginePlayer WIN32 src/player/main.cpp)

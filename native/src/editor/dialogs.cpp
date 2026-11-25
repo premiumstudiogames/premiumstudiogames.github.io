@@ -5,6 +5,7 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <imgui_stdlib.h>
+#include "arabic.h"
 #include <filesystem>
 #include <algorithm>
 #include <cstring>
@@ -153,6 +154,21 @@ events (node.on): click, dblclick, rightclick, down, up, enter, leave, change, i
   e.from / e.to / e.data (drag and drop), e.shift / e.ctrl / e.alt, e.stop()  - clicks and drops bubble up to the parents
 )"
 R"(
+BLUEPRINTS - scripts made of nodes and wires, like Unreal Engine's (+ Add > Blueprint, or Details > Script > + New Blueprint)
+  A Blueprint is put on an actor like a script, and runs the same way: in Play, in packaged games, on the console.
+  Events start the flow: Event BeginPlay, Event Tick (Delta Seconds), Event ActorBeginOverlap, Event Hit, Key Pressed,
+  Any Key Pressed, Event EndPlay, Custom Event, On Widget Clicked (a game UI button).
+  The white wire (exec) is the order things happen in; coloured wires carry values: red Boolean, green Float, pink String,
+  yellow Vector, blue Actor, teal Array. Inputs with no wire use the value typed on the node; Target = self.
+  Flow Control: Branch, Sequence, For Loop, For Each Loop, While Loop, Do Once, Flip Flop, Gate, Delay, Set Timer by Event,
+  Clear Timer, Call Custom Event.  Variables: + Variable in My Blueprint, drag one into the graph (Alt: Set).
+  Right-click (or drag a wire into empty space): add a node - search in English or Arabic. Alt+click a pin: break its
+  wires. Right-drag: pan. Wheel: zoom. F: frame all. C: a comment box (around the selected nodes). Delete, Ctrl+C/V/D.
+  The names are English (the main ones, like Unreal); the language box shows them in Arabic or both, and hovering a node
+  explains it in both. Compile results (errors / warnings) are on their nodes; Show Code shows the script it runs as.
+  On the console version: R3 (right stick click) gives a mouse pointer: left stick moves it, A clicks, X right-clicks,
+  right stick zooms / scrolls.
+
 CONTROLLER (Xbox, PlayStation, Switch Pro ... plugged in or Bluetooth, found when it connects)
   The player walks with the left stick and looks with the right stick out of the box; clicking the left stick runs.
   Buttons are keys: 'PadA' 'PadB' 'PadX' 'PadY' 'PadLB' 'PadRB' 'PadLT' 'PadRT' 'PadLS' 'PadRS' 'PadStart' 'PadBack'
@@ -300,6 +316,14 @@ void Editor::drawDialogs() {
     for (auto& [ln, lv] : P.levels) { std::string label = ln + "  (" + std::to_string(lv.actors.size()) + " actors)" + (ln == P.startLevel ? "  - start level" : "");
       if (ImGui::Selectable(label.c_str(), ln == level, ImGuiSelectableFlags_AllowDoubleClick) && ImGui::IsMouseDoubleClicked(0)) { openLevel(ln); wOpenLevel = false; } }
     ImGui::TextDisabled("Double-click to open"); ImGui::End(); }
+  if (beginDialog("New Blueprint", &wNewBlueprint, {420 * s, 0})) {
+    ImGui::TextWrapped("A Blueprint is a script made of nodes and wires (like Unreal's). Put it on an actor in Details > Script.");
+    ImGui::TextWrapped("%s", visualText("البلوبرنت سكربت تسويه بالعقد والأسلاك (مثل Unreal). تحطه على ممثل من Details > Script.").c_str());
+    if (wNewBlueprint && ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+    bool go = ImGui::InputText("Name", &newName, ImGuiInputTextFlags_EnterReturnsTrue); Actor* a = actor(sel); static bool assignB = true;
+    if (a) ImGui::Checkbox(("Put it on " + a->name).c_str(), &assignB);
+    if (ImGui::Button("Create", {120, 0}) || go) { std::string id = newBlueprint(newName); if (a && assignB) { a->script = id; touch(); } openBlueprint(id); wNewBlueprint = false; }
+    ImGui::SameLine(); if (ImGui::Button("Cancel")) wNewBlueprint = false; ImGui::End(); }
   if (beginDialog("New Script", &wNewScript, {380 * s, 0})) {
     ImGui::Text("Script name"); ImGui::SetNextItemWidth(-1); if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
     bool go = ImGui::InputText("##ns", &newName, ImGuiInputTextFlags_EnterReturnsTrue); Actor* a = actor(sel); static bool assign = true;

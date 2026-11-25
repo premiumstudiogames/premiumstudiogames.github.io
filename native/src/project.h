@@ -5,11 +5,13 @@
 #include <vector>
 #include <map>
 #include <glm/glm.hpp>
+#include <nlohmann/json.hpp>
 
 namespace pge {
 
 struct Material { std::string name = "M_Default"; glm::vec3 color{0.784f, 0.8f, 0.83f}; float metalness = 0, roughness = 0.6f; glm::vec3 emissive{0}; float emissiveIntensity = 1, opacity = 1; };
-struct Script { std::string name, code; };
+// a script: code, or a Blueprint (its graph is kept; code = what the graph compiled to, so it runs like any script)
+struct Script { std::string name, code; nlohmann::json graph; bool blueprint() const { return graph.is_object(); } };
 struct LightProps { glm::vec3 color{1}; float intensity = 1, range = 12, angle = 35; bool shadows = true; };
 struct TextProps { std::string value = "Text"; glm::vec3 color{1}; float size = 0.6f; };
 struct PhysicsProps { bool simulate = false, collision = true; float mass = 1; };

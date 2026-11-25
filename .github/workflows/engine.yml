@@ -59,6 +59,10 @@ jobs:
           mkdir -p selftest/console
           ./run/PremiumEngine.exe --console --home "$PWD/selftest/console/home" --consoletest "$PWD/selftest/console" || { cat selftest/console/console-result.txt; exit 1; }
           cat selftest/console/console-result.txt
+          # Blueprints: the editor used with the mouse (a wire dragged, a node searched and added), then Play
+          mkdir -p selftest/blueprint
+          ./run/PremiumEngine.exe --home "$PWD/selftest/blueprint/home" --bptest "$PWD/selftest/blueprint" || { cat selftest/blueprint/bp-result.txt; exit 1; }
+          cat selftest/blueprint/bp-result.txt
 
       - name: Packaged game self-test (walks forward)
         timeout-minutes: 10
