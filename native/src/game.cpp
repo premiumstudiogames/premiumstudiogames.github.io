@@ -404,7 +404,7 @@ void Game::buildFrame(Frame& f, Camera& cam, float aspect) const {
   for (auto& op : objs_) { const Obj& o = *op; if (!o.alive) continue;
     bool vis = o.visible; int guard = 0; for (Obj* p = get(o.a.parent); p && vis && guard < 64; p = get(p->a.parent), guard++) vis = p->visible;
     if (!vis) continue;
-    addActorVisual(f, project_, o.a, world(o), false, 0, o.hasColor ? &o.color : nullptr, nullptr, nullptr, o.anim.anim >= 0 || !o.anim.fixed.empty() ? &o.anim : nullptr); }
+    addActorVisual(f, project_, o.a, world(o), false, 0, o.hasColor ? &o.color : nullptr, nullptr, nullptr, o.anim.anim >= 0 || !o.anim.fixed.empty() || !o.anim.scaled.empty() ? &o.anim : nullptr); }
   if (sunSet_) { bool done = false; for (auto& l : f.lights) if (l.type == 0) { l.dir = sunDir_; l.color = sunColor_; l.intensity = sunInt_; done = true; break; }
     if (!done) { LightItem l; l.type = 0; l.dir = sunDir_; l.color = sunColor_; l.intensity = sunInt_; l.shadows = true; f.lights.insert(f.lights.begin(), l); } }
   glm::vec3 eye;
@@ -619,15 +619,18 @@ std::string Game::animation(const std::string& id, const std::string& op, const 
   if (op == "list") { json a = json::array(); for (auto& x : m->anims) a.push_back(x.name); return a.dump(); }
   if (op == "state") { json s = {{"name", an.anim >= 0 && an.anim < (int)m->anims.size() ? m->anims[an.anim].name : ""}, {"time", an.time}, {"playing", an.playing}, {"loop", an.loop}, {"speed", an.speed},
       {"duration", an.anim >= 0 && an.anim < (int)m->anims.size() ? m->anims[an.anim].duration : 0.f}}; return s.dump(); }
-  if (op == "stop") { an = AnimPlay(); return "1"; }
+  if (op == "stop") { auto keepF = an.fixed; auto keepS = an.scaled; an = AnimPlay(); an.fixed = keepF; an.scaled = keepS; return "1"; }
   if (op == "speed") { an.speed = (float)std::atof(arg.c_str()); return "1"; }
   if (op == "play") { json j = json::object(); try { j = json::parse(arg); } catch (...) {}
     std::string n = j.value("name", ""); int ai = m->anim(n);
     if (ai < 0) { std::string names; for (auto& x : m->anims) names += (names.empty() ? "" : ", ") + x.name; logMsg("warning: " + o->a.name + ": no animation \"" + n + "\" in " + o->a.mesh + (names.empty() ? " (it has none)" : " - it has: " + names), LogKind::Warn); return "0"; }
     float blend = j.contains("blend") && j["blend"].is_number() ? j["blend"].get<float>() : 0.2f, speed = j.contains("speed") && j["speed"].is_number() ? j["speed"].get<float>() : 1.f;
     an.play(ai, !j.contains("loop") || !j["loop"].is_boolean() || j["loop"].get<bool>(), speed, blend); return "1"; }
+  if (op == "boneScale") { json j = json::parse(arg, nullptr, false); if (!j.is_object()) return "0"; std::string bn = j.value("name", std::string()); int ni = -1; for (size_t i = 0; i < m->nodes.size(); i++) if (m->nodes[i].name == bn) { ni = (int)i; break; }
+    if (ni < 0) return "0"; float k = j.value("scale", 1.f); an.scaled.erase(std::remove_if(an.scaled.begin(), an.scaled.end(), [&](auto& x) { return x.first == ni; }), an.scaled.end());
+    if (std::abs(k - 1) > 1e-4f) an.scaled.push_back({ni, glm::vec3(k)}); return "1"; }
   if (op == "bone") { int ni = -1; for (size_t i = 0; i < m->nodes.size(); i++) if (m->nodes[i].name == arg) { ni = (int)i; break; } if (ni < 0) return "";
-    ModelPose p; poseModel(*m, an.anim >= 0 || !an.fixed.empty() ? &an : nullptr, p); glm::mat4 W = world(*o) * p.world[ni]; glm::vec3 pos, sc; glm::quat q; decompose(W, pos, q, sc); glm::vec3 e = eulerYXZ(q);
+    ModelPose p; poseModel(*m, an.anim >= 0 || !an.fixed.empty() || !an.scaled.empty() ? &an : nullptr, p); glm::mat4 W = world(*o) * p.world[ni]; glm::vec3 pos, sc; glm::quat q; decompose(W, pos, q, sc); glm::vec3 e = eulerYXZ(q);
     return json{{"p", {pos.x, pos.y, pos.z}}, {"r", {e.x, e.y, e.z}}}.dump(); }
   return "";
 }

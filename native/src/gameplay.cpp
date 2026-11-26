@@ -69,7 +69,7 @@ glm::mat4 Game::boneWorld(const Obj& o, const std::string& bone) const {
   int ni = -1; for (size_t i = 0; i < m->nodes.size(); i++) if (m->nodes[i].name == bone) { ni = (int)i; break; }
   if (ni < 0) { std::string b = lower(bone); for (size_t i = 0; i < m->nodes.size(); i++) if (lower(m->nodes[i].name) == b) { ni = (int)i; break; } }
   if (ni < 0) return rigid(W);
-  ModelPose p; poseModel(*m, o.anim.anim >= 0 || !o.anim.fixed.empty() ? &o.anim : nullptr, p); return rigid(W * p.world[ni]);
+  ModelPose p; poseModel(*m, o.anim.anim >= 0 || !o.anim.fixed.empty() || !o.anim.scaled.empty() ? &o.anim : nullptr, p); return rigid(W * p.world[ni]);
 }
 glm::mat4 Game::playerBone(const std::string& bone) const {
   ModelRef pm = pModel_.empty() || mode_ != "ThirdPerson" ? nullptr : model(pModel_); if (!pm || !pm->ok()) return playerMatrix();
@@ -220,7 +220,7 @@ bool Game::ragdoll(Obj& o, const glm::vec3& impulse, const glm::vec3& point, boo
   if (!o.a.parent.empty()) detach(o, json{{"keepWorld", true}});
   glm::vec3 walkVel(0); if (o.walk.active && o.walk.i < o.walk.path.size()) { glm::vec3 d = o.walk.path[o.walk.i] - (o.p - glm::vec3(0, o.walk.foot, 0)); d.y = 0; if (glm::length(d) > 1e-3f) walkVel = glm::normalize(d) * o.walk.speed; }
   o.walk = Obj::Walk();
-  ModelPose mp; poseModel(*m, o.anim.anim >= 0 ? &o.anim : nullptr, mp); glm::mat4 W = world(o);
+  ModelPose mp; poseModel(*m, o.anim.anim >= 0 || !o.anim.scaled.empty() ? &o.anim : nullptr, mp); glm::mat4 W = world(o);
   size_t n = m->nodes.size(); std::vector<char> isJ(n, 0); for (auto& s : m->skins) for (int j : s.joints) if (j >= 0 && j < (int)n) isJ[j] = 1;
   auto jparent = [&](int i) { int p = m->nodes[i].parent; while (p >= 0 && !isJ[p]) p = m->nodes[p].parent; return p; };
   std::vector<glm::vec3> head(n); for (size_t i = 0; i < n; i++) head[i] = glm::vec3(W * mp.world[i][3]);
@@ -269,7 +269,7 @@ bool Game::ragdoll(Obj& o, const glm::vec3& impulse, const glm::vec3& point, boo
     else if (has(nm, {"calf", "shin", "lowerleg", "leg", "knee", "forearm", "lowerarm", "elbow"})) { jd.swing = 70; jd.twistMin = -8; jd.twistMax = 8; }
     else if (has(nm, {"hand", "foot", "toe", "wrist", "ankle"})) { jd.swing = 35; jd.twistMin = -15; jd.twistMax = 15; }
     phys_->addJoint(jd); }
-  o.ragFrom = o.p - phys_->position(o.rag[0].body); o.anim = AnimPlay(); o.motion = Motion::Dynamic; o.inside = false;
+  o.ragFrom = o.p - phys_->position(o.rag[0].body); { auto keepS = o.anim.scaled; o.anim = AnimPlay(); o.anim.scaled = keepS; } o.motion = Motion::Dynamic; o.inside = false;
   if (glm::length(impulse) > 0) { uint32_t best = o.rag[0].body; float bd = 1e9f; if (hasPoint) for (auto& r : o.rag) { float dd = glm::length(phys_->position(r.body) - point); if (dd < bd) { bd = dd; best = r.body; } }
     if (hasPoint) phys_->addImpulseAt(best, impulse, point); else for (auto& r : o.rag) phys_->addImpulse(r.body, impulse * (1.f / o.rag.size())); }
   return true;

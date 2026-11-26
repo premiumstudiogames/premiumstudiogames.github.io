@@ -298,13 +298,15 @@ void poseModel(const Model& m, const AnimPlay* a, ModelPose& out) {
       float w = glm::clamp(a->blend, 0.f, 1.f); w = w * w * (3 - 2 * w);
       for (size_t i = 0; i < n; i++) { L[i].t = glm::mix(F[i].t, L[i].t, w); L[i].s = glm::mix(F[i].s, L[i].s, w); L[i].r = glm::slerp(F[i].r, L[i].r, w); } }
     else applyAnim(m.anims[a->anim], a->time, L); }
+  std::vector<glm::vec3> grow; if (a && !a->scaled.empty()) { grow.assign(n, glm::vec3(1)); for (auto& sc : a->scaled) if (sc.first >= 0 && sc.first < (int)n) { L[sc.first].s *= glm::max(sc.second, glm::vec3(1e-4f)); grow[sc.first] = glm::max(sc.second, glm::vec3(1e-4f)); } }
   out.world.assign(n, glm::mat4(1)); std::vector<char> done(n, 0);
   std::vector<const glm::mat4*> held; if (a && !a->fixed.empty()) { held.assign(n, nullptr); for (auto& f : a->fixed) if (f.first >= 0 && f.first < (int)n) held[f.first] = &f.second; }
   // parents before children (any order in the file)
   std::vector<int> stack; for (int r : m.roots) stack.push_back(r); for (size_t i = 0; i < n; i++) if (m.nodes[i].parent < 0) stack.push_back((int)i);
   while (!stack.empty()) { int i = stack.back(); stack.pop_back(); if (i < 0 || i >= (int)n || done[i]) continue; done[i] = 1;
     glm::mat4 local = glm::translate(glm::mat4(1), L[i].t) * glm::mat4_cast(L[i].r) * glm::scale(glm::mat4(1), L[i].s);
-    int p = m.nodes[i].parent; out.world[i] = !held.empty() && held[i] ? *held[i] : p >= 0 && done[p] ? out.world[p] * local : local; for (int c : m.nodes[i].children) stack.push_back(c); }
+    int p = m.nodes[i].parent; if (!grow.empty() && p >= 0 && done[p]) grow[i] *= grow[p];   // what hangs on a scaled bone goes with it (a held ragdoll part too)
+    out.world[i] = !held.empty() && held[i] ? (grow.empty() ? *held[i] : *held[i] * glm::scale(glm::mat4(1), grow[i])) : p >= 0 && done[p] ? out.world[p] * local : local; for (int c : m.nodes[i].children) stack.push_back(c); }
   out.joints.clear(); out.skinAt.clear();
   for (auto& s : m.skins) { out.skinAt.push_back((int)out.joints.size()); for (size_t j = 0; j < s.joints.size(); j++) out.joints.push_back((s.joints[j] >= 0 && s.joints[j] < (int)n ? out.world[s.joints[j]] : glm::mat4(1)) * s.inverseBind[j]); }
 }

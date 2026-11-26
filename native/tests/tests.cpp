@@ -331,6 +331,10 @@ int main(int argc, char** argv) {
     // ragdoll: enough damage kills the character (its script makes it a ragdoll), it falls; its bones follow the bodies
     { g.gameplay("damage", json(g.find("Enemy")).dump(), json{{"amount", 80}, {"type", "bullet"}, {"point", {-3, 1.6, -4}}}.dump());
       CHECK(g.gameplay("ragdollState", g.find("Enemy"), "") == "1", "a character becomes a ragdoll");
+      CHECK(g.animation(g.find("Enemy"), "boneScale", "{\"name\":\"UpperArm_L\",\"scale\":0}") == "1" && g.animation(g.find("Enemy"), "boneScale", "{\"name\":\"Nope\",\"scale\":0}") == "0", "setBoneScale: a limb shot off");
+      { ModelRef mq = model("Characters/Mannequin.glb"); AnimPlay ap; int ua = -1, hand = -1; for (size_t i = 0; i < mq->nodes.size(); i++) { if (mq->nodes[i].name == "UpperArm_L") ua = (int)i; if (mq->nodes[i].name == "Hand_L") hand = (int)i; }
+        ap.scaled.push_back({ua, glm::vec3(0)}); ap.fixed.push_back({hand, glm::mat4(1)}); ModelPose mp; poseModel(*mq, &ap, mp);
+        CHECK(glm::length(glm::vec3(mp.world[hand][0])) < 0.01f && glm::length(glm::vec3(mp.world[ua][0])) < 0.01f, "…what hangs on it goes too (a ragdoll's hand as well)"); }
       run(g, 2.5f); json h = J(g.gameplay("raycast", "{\"from\":[-3,3,-4.3],\"to\":[-3,-1,-4.3]}", "")); glm::vec3 ep = g.worldPos(g.find("Enemy"));
       json hb = J(g.animation(g.find("Enemy"), "bone", "Head")); float headY = hb.is_object() ? hb["p"][1].get<float>() : 9;
       CHECK(headY < 0.7f, ("…it falls to the ground (head at " + std::to_string(headY) + " m)").c_str());

@@ -56,6 +56,7 @@ struct AnimPlay {
   void play(int a, bool loopIt, float spd, float blendSeconds);   // blendSeconds 0 = at once
   bool advance(const Model& m, float dt);     // true when it reached the end this step (not looping)
   std::vector<std::pair<int, glm::mat4>> fixed;   // nodes held where something else puts them (ragdoll parts): node → its place in the model
+  std::vector<std::pair<int, glm::vec3>> scaled;  // nodes made bigger / smaller with what hangs on them (0 = gone: a limb shot off)
 };
 struct ModelPose { std::vector<glm::mat4> world; std::vector<glm::mat4> joints; std::vector<int> skinAt; };
 void poseModel(const Model& m, const AnimPlay* a, ModelPose& out);   // a = nullptr: at rest

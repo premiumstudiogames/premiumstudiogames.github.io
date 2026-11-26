@@ -308,6 +308,9 @@ static std::vector<BpNodeDef> buildLibrary() {
   add("Animation.BoneLocation", "Animation", U, "Get Bone Location", "موقع العظمة", "Where a bone (joint) of the model is in the world: hold a sword in Hand_R, shoot from Muzzle...",
       "مكان عظمة (مفصل) من المجسم في العالم: تمسك سيف في Hand_R، تطلق من Muzzle...", {T, ">Bone:string=\"Hand_R\"", "<ReturnValue:vector@__bp.bone($in(Target), $in(Bone))"});
 
+  add("Animation.SetBoneScale", "Animation", X, "Set Bone Scale", "حجم العظمة", "Makes a bone (and what hangs on it) bigger or smaller; 0 = gone (a limb or head shot off - add blood with Spawn Decal).",
+      "يكبّر أو يصغّر عظمة (واللي معلّق فيها)؛ 0 = تختفي (يد أو راس انقطع - حط دم بـ Spawn Decal).", {">exec", T, ">Bone:string=\"Head\"", ">Scale:number=0", "<then"},
+      "{ const __t = $in(Target); if (__t && __t.setBoneScale) __t.setBoneScale($in(Bone), +$in(Scale)); }\n$exec(then)");
   add("Audio.PlaySound", "Audio", X, "Play Sound 2D", "شغّل صوت", "Plays a sound file from the project (sounds/coin.ogg ...).", "يشغّل ملف صوت من المشروع (مثل sounds/coin.ogg).", {">exec", ">Sound:string=\"sounds/click.ogg\"", ">Volume:number=1", "<then"},
       "if (typeof sound !== 'undefined') sound.play($in(Sound), { volume: $in(Volume) });\n$exec(then)");
   add("Audio.PlaySoundAt", "Audio", X, "Play Sound at Location", "شغّل صوت في مكان", "Plays a sound at a place (quieter far away).", "يشغّل صوت في مكان معين (يوطى كل ما بعدت).", {">exec", ">Sound:string=\"sounds/click.ogg\"", ">Location:vector", ">Volume:number=1", "<then"},

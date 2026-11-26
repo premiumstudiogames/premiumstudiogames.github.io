@@ -50,6 +50,7 @@ self  - the actor the script is on
   self.animations                ['Idle', 'Walk', 'Run', ...]
   self.animationSpeed = 2        twice as fast (-1 = backwards)
   self.bone('Hand_R')            { position, rotation } of a bone (joint) in the world: hold things, shoot from a muzzle
+  self.setBoneScale('Head', 0)   a bone and what hangs on it bigger / smaller; 0 = gone (gore: a limb shot off)
   walking (AI) on the level's floors, round walls, up ramps and stairs:
   self.moveTo([x, y, z] | actor | world.player, { speed: 3.5, acceptance: 0.5, turn: true })   false if there's no way; an actor is followed
   self.stopMoving()   self.isMoving   self.moveResult ('success', 'fail', 'stopped')

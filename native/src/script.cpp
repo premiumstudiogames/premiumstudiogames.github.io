@@ -149,6 +149,7 @@ function __api(id) {
     get animation() { const r = __n.anim(id, 'state', ''); return r ? JSON.parse(r) : null; },
     get animations() { const r = __n.anim(id, 'list', ''); return r ? JSON.parse(r) : []; },
     set animationSpeed(v) { __n.anim(id, 'speed', String(+v)); },
+    setBoneScale(name, s) { return __n.anim(id, 'boneScale', JSON.stringify({ name: String(name), scale: +s })) === '1'; },   // 0 = gone with what hangs on it (gore: a limb shot off)
     bone(name) { const r = __n.anim(id, 'bone', String(name)); if (!r) return null; const b = JSON.parse(r);
       return { position: new Vec3(b.p[0], b.p[1], b.p[2]), rotation: new Vec3(b.r[0], b.r[1], b.r[2]) }; },
     // walking on the level's floors (AI Move To): moveTo(place | actor | world.player, { speed: 3.5, acceptance: 0.5, turn: true }) → false if there's no way
