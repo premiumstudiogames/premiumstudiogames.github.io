@@ -127,7 +127,22 @@ int main(int argc, char** argv) {
             ed.sel.clear(); ed.wPackage = false; ed.camPos = {-0.5f, 1.4f, 5.5f}; ed.camYaw = 0; ed.camPitch = -0.08f; ed.animPaused = false; ed.touch(); }
           if (frame == 99) ed.shotFile = mtest + "/model-extra.bmp";
           if (frame == 100) ed.shotFile.clear(); }
-        if (frame == (std::getenv("PGE_MODELTEST_EXTRA") ? 104 : 100)) { check(ed.packageOk, "Package"); check(fs::exists(fs::u8path(ed.packageDir) / "Models" / "TestBot.glb") && fs::exists(fs::u8path(ed.packageDir) / "Textures" / "Grass.png"), "the packaged game has the model and the picture");
+        // camera effects: the vignette darkens the corners, the VHS look changes the picture (in the editor's viewport, as in the game)
+        static float corner0 = 0, corner1 = 0; static double diff = 0;
+        auto cornerLum = [&](const std::string& f, double* d2 = nullptr, const std::string& other = "") { SDL_Surface* s0 = SDL_LoadBMP(f.c_str()); if (!s0) return 0.f; SDL_Surface* s = SDL_ConvertSurfaceFormat(s0, SDL_PIXELFORMAT_RGBA32, 0); SDL_FreeSurface(s0);
+          SDL_Surface* o = nullptr; if (d2 && !other.empty()) { SDL_Surface* o0 = SDL_LoadBMP(other.c_str()); if (o0) { o = SDL_ConvertSurfaceFormat(o0, SDL_PIXELFORMAT_RGBA32, 0); SDL_FreeSurface(o0); } }
+          double sum = 0; int n = 0; double dd = 0; int dn = 0;
+          for (int y = ry + 30; y < ry + rh - 4; y += 2) for (int x = rx + 4; x < rx + rw - 4; x += 2) { const Uint8* p = (const Uint8*)s->pixels + y * s->pitch + x * 4;
+            bool corner = (x < rx + rw / 8 || x > rx + rw * 7 / 8) && (y < ry + rh / 6 || y > ry + rh * 5 / 6); if (corner) { sum += p[0] + p[1] + p[2]; n++; }
+            if (o) { const Uint8* q = (const Uint8*)o->pixels + y * o->pitch + x * 4; dd += std::abs(p[0] - q[0]) + std::abs(p[1] - q[1]) + std::abs(p[2] - q[2]); dn++; } }
+          if (o) SDL_FreeSurface(o); SDL_FreeSurface(s); if (d2) *d2 = dn ? dd / dn : 0; return n ? (float)(sum / n) : 0.f; };
+        if (frame == 104) { ed.sel.clear(); ed.wPackage = false; ed.L().world.post = pge::PostProcess(); ed.shotFile = mtest + "/post-off.bmp"; }
+        if (frame == 106) { ed.L().world.post.vignette = 1; ed.shotFile = mtest + "/post-vignette.bmp"; }
+        if (frame == 108) { ed.L().world.post = pge::PostProcess(); ed.L().world.post.vhs = 0.8f; ed.L().world.post.grain = 0.4f; ed.L().world.post.scanlines = 0.4f; ed.shotFile = mtest + "/post-vhs.bmp"; }
+        if (frame == 110) { corner0 = cornerLum(mtest + "/post-off.bmp"); corner1 = cornerLum(mtest + "/post-vignette.bmp"); cornerLum(mtest + "/post-vhs.bmp", &diff, mtest + "/post-off.bmp");
+          check(corner1 < corner0 * 0.75f, "Post Process: the vignette darkens the corners (" + std::to_string((int)corner0) + " → " + std::to_string((int)corner1) + ")");
+          check(diff > 6, "Post Process: VHS + grain + scanlines change the picture (" + std::to_string(diff) + " per pixel)"); ed.L().world.post = pge::PostProcess(); }
+        if (frame == 114) { check(ed.packageOk, "Package"); check(fs::exists(fs::u8path(ed.packageDir) / "Models" / "TestBot.glb") && fs::exists(fs::u8path(ed.packageDir) / "Textures" / "Grass.png"), "the packaged game has the model and the picture");
           check(glGetError() == GL_NO_ERROR, "no OpenGL errors");
           std::ofstream o(fs::u8path(mtest + "/model-result.txt")); o << (code == 0 ? "PASS\n" : "FAIL\n") << log; for (auto& l : pge::logLines()) o << "[" << l.time << "] " << l.text << "\n"; break; }
       }

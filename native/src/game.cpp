@@ -547,8 +547,17 @@ void Game::setSky(const std::string& js) {
   col(j, "sky", w.sky); col(j, "skyTop", w.skyTop); col(j, "sunDisc", w.sunDisc); num(j, "moon", w.moon); num(j, "stars", w.stars); num(j, "sunSize", w.sunSize);
   col(j, "fogColor", w.fogColor); col(j, "skyLight", w.skyLight); col(j, "groundLight", w.groundLight);
   num(j, "fogDensity", w.fogDensity); num(j, "ambient", w.ambient); num(j, "exposure", w.exposure); num(j, "fov", w.fov); if (j.contains("fog") && j["fog"].is_boolean()) w.fog = j["fog"].get<bool>();
+  if (j.contains("post")) { PostProcess& q = w.post; const json& o = j["post"];
+    if (o.is_string() && o.get<std::string>() == "reset") q = PostProcess();
+    else if (o.is_object()) { num(o, "vignette", q.vignette); num(o, "grain", q.grain); num(o, "chromatic", q.chromatic); num(o, "scanlines", q.scanlines); num(o, "vhs", q.vhs);
+      num(o, "saturation", q.saturation); num(o, "contrast", q.contrast); num(o, "temperature", q.temperature); num(o, "bloom", q.bloom); col(o, "tint", q.tint);
+      for (float* v : {&q.vignette, &q.grain, &q.chromatic, &q.scanlines, &q.vhs}) *v = glm::clamp(*v, 0.f, 1.f); q.saturation = glm::clamp(q.saturation, 0.f, 3.f); q.contrast = glm::clamp(q.contrast, 0.f, 3.f);
+      q.temperature = glm::clamp(q.temperature, -1.f, 1.f); q.bloom = glm::clamp(q.bloom, 0.f, 10.f); } }
   if (j.contains("sun") && j["sun"].is_object()) { const json& o = j["sun"]; glm::vec3 d = sunDir_; col(o, "dir", d); if (glm::length(d) > 1e-4f) sunDir_ = glm::normalize(d);
     col(o, "color", sunColor_); num(o, "intensity", sunInt_); sunSet_ = true; w.sunDiscDir = -sunDir_; } }
+std::string Game::postGet() { const PostProcess& q = level_.world.post;
+  return json{{"vignette", q.vignette}, {"grain", q.grain}, {"chromatic", q.chromatic}, {"scanlines", q.scanlines}, {"vhs", q.vhs}, {"saturation", q.saturation}, {"contrast", q.contrast},
+    {"temperature", q.temperature}, {"bloom", q.bloom}, {"tint", colorHex(q.tint)}}.dump(); }
 std::string Game::createVoxels(const std::string& opts) {
   if (vox_) { if (ui_) ui_->setVoxels(nullptr); vox_.reset(); voxHold_ = false; }   // a new block world replaces the old one (another saved world)
   json o = json::object(); try { o = json::parse(opts); if (!o.is_object()) o = json::object(); } catch (...) { return "voxels.create: options are not valid"; }

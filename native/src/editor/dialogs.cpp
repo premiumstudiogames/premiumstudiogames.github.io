@@ -48,6 +48,8 @@ self  - the actor the script is on
 world
   world.time                     seconds since the game started
   world.spawn('Models/Robot.glb', { position: [0, 0, 5], animation: 'Idle' })   a model of the project (or 'Cube', 'Sphere', ...)
+  world.setPostProcess({ vignette: 0.5, grain: 0.3, vhs: 0.6, chromatic: 0.2, scanlines: 0.3, saturation: 0.8, contrast: 1.1, temperature: -0.3, bloom: 2, tint: '#ffeedd' })
+                                 camera effects (0..1; saturation / contrast / bloom 1 = as is); only what you give changes; null = all off. world.postProcess = now
   world.vars                     an object to keep your own values (score, ...)
   world.player                   .position, .teleport(x, y, z), .launch(x, y, z)
   world.player.fly = true        flying: no falling, Space goes up, the sneak key (or Shift) down
@@ -301,6 +303,8 @@ static const char* DOCS_TEXT = R"(PREMIUM ENGINE - QUICK START
    it from Content Browser > Models. Details > Animation picks the one that plays from the start; scripts and Blueprints play others.
    A model changed on disk (exported again) is loaded again by itself. Pictures go into Textures the same way.
    Export from Blender: File > Export > glTF 2.0 (.glb), +Y Up, with Animation; no Draco compression.
+5c. Camera effects: World Settings > Post Process - vignette, film grain, chromatic aberration, VHS tape, scanlines, saturation, contrast,
+   temperature, bloom, tint (Found Footage and Cinematic presets). Scripts: world.setPostProcess; Blueprints: Set Camera Effect.
 6. Scripts: Tools > New Script, or Details > Script > New Script. Press F7 to compile. See Help > Script API Reference.
 7. Press Play (Alt+P) to play in the viewport. Esc stops. Shift+F1 frees the mouse.
 8. Platforms > Windows packages the game as a Windows program (.exe) in Documents\PremiumEngine\Builds.

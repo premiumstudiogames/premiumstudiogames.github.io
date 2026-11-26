@@ -144,6 +144,9 @@ const world = { vars: {}, get voxels() { return voxels; },
   restart() { __n.restart(); },
   setGravity(y) { __n.setGravity(+y); },
   setSky(o) { __n.setSky(JSON.stringify(o || {})); },
+  // camera effects: { vignette, grain, chromatic, scanlines, vhs (0..1), saturation, contrast, bloom (1 = as is), temperature (-1 cold .. 1 warm), tint: '#rrggbb' }; null = all off
+  setPostProcess(o) { __n.setSky(JSON.stringify({ post: o === null ? 'reset' : (o || {}) })); },
+  get postProcess() { return JSON.parse(__n.postGet()); },
   setQuality(o) { __n.setQuality(JSON.stringify(o || {})); } };
 // the block world (BLOCKFALL style): 16 m chunks, 20 cm blocks in the near layer, 1 m blocks above and below
 const voxels = { lastError: '',
@@ -358,6 +361,7 @@ static void bindNatives(JSContext* c) {
   FN("net", 3, { std::string r = W(c)->net(S(c, a[0]), S(c, a[1]), S(c, a[2])); return JS_NewStringLen(c, r.data(), r.size()); });
   FN("setQuality", 1, W(c)->setQuality(S(c, a[0])); return JS_UNDEFINED;);
   FN("setSky", 1, W(c)->setSky(S(c, a[0])); return JS_UNDEFINED;);
+  FN("postGet", 0, { std::string s = W(c)->postGet(); return JS_NewStringLen(c, s.data(), s.size()); });
   FN("setGravity", 1, W(c)->setGravity((float)D(c, a[0])); return JS_UNDEFINED;);
   FN("time", 0, return JS_NewFloat64(c, W(c)->time()););
   FN("playerPos", 0, return A3(c, W(c)->playerPos()););

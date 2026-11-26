@@ -136,7 +136,8 @@ int main(int argc, char** argv) {
     q.levels[0].second.actors.push_back(bot);
     { Blueprint bp; BpNode ev; ev.id = 1; ev.type = "Event.BeginPlay"; BpNode pl; pl.id = 2; pl.type = "Animation.Play"; pl.values = {{"Animation", "Bob"}, {"Loop", false}, {"BlendTime", 0}};
       BpNode end; end.id = 3; end.type = "Event.AnimationEnd"; BpNode set; set.id = 4; set.type = "World.Hud"; set.values = {{"Id", "bp"}};
-      bp.nodes = {ev, pl, end, set}; bp.links = {{1, "then", 2, "exec"}, {3, "then", 4, "exec"}, {3, "Animation", 4, "Text"}};
+      BpNode fx; fx.id = 5; fx.type = "World.SetCameraEffect"; fx.values = {{"Effect", "Film Grain"}, {"Amount", 0.3}};
+      bp.nodes = {ev, pl, end, set, fx}; bp.links = {{1, "then", 2, "exec"}, {3, "then", 4, "exec"}, {3, "Animation", 4, "Text"}, {2, "then", 5, "exec"}};
       std::vector<BpMessage> ms; std::string code = bpCompile(bp, "BP_Anim", ms); int errs = 0; for (auto& x : ms) errs += x.error; CHECK(errs == 0, "a Blueprint with Play Animation and On Animation End compiles");
       q.scripts["BP_Anim"] = {"BP_Anim", code}; q.scripts["BP_Anim"].graph = bpToJson(bp); }
     Actor bot2 = newActor("StaticMesh", "Bot2"); bot2.mesh = "Models/TestBot.glb"; bot2.material.clear(); bot2.p = {10, 0, 0}; bot2.script = "BP_Anim"; q.levels[0].second.actors.push_back(bot2);
@@ -148,6 +149,7 @@ int main(int argc, char** argv) {
     Game g(q, "Main"); CHECK(g.start(), "the game starts");
     auto hudOf = [&](const char* id) { for (auto& h : g.hudLines()) if (h.first == id) return h.second; return std::string(); };
     CHECK(hudOf("list") == "Wave,Bob", ("self.animations: " + hudOf("list")).c_str());
+    CHECK(std::abs(json::parse(g.postGet())["grain"].get<float>() - 0.3f) < 1e-4f, "Blueprint: Set Camera Effect (Film Grain 0.3)");
     run(g, 0.5f); CHECK(hudOf("end").empty(), "Wave is still playing at 0.5 s");
     run(g, 0.7f); CHECK(hudOf("end") == "Wave:false", ("onAnimationEnd('Wave') when it ends: " + hudOf("end")).c_str());
     CHECK(hudOf("bob") == "true:Bob", ("self.playAnimation('Bob'): " + hudOf("bob")).c_str());
@@ -156,6 +158,9 @@ int main(int argc, char** argv) {
     CHECK(hudOf("bp") == "Bob", ("Blueprint: Play Animation (Bob, no loop) → On Animation End: " + hudOf("bp")).c_str());
     std::string box = g.spawn("Cube", "{\"position\":[0,5,0],\"physics\":true}"); run(g, 2.5f);
     float y = g.worldPos(box).y; CHECK(y > 2.3f && y < 2.7f, ("a falling box lands on the model's top (y 2 + 0.5): " + std::to_string(y)).c_str());
+    g.setSky("{\"post\":{\"vignette\":0.5,\"vhs\":2,\"tint\":\"#ff0000\"}}"); { json pp = json::parse(g.postGet()); CHECK(std::abs(pp["vignette"].get<float>() - 0.5f) < 1e-4f && pp["vhs"] == 1 && pp["tint"] == "#ff0000" && std::abs(pp["grain"].get<float>() - 0.3f) < 1e-4f, "world.setPostProcess: given values change (clamped), the rest stay"); }
+    g.setSky("{\"post\":\"reset\"}"); CHECK(json::parse(g.postGet())["vignette"] == 0, "world.setPostProcess(null) turns them off");
+    { WorldSettings w; w.post.vignette = 0.4f; w.post.vhs = 0.7f; w.post.tint = {1, 0.5f, 0.25f}; Level lv; lv.world = w; Level back; CHECK(levelFromJson(levelToJson(lv), back) && std::abs(back.world.post.vhs - 0.7f) < 1e-4f && std::abs(back.world.post.vignette - 0.4f) < 1e-4f && std::abs(back.world.post.tint.g - 0.5f) < 0.01f, "a level saves its camera effects"); }
     std::string sp = g.spawn("Models/TestBot.glb", "{\"position\":[20,0,0],\"animation\":\"Bob\"}"); CHECK(!sp.empty() && g.animation(sp, "state", "").find("\"Bob\"") != std::string::npos, "world.spawn of a model with an animation");
     setAssetRoot(""); fs::remove_all(dir, ec);
   }
