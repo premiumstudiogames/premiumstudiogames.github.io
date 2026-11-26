@@ -607,7 +607,9 @@ void Renderer::render(const Frame& f, const Camera& cam, int w, int h, const Ren
           if (best) { glActiveTexture(GL_TEXTURE8); glBindTexture(GL_TEXTURE_CUBE_MAP, bp->tex); glActiveTexture(GL_TEXTURE0); V3(p, "uEnvPos", best->pos); glUniform1f(U(p, "uEnvRadius"), best->radius);
             glUniform1f(U(p, "uEnvInt"), best->intensity); glUniform1f(U(p, "uEnvMips"), 7.f); } }
         if (pass == 1) glDepthMask(GL_FALSE);
+        if (it.decal) { glEnable(GL_POLYGON_OFFSET_FILL); glPolygonOffset(-2.f, -8.f); }
         glBindVertexArray(it.mesh->vao); glDrawElements(GL_TRIANGLES, it.mesh->count, GL_UNSIGNED_INT, nullptr); drawCalls++; triangles += it.mesh->count / 3;
+        if (it.decal) glDisable(GL_POLYGON_OFFSET_FILL);
         glDepthMask(GL_TRUE);
       } };
     meshes(0);

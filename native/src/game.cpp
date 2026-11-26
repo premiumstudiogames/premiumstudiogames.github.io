@@ -13,6 +13,7 @@
 #include <functional>
 #include <filesystem>
 #include <fstream>
+#include <set>
 
 using json = nlohmann::json;
 namespace pge {
@@ -90,6 +91,10 @@ void addActorVisual(Frame& f, const Project& P, const Actor& a, const glm::mat4&
   auto icon = [&](const char* mesh, glm::vec3 c, float s) { DrawItem d; d.mesh = &primitive(mesh); d.model = glm::scale(at, glm::vec3(s)); d.color = c; d.unlit = true; d.castShadow = false; d.id = id; f.draws.push_back(d); };
   auto proxy = [&](const char* mesh, glm::mat4 m) { DrawItem d; d.mesh = &primitive(mesh); d.model = m; d.pickOnly = true; d.id = id; f.draws.push_back(d); };
   auto line = [&](const GpuMesh& m, glm::mat4 model, glm::vec3 c, bool top) { LineItem l; l.mesh = &m; l.model = model; l.color = glm::vec4(c, 0.95f); l.onTop = top; l.id = id; f.lines.push_back(l); };
+  if (editor && a.type == "StaticMesh" && a.vehicle.enabled) {   // a car: its wheels where they will be
+    glm::vec3 sc(glm::length(glm::vec3(W[0])), glm::length(glm::vec3(W[1])), glm::length(glm::vec3(W[2]))); std::vector<Physics::WheelDesc> wd; vehicleWheels(a, sc, wd);
+    glm::mat4 B = W; for (int i = 0; i < 3; i++) B[i] = W[i] / std::max(sc[i], 1e-6f);
+    for (auto& w : wd) addWheelDraw(f, P, a, B, glm::translate(glm::mat4(1), w.pos - glm::vec3(0, 0.05f + w.travel * 0.6f, 0)) * glm::rotate(glm::mat4(1), 1.5707963f, AZ), id); }
   if (a.type == "StaticMesh" && isModelFile(a.mesh)) addModelDraws(f, P, a, W, id, colorOverride, anim);
   else if (a.type == "StaticMesh") {
     DrawItem d; d.mesh = &primitive(a.mesh); d.model = W; d.id = id;
@@ -117,6 +122,9 @@ void addActorVisual(Frame& f, const Project& P, const Actor& a, const glm::mat4&
     if (a.type == "PlayerStart") { glm::vec3 c(0.31f, 0.76f, 0.97f); line(r->wireCapsule(), rotOnly, c, true); line(r->arrow(), glm::scale(glm::translate(rotOnly, {0, 0.2f, 0}), glm::vec3(1.2f)), c, true); proxy("Capsule", rotOnly); }
     else if (a.type == "CameraActor") { line(r->wireCam(), rotOnly, glm::vec3(0.78f, 0.57f, 0.92f), true); proxy("Cube", glm::scale(rotOnly, glm::vec3(0.4f, 0.3f, 0.5f))); }
     else if (a.type == "TriggerBox") { line(r->wireBox(), W, glm::vec3(1, 0.62f, 0.25f), false); proxy("Sphere", glm::scale(at, glm::vec3(0.35f))); }
+    else if (a.type == "PhysicsConstraint") { glm::vec3 c(1, 0.45f, 0.75f); icon("Sphere", c, 0.18f); line(r->axes(), glm::scale(rotOnly, glm::vec3(0.6f)), c, true);   // the hinge turns about the green (Y) axis, a slider moves along the red (X)
+      DrawItem d; d.mesh = &primitive("Cylinder"); d.model = glm::scale(rotOnly, glm::vec3(0.04f, 1.2f, 0.04f)); d.color = c; d.unlit = true; d.castShadow = false; d.id = id; if (a.joint.kind == "Slider") d.model = glm::scale(rotOnly * glm::rotate(glm::mat4(1), 1.5707963f, AZ), glm::vec3(0.04f, 1.2f, 0.04f)); f.draws.push_back(d);
+      proxy("Sphere", glm::scale(at, glm::vec3(0.3f))); }
     else { line(r->axes(), glm::scale(rotOnly, glm::vec3(0.5f)), glm::vec3(0.9f), true); proxy("Sphere", glm::scale(at, glm::vec3(0.3f))); }
   }
 }
@@ -139,8 +147,14 @@ void Game::clear() {
 }
 Game::Obj* Game::get(const std::string& id) const { auto it = byId_.find(id); return it != byId_.end() && it->second->alive ? it->second : nullptr; }
 glm::mat4 Game::world(const Obj& o) const {
-  glm::mat4 m = trsMatrix(o.p, o.r, o.s); int guard = 0;
-  for (Obj* p = get(o.a.parent); p && guard < 64; p = get(p->a.parent), guard++) m = trsMatrix(p->p, p->r, p->s) * m;
+  glm::mat4 m = trsMatrix(o.p, o.r, o.s); const Obj* cur = &o;
+  for (int guard = 0; guard < 64; guard++) {   // up the parents: actors, a bone of a model, the player, the camera
+    const std::string& pid = cur->a.parent; if (pid.empty()) break;
+    if (pid == "@player") return (cur->bone.empty() ? playerMatrix() : playerBone(cur->bone)) * m;
+    if (pid == "@camera") return camW_ * m;
+    Obj* p = get(pid); if (!p) break;
+    if (!cur->bone.empty()) return boneWorld(*p, cur->bone) * m;
+    m = trsMatrix(p->p, p->r, p->s) * m; cur = p; }
   return m;
 }
 
@@ -152,7 +166,10 @@ bool Game::start() {
   level_ = *L; time_ = 0; restartRequested_ = false; tune_ = Tune(); sunSet_ = false; mouseSens_ = 1; grounded_ = running_ = sneaking_ = tapRun_ = false;
   for (auto& a : level_.actors) { auto o = std::make_unique<Obj>(); o->a = a; o->p = a.p; o->r = glm::radians(a.r); o->s = a.s; o->visible = a.visible; byId_[a.id] = o.get(); objs_.push_back(std::move(o)); }
   phys_.reset(new Physics()); phys_->init(level_.world.gravity); gravity_ = level_.world.gravity; swimming_ = false; nav_.clear(); navBuilt_ = false;
-  for (size_t i = 0; i < objs_.size(); i++) { Obj& o = *objs_[i]; if (o.a.type == "StaticMesh" && (o.a.physics.collision || o.a.physics.simulate)) addBody(o);
+  // collision meshes attached to a moving one are part of its body (welded): a car with a cabin, a crate with a lid
+  for (auto& op : objs_) { Obj& o = *op; if (o.a.type != "StaticMesh" || !(o.a.physics.simulate || o.a.vehicle.enabled)) continue;
+    std::function<void(const std::string&)> weld = [&](const std::string& id) { for (auto& c : objs_) if (c->a.parent == id && c->a.type == "StaticMesh") { if (c->a.physics.collision && !c->a.physics.simulate) c->welded = true; weld(c->a.id); } }; weld(o.a.id); }
+  for (size_t i = 0; i < objs_.size(); i++) { Obj& o = *objs_[i]; if (o.a.type == "StaticMesh" && (o.a.physics.collision || o.a.physics.simulate || o.a.vehicle.enabled) && !o.welded) addBody(o);
     if (o.a.type == "Landscape" && o.a.land) {   // its triangles where it is in the world
       std::vector<float> pos; std::vector<uint32_t> idx; landscapeMesh(*o.a.land, pos, idx); glm::mat4 W = world(o); std::vector<glm::vec3> v(pos.size() / 3);
       for (size_t k = 0; k < v.size(); k++) v[k] = glm::vec3(W * glm::vec4(pos[k * 3], pos[k * 3 + 1], pos[k * 3 + 2], 1));
@@ -163,6 +180,7 @@ bool Game::start() {
   if (mode_ == "Spectator") specPos_ = ps + glm::vec3(0, 1.6f, 0); else player_ = phys_->addPlayer(ps);
   { const std::string& pm = level_.world.playerModel; pModel_ = mode_ != "ThirdPerson" || pm == "Capsule" ? "" : pm.empty() ? "Characters/Mannequin.glb" : pm; pAnim_ = AnimPlay(); pAnimName_.clear(); charYaw_ = yaw_ + 3.14159265f; }
   // scripts
+  frameNo_ = 0; camSet_ = false; startGameplay();
   if (!models_) models_.reset(new Models()); models_->clear(); models_->setBlocks(vox_.get());
   if (!ui_) ui_.reset(new Ui()); ui_->setConsole(console_); ui_->reset(); ui_->setAssets([this](const std::string& p) { return assetPath(p); });
   scripts_.reset(new ScriptHost()); scripts_->init(this);
@@ -189,10 +207,16 @@ static bool scriptedUp(const Game* g, const Actor& a, const std::function<const 
 void Game::addBody(Obj& o) {
   glm::vec3 pos, sc; glm::quat q; decompose(world(o), pos, q, sc);
   bool scripted = scriptedUp(this, o.a, [&](const std::string& id) -> const Actor* { Obj* x = get(id); return x ? &x->a : nullptr; });
-  o.motion = o.a.physics.simulate ? Motion::Dynamic : scripted ? Motion::Kinematic : Motion::Static;
-  if (o.motion == Motion::Dynamic && !o.a.parent.empty()) { o.a.parent.clear(); o.p = pos; o.r = eulerYXZ(q); o.s = sc; }   // simulated actors leave their parent
+  o.motion = o.a.physics.simulate || o.a.vehicle.enabled ? Motion::Dynamic : scripted ? Motion::Kinematic : Motion::Static;
+  if (o.motion == Motion::Dynamic && !o.a.parent.empty()) { o.a.parent.clear(); o.bone.clear(); o.p = pos; o.r = eulerYXZ(q); o.s = sc; }   // simulated actors leave their parent
   size_t idx = 0; for (; idx < objs_.size(); idx++) if (objs_[idx].get() == &o) break;
-  o.body = phys_->addMesh(o.a.mesh, sc, pos, q, o.motion, o.a.physics.mass, idx + 1);
+  float mass = o.a.vehicle.enabled && o.a.physics.mass < 100 ? 1300.f : o.a.physics.mass;   // a car of 1 kg flips at once
+  std::vector<Physics::Part> parts; glm::mat4 R0 = glm::translate(glm::mat4(1), pos) * glm::mat4_cast(q), IR0 = glm::inverse(R0);
+  std::function<void(const std::string&)> welded = [&](const std::string& id) { for (auto& c : objs_) if (c->alive && c->welded && c->a.parent == id) {
+      glm::vec3 cp, cs; glm::quat cq; decompose(IR0 * world(*c), cp, cq, cs); parts.push_back({c->a.mesh, cs, cp, cq}); welded(c->a.id); } };
+  welded(o.a.id);
+  if (!parts.empty()) { parts.insert(parts.begin(), Physics::Part{o.a.mesh, sc, glm::vec3(0), glm::quat(1, 0, 0, 0)}); o.body = phys_->addCompound(parts, pos, q, o.motion, mass, idx + 1); }
+  else o.body = phys_->addMesh(o.a.mesh, sc, pos, q, o.motion, mass, idx + 1);
   o.lastWorld = world(o); o.bodyScale = sc;
 }
 
@@ -283,11 +307,12 @@ void Game::update(float dt) {
   auto k = [&](const char* c) { return keys_.count(c) > 0; };
   if (k("KeyW") || k("ArrowUp")) mv += fwd; if (k("KeyS") || k("ArrowDown")) mv -= fwd; if (k("KeyD") || k("ArrowRight")) mv += right; if (k("KeyA") || k("ArrowLeft")) mv -= right;
   if (glm::dot(mv, mv) > 0) mv = glm::normalize(mv);
+  if (dead_ || !driving_.empty()) mv = glm::vec3(0);   // dead, or the keys drive a car
   // the controller: left stick moves (gently when pushed a little), right stick looks (faster the further it is pushed)
   if (!(ui_ && ui_->modal())) {
     auto dz = [](float x, float y, float d) { glm::vec2 v(x, y); float l = glm::length(v); if (l < d) return glm::vec2(0); return v / l * std::min(1.f, (l - d) / (1 - d)); };
     glm::vec2 ls = dz(ax_[0], ax_[1], 0.18f), rs = dz(ax_[2], ax_[3], 0.14f);
-    if (glm::dot(mv, mv) == 0 && glm::dot(ls, ls) > 0) mv = fwd * -ls.y + right * ls.x;
+    if (glm::dot(mv, mv) == 0 && glm::dot(ls, ls) > 0 && !dead_ && driving_.empty()) mv = fwd * -ls.y + right * ls.x;
     if (glm::length(ls) < 0.3f) padRun_ = false;
     float rl = glm::length(rs); if (rl > 0) { glm::vec2 c = rs * rl;   // response curve: precise aim near the centre
       yaw_ -= c.x * lookSpeed_ * dt; pitch_ = glm::clamp(pitch_ - c.y * lookSpeed_ * 0.75f * dt * (invertY_ ? -1.f : 1.f), -1.45f, 1.45f); }
@@ -298,7 +323,7 @@ void Game::update(float dt) {
   sneaking_ = !tune_.fly && (held(tune_.sneakKey) || padSneak); running_ = glm::dot(mv, mv) > 0 && !sneaking_ && (held(tune_.runKey) || tapRun_ || padRun_);
   float speed = tune_.fly ? tune_.flySpeed * (running_ ? tune_.flyRun : 1.f) : sneaking_ ? tune_.sneak : running_ ? tune_.run : tune_.walk; moveDir_ = mv;
   if (mode_ == "Spectator") { if (k("KeyE")) mv.y += 1; if (k("KeyQ")) mv.y -= 1; specPos_ += mv * speed * 1.6f * dt; }
-  else if (player_ != NO_BODY) {
+  else if (player_ != NO_BODY && driving_.empty()) {
     glm::vec3 c = phys_->position(player_), v = phys_->velocity(player_);
     if (tune_.accel > 0) { float a = tune_.accel * dt; v.x += glm::clamp(mv.x * speed - v.x, -a, a); v.z += glm::clamp(mv.z * speed - v.z, -a, a); } else { v.x = mv.x * speed; v.z = mv.z * speed; }
     glm::vec3 feet = c - glm::vec3(0, 0.9f, 0); bool grounded = false;
@@ -312,7 +337,7 @@ void Game::update(float dt) {
       if (body) { swimming_ = true; v.x *= 0.55f; v.z *= 0.55f;
         float target = k("Space") || k("PadA") ? (head ? 2.4f : 3.4f) : head ? -0.7f : -0.25f;
         v.y = v.y + (target - v.y) * std::min(1.f, dt * 5.f) - gravity_ * dt; } }
-    if (!tune_.fly && grounded && !swimming_ && !sneaking_ && (pressed_.count("Space") || pressed_.count("PadA"))) v.y = tune_.jump;
+    if (!tune_.fly && grounded && !swimming_ && !sneaking_ && !dead_ && (pressed_.count("Space") || pressed_.count("PadA"))) v.y = tune_.jump;
     // block world: walk up 20 - 40 cm steps without jumping
     if (!tune_.fly && vox_ && grounded && glm::dot(mv, mv) > 0 && v.y <= 0.5f) {
       glm::vec3 ahead = feet + mv * 0.5f; auto solid = [&](float h) { return vox_->solidAt(ahead + glm::vec3(0, h, 0)); };
@@ -325,10 +350,13 @@ void Game::update(float dt) {
     phys_->setVelocity(player_, v);
   }
   // physics
+  gameplayFrame(dt, false);
   phys_->step(dt);
+  gameplayFrame(dt, true);
   for (auto& [ua, ub] : phys_->takeContacts()) {
     auto side = [&](uint64_t self, uint64_t other) {
-      if (self == PLAYER_TAG || self == 0 || self > objs_.size()) return; Obj& o = *objs_[self - 1]; if (!o.alive || o.beh < 0) return;
+      if (self == PLAYER_TAG || self == 0 || (self >> 41) & 1 || self > objs_.size()) return; Obj& o = *objs_[self - 1]; if (!o.alive || o.beh < 0) return;   // a ragdoll's parts don't call onHit
+      if (other != PLAYER_TAG) other &= 0xffffffffull;
       std::string oth = other == PLAYER_TAG ? "@player" : (other > 0 && other <= objs_.size() && objs_[other - 1]->alive) ? objs_[other - 1]->a.id : "";
       scripts_->call(o.beh, EV_Hit, 0, oth); };
     side(ua, ub); side(ub, ua);
@@ -337,7 +365,7 @@ void Game::update(float dt) {
   // scripts
   for (int b = 0; b < scripts_->count(); b++) scripts_->call(b, EV_Update, dt);
   // fell out of the world?
-  if (player_ != NO_BODY && phys_->position(player_).y - 0.9f < level_.world.killZ) { logMsg("Player fell below Kill Z: respawn"); respawnPlayer(); }
+  if (player_ != NO_BODY && driving_.empty() && phys_->position(player_).y - 0.9f < level_.world.killZ) { logMsg("Player fell below Kill Z: respawn"); respawnPlayer(); }
   // the player walking into actors
   glm::vec3 pp = playerPos(), ph(0.35f, 0.9f, 0.35f);
   for (size_t i = 0; i < objs_.size(); i++) { Obj& o = *objs_[i]; if (!o.alive || !scripts_->has(o.beh, EV_Overlap)) continue;   // scripts may spawn actors: index loop
@@ -351,7 +379,7 @@ void Game::update(float dt) {
     if (in && !o.inside) { o.inside = true; scripts_->call(o.beh, EV_Overlap, 0, "@player"); } else o.inside = in;
   }
   // bodies of actors moved by scripts follow them
-  for (auto& op : objs_) { Obj& o = *op; if (!o.alive || o.body == NO_BODY || o.motion == Motion::Dynamic) continue;
+  for (auto& op : objs_) { Obj& o = *op; if (!o.alive || o.body == NO_BODY || o.motion == Motion::Dynamic || !o.rag.empty()) continue;
     glm::mat4 W = world(o); if (W == o.lastWorld) continue; glm::vec3 pos, sc; glm::quat q; decompose(W, pos, q, sc);
     if (glm::any(glm::greaterThan(glm::abs(sc - o.bodyScale), glm::vec3(1e-4f)))) { phys_->setShape(o.body, o.a.mesh, sc); o.bodyScale = sc; }
     if (o.motion == Motion::Kinematic) phys_->moveKinematic(o.body, pos, q); else phys_->teleport(o.body, pos, q);
@@ -363,23 +391,25 @@ void Game::update(float dt) {
   soundFrame();
   if (models_) models_->update(dt);   // particles
   pressed_.clear(); scripts_->runJobs();
+  { glm::vec3 cp; glm::mat4 cv; cameraCompute(cp, cv); camW_ = glm::inverse(cv); camSet_ = true; }   // actors on the camera follow it
+  frameNo_++;
   if (restartRequested_) { logMsg("Restarting the level"); start(); }
 }
 
-void Game::respawnPlayer() { glm::vec3 p = playerStart(nullptr); if (player_ != NO_BODY) { phys_->teleport(player_, p, glm::quat(1, 0, 0, 0)); phys_->setVelocity(player_, glm::vec3(0)); } else specPos_ = p; }
+void Game::respawnPlayer() { glm::vec3 p = playerStart(nullptr); if (!driving_.empty()) exitVehicle(); if (player_ != NO_BODY) { phys_->teleport(player_, p, glm::quat(1, 0, 0, 0)); phys_->setVelocity(player_, glm::vec3(0)); } else specPos_ = p; }
 
 void Game::buildFrame(Frame& f, Camera& cam, float aspect) const {
   f = Frame(); f.world = level_.world; f.fog = level_.world.fog; f.probeVersion = 1;
+  { glm::vec3 cp; glm::mat4 cv; cameraCompute(cp, cv); camW_ = glm::inverse(cv); camSet_ = true; }   // first: actors on the camera are drawn where it is now
   for (auto& op : objs_) { const Obj& o = *op; if (!o.alive) continue;
     bool vis = o.visible; int guard = 0; for (Obj* p = get(o.a.parent); p && vis && guard < 64; p = get(p->a.parent), guard++) vis = p->visible;
     if (!vis) continue;
-    addActorVisual(f, project_, o.a, world(o), false, 0, o.hasColor ? &o.color : nullptr, nullptr, nullptr, o.anim.anim >= 0 ? &o.anim : nullptr); }
+    addActorVisual(f, project_, o.a, world(o), false, 0, o.hasColor ? &o.color : nullptr, nullptr, nullptr, o.anim.anim >= 0 || !o.anim.fixed.empty() ? &o.anim : nullptr); }
   if (sunSet_) { bool done = false; for (auto& l : f.lights) if (l.type == 0) { l.dir = sunDir_; l.color = sunColor_; l.intensity = sunInt_; done = true; break; }
     if (!done) { LightItem l; l.type = 0; l.dir = sunDir_; l.color = sunColor_; l.intensity = sunInt_; l.shadows = true; f.lights.insert(f.lights.begin(), l); } }
   glm::vec3 eye;
   if (mode_ == "Spectator") eye = specPos_; else eye = phys_->position(player_) + glm::vec3(0, 0.7f, 0);
-  glm::mat4 camW;
-  if (mode_ == "ThirdPerson") {
+  if (mode_ == "ThirdPerson" && driving_.empty()) {
     glm::vec3 c = phys_->position(player_); ModelRef pm = pModel_.empty() ? nullptr : model(pModel_);
     if (pm && pm->ok()) {   // the character: its feet on the capsule's bottom, a model far from 1.8 m tall is fitted to it
       Actor ch = newActor("StaticMesh", "Player"); ch.id = "@player"; ch.mesh = pModel_; ch.material.clear(); float hgt = pm->shape.bmax.y - pm->shape.bmin.y, k = hgt > 1.0f && hgt < 2.6f ? 1.f : 1.8f / std::max(hgt, 1e-3f);
@@ -387,12 +417,9 @@ void Game::buildFrame(Frame& f, Camera& cam, float aspect) const {
       addActorVisual(f, project_, ch, W, false, 0, nullptr, nullptr, nullptr, pAnim_.anim >= 0 ? &pAnim_ : nullptr); }
     else { DrawItem d; d.mesh = &primitive("Capsule"); float face = glm::dot(moveDir_, moveDir_) > 0 ? std::atan2(-moveDir_.x, -moveDir_.z) : yaw_;
       d.model = glm::rotate(glm::translate(glm::mat4(1), c), face, AY); d.color = glm::vec3(0.227f, 0.482f, 1.f); d.rough = 0.5f; f.draws.push_back(d); }
-    glm::vec3 back = glm::vec3(std::sin(yaw_) * std::cos(pitch_), -std::sin(pitch_), std::cos(yaw_) * std::cos(pitch_)) * 4.5f;
-    glm::vec3 cp = eye + back + glm::vec3(0, 0.3f, 0);
-    { Physics::Hit h; float len = glm::length(cp - eye);   // like a spring arm: the camera comes in front of walls (never onto the player's head: the view needs a direction)
-      if (phys_->rayCast(eye, cp, h, true)) cp = eye + (cp - eye) / len * std::max(0.35f, len * h.fraction - 0.25f); }
-    cam.view = glm::lookAt(cp, eye, AY); cam.pos = cp;
-  } else { camW = glm::translate(glm::mat4(1), eye) * glm::mat4_cast(quatYXZ({pitch_, yaw_, 0})); cam.view = glm::inverse(camW); cam.pos = eye; }
+  }
+  cameraCompute(cam.pos, cam.view);
+  drawGameplay(f);
   cam.proj = glm::perspective(glm::radians(glm::clamp(level_.world.fov, 20.f, 150.f)), std::max(aspect, 0.01f), 0.05f, 2000.f);
   { glm::vec3 fw = -glm::vec3(glm::inverse(cam.view)[2]); fw.y = 0; f.shadowCenter = eye + (glm::length(fw) > 1e-3f ? glm::normalize(fw) * 25.f : glm::vec3(0)); }   // the shadow box covers what is in front of the camera
   if (models_) models_->draw(f);
@@ -421,7 +448,9 @@ void Game::drawHud(ImDrawList* dl, float x, float y, float w, float h) const {
   }
   if (loading()) { const char* t = "Loading world..."; ImVec2 s = big->CalcTextSizeA(30, 1e9f, 0, t); ImVec2 p(x + (w - s.x) / 2, y + h * 0.45f);
     dl->AddRectFilled({p.x - 24, p.y - 14}, {p.x + s.x + 24, p.y + s.y + 14}, IM_COL32(0, 0, 0, 150), 12); dl->AddText(big, 30, p, IM_COL32_WHITE, t); }
-  if (mode_ == "FirstPerson" && !(ui_ && ui_->modal())) { ImVec2 c(x + w / 2, y + h / 2); dl->AddCircleFilled(c, 3.5f, IM_COL32(0, 0, 0, 120)); dl->AddCircleFilled(c, 2.2f, IM_COL32(255, 255, 255, 230)); }
+  if (!hint_.empty() && !(ui_ && ui_->modal())) { ImVec2 s = ui->CalcTextSizeA(22, 1e9f, 0, hint_.c_str()); ImVec2 p(x + (w - s.x) / 2, y + h * 0.82f);
+    dl->AddRectFilled({p.x - 14, p.y - 8}, {p.x + s.x + 14, p.y + s.y + 8}, IM_COL32(0, 0, 0, 140), 8); dl->AddText(ui, 22, p, IM_COL32_WHITE, hint_.c_str()); }
+  if (mode_ == "FirstPerson" && driving_.empty() && !(ui_ && ui_->modal())) { ImVec2 c(x + w / 2, y + h / 2); dl->AddCircleFilled(c, 3.5f, IM_COL32(0, 0, 0, 120)); dl->AddCircleFilled(c, 2.2f, IM_COL32(255, 255, 255, 230)); }
   if (ui_) ui_->draw(dl, x, y, w, h);   // the game's own UI on top
 }
 
@@ -461,8 +490,15 @@ void Game::lookAt(const std::string& id, const glm::vec3& t) {   // like three.j
 }
 glm::vec3 Game::worldPos(const std::string& id) { Obj* o = get(id); return o ? glm::vec3(world(*o)[3]) : glm::vec3(0); }
 void Game::destroyRec(const std::string& id) {
-  Obj* o = get(id); if (!o) return; o->alive = false;
+  Obj* o = get(id); if (!o) return;
+  if (driving_ == id) exitVehicle();
+  o->alive = false;
+  if (o->vehicle != NO_BODY) { phys_->removeVehicle(o->vehicle); o->vehicle = NO_BODY; }
+  for (auto& r : o->rag) phys_->remove(r.body); o->rag.clear();
+  if (o->joint != NO_BODY) { phys_->removeJoint(o->joint); jointOwner_.erase(o->joint); o->joint = NO_BODY; }
+  for (auto it = grabs_.begin(); it != grabs_.end();) { if (objOfBody(it->second.body) == o) it = grabs_.erase(it); else ++it; }
   if (o->body != NO_BODY) { phys_->remove(o->body); o->body = NO_BODY; }
+  if (o->welded) { o->welded = false; Obj* root = get(o->a.parent); while (root && !root->a.parent.empty() && get(root->a.parent)) root = get(root->a.parent); if (root) { o->a.parent.clear(); rebuildBody(*root); } }
   if (o->beh >= 0) scripts_->drop(o->beh);
   for (auto& c : objs_) if (c->alive && c->a.parent == id) destroyRec(c->a.id);
 }
@@ -489,6 +525,8 @@ std::string Game::spawn(const std::string& mesh, const std::string& opts) {
   if (o.contains("color") && o["color"].is_string()) setColor(a.id, o["color"]);
   addBody(ref);
   if (!a.anim.empty()) { ModelRef m = model(a.mesh); int ai = m ? m->anim(a.anim) : -1; if (ai >= 0) ref.anim.play(ai, true, 1, 0); }
+  if (o.contains("vehicle") && (o["vehicle"].is_object() || (o["vehicle"].is_boolean() && o["vehicle"].get<bool>()))) gameplay("vehicleMake", a.id, o["vehicle"].is_object() ? o["vehicle"].dump() : "{}");
+  if (o.contains("parent") && o["parent"].is_string()) { json at = {{"to", o["parent"]}, {"keepWorld", true}}; if (o.contains("bone")) at["bone"] = o["bone"]; gameplay("attach", a.id, at.dump()); }
   if (o.contains("script") && o["script"].is_string()) { auto it = project_.scripts.find(o["script"]); if (it != project_.scripts.end()) { ref.a.script = it->first; ref.beh = scripts_->attach(a.id, a.name, it->second.name, it->second.code); scripts_->call(ref.beh, EV_Start); } }
   return a.id;
 }
@@ -508,7 +546,7 @@ void Game::ensureNav() {
   char b[160]; std::snprintf(b, sizeof b, "Navigation: %d walkable cells of %.2f m (%.0f ms)", nav_.walkable(), nav_.cell(), nav_.buildMs()); logMsg(b);
 }
 void Game::playerAnimFrame(float dt) {
-  if (pModel_.empty() || player_ == NO_BODY) return; ModelRef m = model(pModel_); if (!m || !m->ok() || m->anims.empty()) return;
+  if (pModel_.empty() || player_ == NO_BODY || !driving_.empty()) return; ModelRef m = model(pModel_); if (!m || !m->ok() || m->anims.empty()) return;
   glm::vec3 v = phys_->velocity(player_); float hs = glm::length(glm::vec2(v.x, v.z));
   auto find = [&](std::initializer_list<const char*> keys) { for (const char* k : keys) for (size_t i = 0; i < m->anims.size(); i++) { std::string n = m->anims[i].name; for (char& c : n) c = (char)std::tolower((unsigned char)c); if (n.find(k) != std::string::npos) return (int)i; } return -1; };
   std::string want; bool air = !grounded_ && !tune_.fly && !swimming_;
@@ -528,6 +566,7 @@ bool Game::walkPath(Obj& o, const glm::vec3& goal) {
 void Game::walkFinish(Obj& o, bool ok) { o.walk.active = false; o.walk.result = ok ? "success" : "fail"; o.walk.path.clear(); if (scripts_) scripts_->call(o.beh, EV_MoveDone, ok ? 1 : 0); }
 void Game::walkFrame(float dt) {
   for (size_t k = 0; k < objs_.size(); k++) { Obj& o = *objs_[k]; auto& w = o.walk; if (!o.alive || !w.active) continue;
+    if (!o.rag.empty()) { w.active = false; continue; }
     glm::vec3 feet = o.p - glm::vec3(0, w.foot, 0);
     // following an actor or the player: a new way when it has moved
     if (w.player || !w.goal.empty()) { glm::vec3 g; if (w.player) g = playerPos() - glm::vec3(0, mode_ == "Spectator" ? 1.6f : 0.9f, 0); else { Obj* t = get(w.goal); if (!t) { walkFinish(o, false); continue; } g = worldPos(w.goal) - glm::vec3(0, footOf(t->a, t->s), 0); }
@@ -588,7 +627,7 @@ std::string Game::animation(const std::string& id, const std::string& op, const 
     float blend = j.contains("blend") && j["blend"].is_number() ? j["blend"].get<float>() : 0.2f, speed = j.contains("speed") && j["speed"].is_number() ? j["speed"].get<float>() : 1.f;
     an.play(ai, !j.contains("loop") || !j["loop"].is_boolean() || j["loop"].get<bool>(), speed, blend); return "1"; }
   if (op == "bone") { int ni = -1; for (size_t i = 0; i < m->nodes.size(); i++) if (m->nodes[i].name == arg) { ni = (int)i; break; } if (ni < 0) return "";
-    ModelPose p; poseModel(*m, an.anim >= 0 ? &an : nullptr, p); glm::mat4 W = world(*o) * p.world[ni]; glm::vec3 pos, sc; glm::quat q; decompose(W, pos, q, sc); glm::vec3 e = eulerYXZ(q);
+    ModelPose p; poseModel(*m, an.anim >= 0 || !an.fixed.empty() ? &an : nullptr, p); glm::mat4 W = world(*o) * p.world[ni]; glm::vec3 pos, sc; glm::quat q; decompose(W, pos, q, sc); glm::vec3 e = eulerYXZ(q);
     return json{{"p", {pos.x, pos.y, pos.z}}, {"r", {e.x, e.y, e.z}}}.dump(); }
   return "";
 }
@@ -604,14 +643,17 @@ void Game::playerLaunch(const glm::vec3& v) { if (player_ != NO_BODY) phys_->set
 std::string Game::playerGet() { const Tune& t = tune_; glm::vec3 v = player_ != NO_BODY && phys_ ? phys_->velocity(player_) : glm::vec3(0);
   return json{{"fly", t.fly}, {"walkSpeed", t.walk}, {"runSpeed", t.run}, {"sneakSpeed", t.sneak}, {"jumpSpeed", t.jump}, {"flySpeed", t.flySpeed}, {"flyRun", t.flyRun}, {"flyClimb", t.flyClimb},
     {"gravity", t.gravity}, {"accel", t.accel}, {"runKey", t.runKey}, {"sneakKey", t.sneakKey}, {"doubleTapRun", t.doubleTapRun}, {"yaw", yaw_}, {"pitch", pitch_},
-    {"grounded", grounded_}, {"running", running_}, {"sneaking", sneaking_}, {"velocity", {v.x, v.y, v.z}}}.dump(); }
+    {"grounded", grounded_}, {"running", running_}, {"sneaking", sneaking_}, {"velocity", {v.x, v.y, v.z}}, {"health", health_}, {"maxHealth", maxHealth_}, {"dead", dead_},
+    {"vehicle", driving_}, {"vehicleKey", vehicleKey_}}.dump(); }
 void Game::playerSet(const std::string& js) { json o = json::parse(js, nullptr, false); if (!o.is_object()) return; Tune& t = tune_;
   if (o.contains("mouseSensitivity") && o["mouseSensitivity"].is_number()) mouseSens_ = std::clamp(o["mouseSensitivity"].get<float>(), 0.05f, 6.f);
   auto f = [&](const char* k, float& d) { if (o.contains(k) && o[k].is_number()) d = o[k].get<float>(); };
   auto b = [&](const char* k, bool& d) { if (o.contains(k) && o[k].is_boolean()) d = o[k].get<bool>(); };
   auto s = [&](const char* k, std::string& d) { if (o.contains(k) && o[k].is_string()) d = o[k].get<std::string>(); };
   b("fly", t.fly); b("doubleTapRun", t.doubleTapRun); f("walkSpeed", t.walk); f("runSpeed", t.run); f("sneakSpeed", t.sneak); f("jumpSpeed", t.jump); f("flySpeed", t.flySpeed);
-  f("flyRun", t.flyRun); f("flyClimb", t.flyClimb); f("gravity", t.gravity); f("accel", t.accel); s("runKey", t.runKey); s("sneakKey", t.sneakKey);
+  f("flyRun", t.flyRun); f("flyClimb", t.flyClimb); f("gravity", t.gravity); f("accel", t.accel); s("runKey", t.runKey); s("sneakKey", t.sneakKey); s("vehicleKey", vehicleKey_);
+  f("maxHealth", maxHealth_); maxHealth_ = std::max(1.f, maxHealth_);
+  if (o.contains("health") && o["health"].is_number()) { health_ = glm::clamp(o["health"].get<float>(), 0.f, maxHealth_); if (health_ > 0 && dead_) { dead_ = false; respawnAt_ = -1; } }
   if (o.contains("model") && o["model"].is_string()) { std::string m = o["model"]; pModel_ = m == "Capsule" ? "" : m.empty() ? "Characters/Mannequin.glb" : m; pAnim_ = AnimPlay(); }   // Third Person: another character
   if (o.contains("yaw") && o["yaw"].is_number()) yaw_ = o["yaw"].get<float>(); if (o.contains("pitch") && o["pitch"].is_number()) pitch_ = glm::clamp(o["pitch"].get<float>(), -1.45f, 1.45f); }
 // the game's own saved values: one file per name in Documents/PremiumEngine/Saves/<game>/store
@@ -686,13 +728,13 @@ std::string Game::assetPath(const std::string& p) {
   for (auto& r : roots) { std::error_code ec; if (fs::exists(r / f, ec)) return (r / f).u8string(); if (fs::exists(r / "assets" / f, ec)) return (r / "assets" / f).u8string(); }
   return p;
 }
-glm::vec3 Game::cameraPos() { if (mode_ == "Spectator") return specPos_; return player_ != NO_BODY ? phys_->position(player_) + glm::vec3(0, 0.7f, 0) : specPos_; }
+glm::vec3 Game::cameraPos() { if (camSet_) return glm::vec3(camW_[3]); if (mode_ == "Spectator") return specPos_; return player_ != NO_BODY ? phys_->position(player_) + glm::vec3(0, 0.7f, 0) : specPos_; }
 std::string Game::savePath(const std::string& name) {
   std::string game = project_.name.empty() ? "Game" : project_.name, n = name.empty() ? "world" : name;
   for (auto* s : {&game, &n}) for (char& ch : *s) if (ch == '/' || ch == '\\' || ch == ':' || ch == '*' || ch == '?' || ch == '"' || ch == '<' || ch == '>' || ch == '|') ch = '_';
   return (std::filesystem::u8path(documentsDir()) / "Saves" / std::filesystem::u8path(game) / std::filesystem::u8path(n + ".pgworld")).u8string();
 }
-glm::vec3 Game::cameraDir() { return quatYXZ({pitch_, yaw_, 0}) * glm::vec3(0, 0, -1); }
+glm::vec3 Game::cameraDir() { if (camSet_) return glm::normalize(-glm::vec3(camW_[2])); return quatYXZ({pitch_, yaw_, 0}) * glm::vec3(0, 0, -1); }
 // A trophy: Premium Games (which started this game) reads the events file it named and puts the trophy on the player's account
 void Game::trophy(const std::string& id) {
   bool ok = !id.empty() && id.size() <= 40; for (char ch : id) ok = ok && (std::isalnum((unsigned char)ch) || ch == '_' || ch == '-');

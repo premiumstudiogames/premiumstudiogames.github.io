@@ -88,7 +88,31 @@ const __player = { name: 'Player', isPlayer: true, tags: [],
   get fly() { return !!this.settings.fly; }, set fly(v) { this.set({ fly: !!v }); },
   get yaw() { return this.settings.yaw; }, set yaw(v) { this.set({ yaw: +v }); }, get pitch() { return this.settings.pitch; }, set pitch(v) { this.set({ pitch: +v }); },
   get grounded() { return !!this.settings.grounded; }, get running() { return !!this.settings.running; }, get sneaking() { return !!this.settings.sneaking; },
-  get velocity() { const v = this.settings.velocity || [0, 0, 0]; return new Vec3(v[0], v[1], v[2]); } };
+  get velocity() { const v = this.settings.velocity || [0, 0, 0]; return new Vec3(v[0], v[1], v[2]); },
+  // health (100 at the start): damage() / heal(); onPlayerDamage(amount, info) and onPlayerDeath() in every script; with no onPlayerDeath the player starts again at the Player Start
+  get health() { return this.settings.health; }, set health(v) { this.set({ health: +v }); },
+  get maxHealth() { return this.settings.maxHealth; }, set maxHealth(v) { this.set({ maxHealth: +v }); },
+  get dead() { return !!this.settings.dead; },
+  damage(amount, o) { world.applyDamage(this, amount, o); }, heal(amount) { this.set({ health: this.settings.health + (+amount || 0) }); },
+  // cars: the one the player drives (or null); enterVehicle(car), exitVehicle(); E (or the controller's Y) gets in and out by itself
+  get vehicle() { const v = this.settings.vehicle; return v ? __api(v) : null; },
+  enterVehicle(v) { return !!v && __n.gp('vehicle', v.id, JSON.stringify({ enter: true })) !== ''; }, exitVehicle() { const v = this.settings.vehicle; if (v) __n.gp('vehicle', v, JSON.stringify({ exit: true })); } };
+// values for the gameplay calls: vectors → [x, y, z], actors → their id, the player → '@player'
+const __gpv = v => { if (v === null || v === undefined) return v; if (Array.isArray(v)) return v.map(__gpv);
+  if (typeof v === 'object') { if (v.isPlayer) return '@player'; if (typeof v.id === 'string' && 'position' in v) return v.id; if ('x' in v && 'y' in v && 'z' in v) return [+v.x || 0, +v.y || 0, +v.z || 0];
+    const r = {}; for (const k in v) r[k] = __gpv(v[k]); return r; } return v; };
+globalThis.__info = s => { let o = {}; try { o = JSON.parse(s); } catch (e) {} const V = a => Array.isArray(a) ? new Vec3(a[0], a[1], a[2]) : a;
+  if (o.point) o.point = V(o.point); if (o.direction) o.direction = V(o.direction); o.from = o.from ? __api(o.from) : null; return o; };
+const __joint = j => ({ id: j, get alive() { return __n.gp('jointGet', j, '') !== ''; }, get value() { const r = __n.gp('jointGet', j, ''); return r ? JSON.parse(r).value : 0; },
+  setMotor(speed, force) { __n.gp('jointSet', j, JSON.stringify({ motorSpeed: +speed || 0, motorForce: force === undefined ? 1e5 : +force })); },
+  setTarget(v, force) { __n.gp('jointSet', j, JSON.stringify({ target: +v || 0, motorForce: force === undefined ? 1e5 : +force })); },
+  remove() { __n.gp('jointSet', j, JSON.stringify({ remove: true })); } });
+const __grab = g => ({ id: g, get active() { return __n.gp('grabGet', g, '') === '1'; },
+  moveTo(p, strength) { __n.gp('grabMove', g, JSON.stringify({ target: __gpv(p), strength: strength === undefined ? 1 : +strength })); },
+  release(vel) { __n.gp('release', g, JSON.stringify({ velocity: vel ? __gpv(vel) : null })); } });
+const __veh = (id, s) => ({ speed: s.speed * 3.6, speedMs: s.speed, rpm: s.rpm, gear: s.gear, grounded: s.grounded, driver: s.driver ? __player : null,
+  setInput(throttle, steer, brake, handbrake) { __n.gp('vehicle', id, JSON.stringify({ input: [+throttle || 0, +steer || 0, +brake || 0, +handbrake || 0] })); },
+  enter() { return __n.gp('vehicle', id, JSON.stringify({ enter: true })) !== ''; }, exit() { __n.gp('vehicle', id, JSON.stringify({ exit: true })); } });
 // the game's own saved values (Documents/PremiumEngine/Saves/<game>/store): text or JSON by name
 const storage = { get(k) { const r = __n.storage('get', String(k), ''); return r === '\x01' ? null : r; }, set(k, v) { __n.storage('set', String(k), String(v)); },
   remove(k) { __n.storage('remove', String(k), ''); }, keys(prefix) { return JSON.parse(__n.storage('keys', String(prefix || ''), '')); },
@@ -133,6 +157,21 @@ function __api(id) {
     stopMoving() { __n.nav(id, 'stop', ''); },
     get isMoving() { const r = __n.nav(id, 'state', ''); return r ? JSON.parse(r).moving : false; },
     get moveResult() { const r = __n.nav(id, 'state', ''); return r ? JSON.parse(r).result : ''; },
+    // attach to another actor (a bone of its model), the player or the camera ('camera'): { bone: 'Hand_R', keepWorld: false, offset: [x, y, z], rotation: [deg x, y, z] }
+    attachTo(parent, o) { const to = parent === 'camera' ? '@camera' : parent && parent.isPlayer ? '@player' : parent && parent.id ? parent.id : String(parent || '');
+      return __n.gp('attach', id, JSON.stringify(Object.assign({ to }, __gpv(o || {})))) === '1'; },
+    detach(o) { __n.gp('detach', id, JSON.stringify(__gpv(o || {}))); },
+    get parent() { const r = __n.gp('parent', id, ''); return r === '@player' ? __player : r === '@camera' ? 'camera' : r ? __api(r) : null; },
+    applyDamage(amount, o) { world.applyDamage(this, amount, o); },
+    addImpulse(v, at) { __n.gp('impulse', id, JSON.stringify({ impulse: __gpv(v), point: at ? __gpv(at) : null })); },
+    // a character model goes limp and falls (its bones become physics bodies); { impulse: [x, y, z], point: [x, y, z] } pushes where it was hit
+    ragdoll(o) { return __n.gp('ragdoll', id, JSON.stringify(__gpv(o || {}))) === '1'; },
+    get isRagdoll() { return __n.gp('ragdollState', id, '') === '1'; },
+    // a car (Vehicle in the Details, or makeVehicle({ torque, maxSteer, wheelRadius, drive: 'all' | 'rear' | 'front' ... }))
+    get vehicle() { const r = __n.gp('vehicle', id, ''); return r ? __veh(id, JSON.parse(r)) : null; },
+    makeVehicle(o) { return __n.gp('vehicleMake', id, JSON.stringify(o || {})) === '1'; },
+    // a Physics Constraint actor's joint (or null)
+    get joint() { const r = __n.gp('actorJoint', id, ''); return r ? __joint(r) : null; },
     destroy() { __n.destroy(id); } };
   __apis.set(id, a); return a;
 }
@@ -143,7 +182,7 @@ const world = { vars: {}, get voxels() { return voxels; },
   get time() { return __n.time(); }, get player() { return __player; },
   find(name) { const id = __n.find(String(name)); return id ? __api(id) : null; },
   findAll(tag) { return __n.findAll(String(tag)).map(__api); },
-  spawn(mesh, o = {}) { return __api(__n.spawn(String(mesh), JSON.stringify(o || {}))); },
+  spawn(mesh, o = {}) { return __api(__n.spawn(String(mesh), JSON.stringify(__gpv(o || {})))); },
   destroy(x) { __n.destroy(x && x.id ? x.id : String(x)); },
   message(t, sec = 3) { __n.message(String(t), +sec || 3); },
   hud(id, t) { __n.hud(String(id), String(t)); },
@@ -157,7 +196,22 @@ const world = { vars: {}, get voxels() { return voxels; },
   // camera effects: { vignette, grain, chromatic, scanlines, vhs (0..1), saturation, contrast, bloom (1 = as is), temperature (-1 cold .. 1 warm), tint: '#rrggbb' }; null = all off
   setPostProcess(o) { __n.setSky(JSON.stringify({ post: o === null ? 'reset' : (o || {}) })); },
   get postProcess() { return JSON.parse(__n.postGet()); },
-  setQuality(o) { __n.setQuality(JSON.stringify(o || {})); } };
+  setQuality(o) { __n.setQuality(JSON.stringify(o || {})); },
+  // the first thing on a line (Unreal's Line Trace): { position, normal, distance, actor, player, body, bone } or null; { ignore: [actors], ignorePlayer: true }
+  raycast(from, to, o) { const r = __n.gp('raycast', JSON.stringify(__gpv(Object.assign({ from, to }, o || {}))), ''); if (!r) return null; const h = JSON.parse(r);
+    return { position: new Vec3(h.p[0], h.p[1], h.p[2]), normal: new Vec3(h.n[0], h.n[1], h.n[2]), distance: h.d, actor: h.a ? __api(h.a) : null, player: !!h.pl, body: h.b, bone: h.bone || '' }; },
+  lineTrace(from, to, o) { return this.raycast(from, to, o); },
+  // damage: the target's onDamage(amount, { type, from, point, direction }); the player loses health; impulse pushes bodies and ragdolls
+  applyDamage(target, amount, o) { __n.gp('damage', JSON.stringify(__gpv(target)), JSON.stringify(__gpv(Object.assign({ amount: +amount || 0 }, o || {})))); },
+  applyRadialDamage(center, radius, amount, o) { return JSON.parse(__n.gp('radial', JSON.stringify(__gpv(Object.assign({ center, radius: +radius || 0, amount: +amount || 0 }, o || {}))), '') || '[]').map(__api); },
+  // a picture laid on a surface: { type: 'blood' | 'bullet' | 'scorch' | 'splat', texture, size, color, angle, life (s), actor, body }
+  spawnDecal(position, normal, o) { __n.gp('decal', JSON.stringify(__gpv(Object.assign({ position, normal }, o || {}))), ''); },
+  clearDecals() { __n.gp('decalsClear', '', ''); },
+  // two actors held together (or one to the world): { kind: 'Hinge' | 'Fixed' | 'BallSocket' | 'Slider' | 'Distance', a, b, pivot, axis, limits, min, max, motorSpeed, motorForce, breakForce }
+  addJoint(o) { const r = __n.gp('joint', JSON.stringify(__gpv(o || {})), ''); return r ? __joint(r) : null; },
+  // pick up a body (a box, a ragdoll's arm): grab(hit) or grab(actor, point); then handle.moveTo(place) every frame, release(velocity) to drop or throw it
+  grab(target, point, o) { const t = target && target.body !== undefined && target.normal ? { body: target.body, point: __gpv(target.position) } : { actor: __gpv(target), point: point ? __gpv(point) : null };
+    const r = __n.gp('grab', JSON.stringify(Object.assign(t, __gpv(o || {}))), ''); return r ? __grab(r) : null; } };
 // the block world (BLOCKFALL style): 16 m chunks, 20 cm blocks in the near layer, 1 m blocks above and below
 const voxels = { lastError: '',
   create(o = {}) { const e = __n.voxCreate(JSON.stringify(o || {})); this.lastError = e; if (e) __n.log('[voxels] ' + e); return !e; },
@@ -322,13 +376,14 @@ globalThis.__uiDispatch = function (json) {
 };
 )JS";
 
-static const char* EVENTS[EV_COUNT] = {"onStart", "onUpdate", "onOverlap", "onHit", "onKey", "onStop", "onAnimationEnd", "onMoveFinished"};
+static const char* EVENTS[EV_COUNT] = {"onStart", "onUpdate", "onOverlap", "onHit", "onKey", "onStop", "onAnimationEnd", "onMoveFinished",
+                                      "onDamage", "onPlayerDamage", "onPlayerDeath", "onJointBreak", "onVehicleEnter", "onVehicleExit"};
 
 struct Behaviour { std::string actor, actorName, script; JSValue obj; bool ev[EV_COUNT]; bool alive = true; };
 struct ScriptHost::Impl {
   JSRuntime* rt = nullptr; JSContext* ctx = nullptr; ScriptWorld* w = nullptr;
   std::vector<Behaviour> b; std::chrono::steady_clock::time_point deadline;
-  JSValue make = JS_UNDEFINED, api = JS_UNDEFINED;
+  JSValue make = JS_UNDEFINED, api = JS_UNDEFINED, info = JS_UNDEFINED;
 };
 
 static ScriptWorld* W(JSContext* c) { return (ScriptWorld*)JS_GetContextOpaque(c); }
@@ -372,6 +427,7 @@ static void bindNatives(JSContext* c) {
   FN("net", 3, { std::string r = W(c)->net(S(c, a[0]), S(c, a[1]), S(c, a[2])); return JS_NewStringLen(c, r.data(), r.size()); });
   FN("setQuality", 1, W(c)->setQuality(S(c, a[0])); return JS_UNDEFINED;);
   FN("setSky", 1, W(c)->setSky(S(c, a[0])); return JS_UNDEFINED;);
+  FN("gp", 3, { std::string s = W(c)->gameplay(S(c, a[0]), S(c, a[1]), S(c, a[2])); return JS_NewStringLen(c, s.data(), s.size()); });
   FN("postGet", 0, { std::string s = W(c)->postGet(); return JS_NewStringLen(c, s.data(), s.size()); });
   FN("setGravity", 1, W(c)->setGravity((float)D(c, a[0])); return JS_UNDEFINED;);
   FN("time", 0, return JS_NewFloat64(c, W(c)->time()););
@@ -576,13 +632,13 @@ bool ScriptHost::init(ScriptWorld* w) {
   JSValue r = JS_Eval(d->ctx, PRELUDE, std::char_traits<char>::length(PRELUDE), "<prelude>", JS_EVAL_TYPE_GLOBAL);
   if (JS_IsException(r)) { logMsg("error: script prelude: " + errorText(d->ctx), LogKind::Error); return false; }
   JS_FreeValue(d->ctx, r);
-  JSValue g = JS_GetGlobalObject(d->ctx); d->make = JS_GetPropertyStr(d->ctx, g, "__make"); d->api = JS_GetPropertyStr(d->ctx, g, "__api"); JS_FreeValue(d->ctx, g);
+  JSValue g = JS_GetGlobalObject(d->ctx); d->make = JS_GetPropertyStr(d->ctx, g, "__make"); d->api = JS_GetPropertyStr(d->ctx, g, "__api"); d->info = JS_GetPropertyStr(d->ctx, g, "__info"); JS_FreeValue(d->ctx, g);
   return true;
 }
 void ScriptHost::shutdown() {
   if (!d || !d->ctx) return;
   for (auto& b : d->b) JS_FreeValue(d->ctx, b.obj);
-  d->b.clear(); JS_FreeValue(d->ctx, d->make); JS_FreeValue(d->ctx, d->api); d->make = d->api = JS_UNDEFINED;
+  d->b.clear(); JS_FreeValue(d->ctx, d->make); JS_FreeValue(d->ctx, d->api); JS_FreeValue(d->ctx, d->info); d->make = d->api = d->info = JS_UNDEFINED;
   JS_FreeContext(d->ctx); JS_FreeRuntime(d->rt); d->ctx = nullptr; d->rt = nullptr;
 }
 
@@ -591,7 +647,9 @@ static std::string wrap(const std::string& code) {
   return "(function (self, world, input, log, THREE, math) { \"use strict\"; " + code +
          "\n;return { onStart: typeof onStart === 'function' ? onStart : null, onUpdate: typeof onUpdate === 'function' ? onUpdate : null,"
          " onOverlap: typeof onOverlap === 'function' ? onOverlap : null, onHit: typeof onHit === 'function' ? onHit : null, onKey: typeof onKey === 'function' ? onKey : null, onStop: typeof onStop === 'function' ? onStop : null,"
-         " onAnimationEnd: typeof onAnimationEnd === 'function' ? onAnimationEnd : null, onMoveFinished: typeof onMoveFinished === 'function' ? onMoveFinished : null }; })";
+         " onAnimationEnd: typeof onAnimationEnd === 'function' ? onAnimationEnd : null, onMoveFinished: typeof onMoveFinished === 'function' ? onMoveFinished : null,"
+         " onDamage: typeof onDamage === 'function' ? onDamage : null, onPlayerDamage: typeof onPlayerDamage === 'function' ? onPlayerDamage : null, onPlayerDeath: typeof onPlayerDeath === 'function' ? onPlayerDeath : null,"
+         " onJointBreak: typeof onJointBreak === 'function' ? onJointBreak : null, onVehicleEnter: typeof onVehicleEnter === 'function' ? onVehicleEnter : null, onVehicleExit: typeof onVehicleExit === 'function' ? onVehicleExit : null }; })";
 }
 
 int ScriptHost::attach(const std::string& actorId, const std::string& actorName, const std::string& scriptName, const std::string& code) {
@@ -612,13 +670,19 @@ bool ScriptHost::has(int i, ScriptEvent e) const { return i >= 0 && i < (int)d->
 void ScriptHost::call(int i, ScriptEvent e, double num, const std::string& arg) {
   if (!has(i, e)) return;
   JSContext* c = d->ctx; Behaviour& b = d->b[i];
-  JSValue fn = JS_GetPropertyStr(c, b.obj, EVENTS[e]); JSValue av[1]; int n = 0;
+  JSValue fn = JS_GetPropertyStr(c, b.obj, EVENTS[e]); JSValue av[2]; int n = 0;
+  auto actorArg = [&](const std::string& id) -> JSValue { if (id.empty()) return JS_NULL; JSValue s = JS_NewStringLen(c, id.data(), id.size()); JSValue r = JS_Call(c, d->api, JS_UNDEFINED, 1, &s); JS_FreeValue(c, s);
+    if (JS_IsException(r)) { JS_FreeValue(c, JS_GetException(c)); return JS_NULL; } return r; };
   if (e == EV_Update) { av[0] = JS_NewFloat64(c, num); n = 1; }
   else if (e == EV_Overlap || e == EV_Hit) {
     if (arg.empty()) av[0] = JS_NULL; else { JSValue s = JS_NewStringLen(c, arg.data(), arg.size()); av[0] = JS_Call(c, d->api, JS_UNDEFINED, 1, &s); JS_FreeValue(c, s); if (JS_IsException(av[0])) { JS_FreeValue(c, JS_GetException(c)); av[0] = JS_NULL; } }
     n = 1;
   } else if (e == EV_Key || e == EV_AnimEnd) { av[0] = JS_NewStringLen(c, arg.data(), arg.size()); n = 1; }
   else if (e == EV_MoveDone) { av[0] = JS_NewBool(c, num != 0); n = 1; }
+  else if (e == EV_Damage || e == EV_PlayerDamage) { av[0] = JS_NewFloat64(c, num); JSValue s = JS_NewStringLen(c, arg.data(), arg.size()); av[1] = JS_Call(c, d->info, JS_UNDEFINED, 1, &s); JS_FreeValue(c, s);
+    if (JS_IsException(av[1])) { JS_FreeValue(c, JS_GetException(c)); av[1] = JS_NewObject(c); } n = 2; }
+  else if (e == EV_JointBreak) { av[0] = JS_NewStringLen(c, arg.data(), arg.size()); n = 1; }
+  else if (e == EV_VehicleEnter || e == EV_VehicleExit) { av[0] = actorArg(arg); n = 1; }
   d->deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
   JSValue r = JS_Call(c, fn, b.obj, n, av);
   for (int k = 0; k < n; k++) JS_FreeValue(c, av[k]);

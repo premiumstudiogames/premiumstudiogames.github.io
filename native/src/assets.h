@@ -19,6 +19,7 @@ bool isModelFile(const std::string& mesh);           // ends with .glb / .gltf
 bool isImageFile(const std::string& file);
 // a texture from a file of the project (cached; sRGB for colours, linear for normal / roughness maps); nullptr = no file name
 const Texture* texture(const std::string& file, bool srgb);
+const Texture* pixelTexture(const std::string& name, int w, int h, const std::vector<unsigned char>& rgba, bool srgb);   // made by the engine (decals), cached by name
 
 struct ModelMaterial {
   std::string name; glm::vec4 base{1}; float metal = 1, rough = 1, normalScale = 1, occlusion = 1, cutoff = 0.5f; glm::vec3 emissive{0};
@@ -54,6 +55,7 @@ struct AnimPlay {
   int from = -1; float fromTime = 0, blend = 0, blendTime = 0; bool fromLoop = true;
   void play(int a, bool loopIt, float spd, float blendSeconds);   // blendSeconds 0 = at once
   bool advance(const Model& m, float dt);     // true when it reached the end this step (not looping)
+  std::vector<std::pair<int, glm::mat4>> fixed;   // nodes held where something else puts them (ragdoll parts): node → its place in the model
 };
 struct ModelPose { std::vector<glm::mat4> world; std::vector<glm::mat4> joints; std::vector<int> skinAt; };
 void poseModel(const Model& m, const AnimPlay* a, ModelPose& out);   // a = nullptr: at rest

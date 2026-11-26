@@ -23,6 +23,11 @@ Scripts are JavaScript. Add one to an actor in Details > Script. These functions
   function onKey(code) { }        a key was pressed, e.g. 'KeyE', 'Space', 'Digit1'
   function onAnimationEnd(name) { }   a model's animation that doesn't loop reached its end
   function onMoveFinished(ok) { }     this actor's walk (moveTo) ended: ok = it got there
+  function onDamage(amount, info) { }       this actor was hurt: info = { type, from (actor / player), point, direction }
+  function onPlayerDamage(amount, info) { } the player was hurt (every script hears it)
+  function onPlayerDeath() { }              the player's health reached 0 (none of these: the player starts again at the Player Start)
+  function onJointBreak(joint) { }          a Physics Constraint of this actor broke (pulled harder than its Break Force)
+  function onVehicleEnter(car) { }  function onVehicleExit(car) { }   the player got in / out of a car
 
 self  - the actor the script is on
   self.name, self.tags, self.id
@@ -48,6 +53,15 @@ self  - the actor the script is on
   walking (AI) on the level's floors, round walls, up ramps and stairs:
   self.moveTo([x, y, z] | actor | world.player, { speed: 3.5, acceptance: 0.5, turn: true })   false if there's no way; an actor is followed
   self.stopMoving()   self.isMoving   self.moveResult ('success', 'fail', 'stopped')
+  attaching (a weapon in a hand, a flashlight on the camera, a hat on the player):
+  self.attachTo(other | world.player | 'camera', { bone: 'Hand_R', keepWorld: false, offset: [x, y, z], rotation: [deg x, y, z] })
+  self.detach({ keepWorld: true })   self.parent      a collision mesh attached to a moving body becomes part of it (a car built from blocks)
+  self.applyDamage(25, { type: 'bullet', from: world.player, point, impulse: 300 })   its onDamage runs; impulse pushes it where it was hit
+  self.addImpulse([x, y, z], point)  push a physics actor (or a ragdoll) at a point
+  self.ragdoll({ impulse: [0, 50, -300], point })   a character model goes limp and falls (its bones become physics bodies)   self.isRagdoll
+  cars:  self.vehicle  .speed (km/h) .rpm .gear .grounded .driver .setInput(throttle, steer, brake, handbrake) .enter() .exit()
+  self.makeVehicle({ torque: 650, maxSteer: 35, wheelRadius: 0.4, wheelWidth: 0.3, travel: 0.3, stiffness: 1.5, drive: 'all' | 'rear' | 'front', mass: 1300, wheelMesh: 'Cylinder' })
+  self.joint                     a Physics Constraint actor's joint (see world.addJoint)
 
 world
   world.time                     seconds since the game started
@@ -57,6 +71,17 @@ world
   world.setPostProcess({ vignette: 0.5, grain: 0.3, vhs: 0.6, chromatic: 0.2, scanlines: 0.3, saturation: 0.8, contrast: 1.1, temperature: -0.3, bloom: 2, tint: '#ffeedd' })
                                  camera effects (0..1; saturation / contrast / bloom 1 = as is); only what you give changes; null = all off. world.postProcess = now
   world.vars                     an object to keep your own values (score, ...)
+  world.raycast(from, to, { ignore: [actors], ignorePlayer: true })   the first thing on the line (Line Trace): { position, normal, distance, actor, player, body, bone } or null
+  world.applyDamage(actor | world.player, 20, { type, from, point, direction, impulse })
+  world.applyRadialDamage(center, radius, 80, { impulse: 1500, type: 'explosion', from })   an explosion: less further away, walls shield; gives the actors it hurt
+  world.spawnDecal(hit.position, hit.normal, { type: 'blood' | 'bullet' | 'scorch', texture: 'Textures/Crack.png', size: 0.8, color: '#550000', angle, life: 10, actor, body })
+                                 a picture laid on a surface (it moves with the actor / body it's on; at most 512, the oldest go);  world.clearDecals()
+  world.addJoint({ kind: 'Hinge' | 'Fixed' | 'BallSocket' | 'Slider' | 'Distance', a: actor, b: actor (none = the world), pivot, axis, min, max, motorSpeed, motorForce, breakForce })
+                                 → joint: .value (angle / position)  .setMotor(speed, force)  .setTarget(angle or position, force)  .remove()  .alive
+  world.grab(hit | actor, point) → handle: .moveTo(place) every frame to carry it, .release(velocity) to drop or throw it (boxes, a ragdoll's arm)
+  world.player.health  .maxHealth  .dead  .damage(n)  .heal(n)   world.player.set({ health: 100, maxHealth: 100, vehicleKey: 'KeyE' ('' = no getting in by key) })
+  world.player.vehicle           the car the player drives (or null)   world.player.enterVehicle(car)   world.player.exitVehicle()
+                                 in a car: W / S (RT / LT) drive and brake, A / D (left stick) steer, Space (A) hand brake, V the view, E (Y) out
   world.player                   .position, .teleport(x, y, z), .launch(x, y, z)
   world.player.fly = true        flying: no falling, Space goes up, the sneak key (or Shift) down
   world.player.set({ walkSpeed: 4.3, runSpeed: 5.6, sneakSpeed: 1.3, jumpSpeed: 8.4, gravity: -32, accel: 46, runKey: 'Control', sneakKey: 'Shift',
@@ -67,7 +92,7 @@ world
   function onStop() { ... }      runs when the game stops or restarts (save here)
   world.find('Name')             an actor by name (or null)
   world.findAll('tag')           actors with a tag (or that name)
-  world.spawn('Cube', { position: [0, 5, 0], scale: [1, 1, 1], color: '#ff0000', physics: true, name: 'Box', script: 'SC_Name' })
+  world.spawn('Cube', { position: [0, 5, 0], scale: [1, 1, 1], color: '#ff0000', physics: true, name: 'Box', script: 'SC_Name', vehicle: { ... }, parent: actor, bone: 'Hand_R' })
   world.destroy(actor)
   net.host({ port: 46600, name: 'My world', max: 8, info: '' })   play together: host a game (others on the LAN see it; over the internet they need
                                  your address and the port open)     net.join('192.168.1.5', 46600)   join one

@@ -12,6 +12,10 @@ Premium Engine for Windows (experimental). Unzip and run PremiumEngine.exe.
 - Landscape: big outdoor ground - sculpt (raise, lower, smooth, flatten, noise, hills) and paint 4 layers with the mouse; it collides and AI walks on it
 - Third Person: the engine's mannequin with Idle, Walk, Run, Jump, Fall (or your own character); a camera that comes in front of walls
 - Blueprint functions with inputs and outputs (pure or with exec pins)
+- Cars: Place Actors > Vehicle (or Vehicle on any physics mesh, or makeVehicle from a script): engine, gears, suspension, 4 wheels; the player gets in with E and drives (W / S, A / D, Space, controller); AI cars from scripts
+- Physics Constraints: hinge (doors), fixed (breakable), ball socket (chains), slider (drawers, lifts, powered), distance (ropes); welded parts (a car built from blocks)
+- Ragdolls: character models fall limp (from damage or Simulate Physics) and can be picked up, dragged and thrown
+- Gameplay: line traces, damage and explosions (radial damage), player health, attaching to bones / the player / the camera (weapons, flashlights), decals (blood, bullet holes, scorch marks), carrying and throwing bodies
 - Blueprints (visual scripting) with English and Arabic names and explanations
 
 Every build is tested on Windows: engine tests, the editor makes a project, plays and packages it, and the packaged game starts and walks.

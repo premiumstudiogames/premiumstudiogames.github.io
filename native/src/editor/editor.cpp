@@ -109,7 +109,16 @@ glm::vec3 Editor::dropPoint(float mx, float my) {
   if (view != View::Perspective) { glm::vec3 p = o; if (view == View::Top) p.y = 0; else if (view == View::Front) p.z = 0; else p.x = 0; return p; }
   return o + d * 6.f;
 }
-Actor& Editor::addActor(const std::string& type, const std::string& mesh, const glm::vec3* at) {
+Actor& Editor::addActor(const std::string& type0, const std::string& mesh, const glm::vec3* at) {
+  // ready-made actors: a car (a body on 4 wheels), a box that falls and can be pushed
+  if (type0 == "Vehicle" || type0 == "PhysicsBox") { Actor& a = addActor("StaticMesh", "Cube", at);
+    if (type0 == "Vehicle") { a.name = uniqueName("Car"); a.s = {1.9f, 0.75f, 4.2f}; a.p.y = std::max(a.p.y, 1.1f); a.physics.simulate = true; a.physics.mass = 1300; a.vehicle.enabled = true;
+      if (!P.materials.count("M_CarPaint")) { Material m; m.name = "M_CarPaint"; m.color = {0.75f, 0.08f, 0.06f}; m.metalness = 0.6f; m.roughness = 0.25f; P.materials["M_CarPaint"] = m; }
+      if (!P.materials.count("M_Tire")) { Material m; m.name = "M_Tire"; m.color = glm::vec3(0.06f); m.roughness = 0.9f; P.materials["M_Tire"] = m; }
+      a.material = "M_CarPaint"; Actor cab = newActor("StaticMesh", uniqueName("Cabin")); cab.mesh = "Cube"; cab.parent = a.id; cab.p = {0, 0.95f, 0.08f}; cab.s = {0.92f, 0.9f, 0.5f}; cab.material = "M_CarPaint";
+      std::string id = a.id; L().actors.push_back(cab); sel = id; touch(); return *actor(id); }
+    a.name = uniqueName("PhysicsBox"); a.physics.simulate = true; a.physics.mass = 20; touch(); return a; }
+  const std::string& type = type0;
   Actor a = newActor(type, type == "StaticMesh" ? mesh : actorTypeLabel(type)); if (type == "StaticMesh") a.mesh = mesh.empty() ? "Cube" : mesh;
   bool isModel = type == "StaticMesh" && isModelFile(a.mesh); if (isModel) a.material.clear();   // a model keeps its own materials
   a.name = uniqueName(type == "StaticMesh" ? (isModel ? fs::u8path(a.mesh).stem().u8string() : a.mesh) : type);

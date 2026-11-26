@@ -20,17 +20,17 @@ namespace pge {
 
 const char* MESHES[] = {"Cube", "Sphere", "Cylinder", "Cone", "Plane", "Capsule", "Torus", "Wedge"};
 const int MESH_COUNT = 8;
-const char* ACTOR_TYPES[] = {"Empty", "PlayerStart", "TriggerBox", "CameraActor", "TextRender", "DirectionalLight", "PointLight", "SpotLight", "StaticMesh", "ReflectionCapture", "Landscape"};
-const int ACTOR_TYPE_COUNT = 11;
+const char* ACTOR_TYPES[] = {"Empty", "PlayerStart", "TriggerBox", "CameraActor", "TextRender", "DirectionalLight", "PointLight", "SpotLight", "StaticMesh", "ReflectionCapture", "Landscape", "PhysicsConstraint"};
+const int ACTOR_TYPE_COUNT = 12;
 
 const char* actorTypeLabel(const std::string& t) {
   if (t == "StaticMesh") return "Static Mesh"; if (t == "Empty") return "Empty Actor"; if (t == "PointLight") return "Point Light"; if (t == "SpotLight") return "Spot Light";
   if (t == "DirectionalLight") return "Directional Light"; if (t == "PlayerStart") return "Player Start"; if (t == "CameraActor") return "Camera Actor"; if (t == "TriggerBox") return "Trigger Box";
-  if (t == "TextRender") return "Text Render"; if (t == "ReflectionCapture") return "Sphere Reflection Capture"; if (t == "Landscape") return "Landscape"; return "Actor";
+  if (t == "TextRender") return "Text Render"; if (t == "ReflectionCapture") return "Sphere Reflection Capture"; if (t == "Landscape") return "Landscape"; if (t == "PhysicsConstraint") return "Physics Constraint"; return "Actor";
 }
 const char* actorTypeIcon(const std::string& t) {
   if (t == "StaticMesh") return "[M]"; if (t == "PointLight" || t == "SpotLight" || t == "DirectionalLight") return "[L]"; if (t == "PlayerStart") return "[P]";
-  if (t == "CameraActor") return "[C]"; if (t == "TriggerBox") return "[T]"; if (t == "TextRender") return "[A]"; if (t == "ReflectionCapture") return "[R]"; if (t == "Landscape") return "[G]"; return "[ ]";
+  if (t == "CameraActor") return "[C]"; if (t == "TriggerBox") return "[T]"; if (t == "TextRender") return "[A]"; if (t == "ReflectionCapture") return "[R]"; if (t == "Landscape") return "[G]"; if (t == "PhysicsConstraint") return "[J]"; return "[ ]";
 }
 
 double nowMs() { return (double)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count(); }
@@ -233,7 +233,12 @@ static glm::vec3 col(const json& j, const char* k, glm::vec3 d) { auto it = j.fi
 static json actorJson(const Actor& a) {
   json j = {{"id", a.id}, {"name", a.name}, {"type", a.type}, {"parent", a.parent.empty() ? json() : json(a.parent)}, {"p", v3(a.p)}, {"r", v3(a.r)}, {"s", v3(a.s)}, {"visible", a.visible}, {"tags", a.tags}};
   if (a.type == "StaticMesh") { j["mesh"] = a.mesh; j["material"] = a.material; j["physics"] = {{"simulate", a.physics.simulate}, {"mass", a.physics.mass}, {"collision", a.physics.collision}};
-    if (!a.anim.empty()) j["animation"] = {{"name", a.anim}, {"loop", a.animLoop}, {"speed", a.animSpeed}}; }
+    if (!a.anim.empty()) j["animation"] = {{"name", a.anim}, {"loop", a.animLoop}, {"speed", a.animSpeed}};
+    if (!a.vehicle.isDefault()) { const VehicleProps& v = a.vehicle; j["vehicle"] = {{"enabled", v.enabled}, {"enterable", v.enterable}, {"torque", v.torque}, {"maxRpm", v.maxRpm}, {"maxSteer", v.maxSteer},
+      {"wheelRadius", v.wheelRadius}, {"wheelWidth", v.wheelWidth}, {"travel", v.travel}, {"stiffness", v.stiffness}, {"axleInset", v.axleInset}, {"camDistance", v.camDistance}, {"drive", v.drive},
+      {"wheelMesh", v.wheelMesh}, {"wheelMaterial", v.wheelMaterial}}; } }
+  if (a.type == "PhysicsConstraint") { const JointProps& c = a.joint; j["joint"] = {{"kind", c.kind}, {"a", c.a}, {"b", c.b}, {"limits", c.limits}, {"min", c.min}, {"max", c.max},
+      {"motorSpeed", c.motorSpeed}, {"motorForce", c.motorForce}, {"friction", c.friction}, {"breakForce", c.breakForce}}; }
   if (a.type == "Landscape" && a.land) j["landscape"] = a.land->toJson();
   if (a.type == "ReflectionCapture") j["probe"] = {{"radius", a.probe.radius}, {"intensity", a.probe.intensity}};
   if (a.isLight()) j["light"] = {{"color", colorHex(a.light.color)}, {"intensity", a.light.intensity}, {"range", a.light.range}, {"angle", a.light.angle}, {"shadows", a.light.shadows}};
@@ -250,6 +255,13 @@ static Actor actorFrom(const json& j) {
   if (j.contains("animation") && j["animation"].is_object()) { const json& an = j["animation"]; a.anim = get<std::string>(an, "name", ""); a.animLoop = get<bool>(an, "loop", true); a.animSpeed = get<float>(an, "speed", 1.f); } a.script = get<std::string>(j, "script", "");
   if (j.contains("physics")) { auto& p = j["physics"]; a.physics.simulate = get<bool>(p, "simulate", false); a.physics.mass = get<float>(p, "mass", 1); a.physics.collision = get<bool>(p, "collision", true); }
   if (a.type == "Landscape") { a.land = std::make_shared<Landscape>(); if (j.contains("landscape")) a.land->fromJson(j["landscape"]); }
+  if (j.contains("vehicle") && j["vehicle"].is_object()) { auto& q = j["vehicle"]; VehicleProps& v = a.vehicle; v.enabled = get<bool>(q, "enabled", false); v.enterable = get<bool>(q, "enterable", true);
+    v.torque = get<float>(q, "torque", v.torque); v.maxRpm = get<float>(q, "maxRpm", v.maxRpm); v.maxSteer = get<float>(q, "maxSteer", v.maxSteer); v.wheelRadius = get<float>(q, "wheelRadius", v.wheelRadius);
+    v.wheelWidth = get<float>(q, "wheelWidth", v.wheelWidth); v.travel = get<float>(q, "travel", v.travel); v.stiffness = get<float>(q, "stiffness", v.stiffness); v.axleInset = get<float>(q, "axleInset", v.axleInset);
+    v.camDistance = get<float>(q, "camDistance", v.camDistance); v.drive = get<int>(q, "drive", v.drive); v.wheelMesh = get<std::string>(q, "wheelMesh", v.wheelMesh); v.wheelMaterial = get<std::string>(q, "wheelMaterial", v.wheelMaterial); }
+  if (j.contains("joint") && j["joint"].is_object()) { auto& q = j["joint"]; JointProps& c = a.joint; c.kind = get<std::string>(q, "kind", c.kind); c.a = get<std::string>(q, "a", ""); c.b = get<std::string>(q, "b", "");
+    c.limits = get<bool>(q, "limits", c.limits); c.min = get<float>(q, "min", c.min); c.max = get<float>(q, "max", c.max); c.motorSpeed = get<float>(q, "motorSpeed", 0.f); c.motorForce = get<float>(q, "motorForce", 0.f);
+    c.friction = get<float>(q, "friction", 0.f); c.breakForce = get<float>(q, "breakForce", 0.f); }
   if (j.contains("probe") && j["probe"].is_object()) { auto& q = j["probe"]; a.probe.radius = get<float>(q, "radius", 10.f); a.probe.intensity = get<float>(q, "intensity", 1.f); }
   if (j.contains("light")) { auto& l = j["light"]; a.light.color = col(l, "color", a.light.color); a.light.intensity = get<float>(l, "intensity", a.light.intensity); a.light.range = get<float>(l, "range", a.light.range); a.light.angle = get<float>(l, "angle", a.light.angle); a.light.shadows = get<bool>(l, "shadows", true); }
   if (j.contains("text")) { auto& t = j["text"]; a.text.value = get<std::string>(t, "value", "Text"); a.text.color = col(t, "color", glm::vec3(1)); a.text.size = get<float>(t, "size", 0.6f); }

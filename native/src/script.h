@@ -69,9 +69,12 @@ public:
   virtual std::string animation(const std::string& id, const std::string& op, const std::string& arg) { (void)id; (void)op; (void)arg; return ""; }
   // walking (AI Move To): op = move ({x, y, z} | {actor} | {player}, speed, acceptance, turn) / stop / state; path ({from, to}) / rebuild / info with id ""
   virtual std::string nav(const std::string& id, const std::string& op, const std::string& arg) { (void)id; (void)op; (void)arg; return ""; }
+  // the gameplay toolkit (gameplay.cpp): raycast, attach / detach, damage, radial damage, decals, joints, grab, ragdoll, vehicles (JSON in and out)
+  virtual std::string gameplay(const std::string& op, const std::string& a, const std::string& b) { (void)op; (void)a; (void)b; return ""; }
 };
 
-enum ScriptEvent { EV_Start = 0, EV_Update, EV_Overlap, EV_Hit, EV_Key, EV_Stop, EV_AnimEnd, EV_MoveDone, EV_COUNT };
+enum ScriptEvent { EV_Start = 0, EV_Update, EV_Overlap, EV_Hit, EV_Key, EV_Stop, EV_AnimEnd, EV_MoveDone,
+                   EV_Damage, EV_PlayerDamage, EV_PlayerDeath, EV_JointBreak, EV_VehicleEnter, EV_VehicleExit, EV_COUNT };
 
 class ScriptHost {
 public:
@@ -82,7 +85,8 @@ public:
   // compile a script for an actor; returns a behaviour index or -1 (the error is logged)
   int attach(const std::string& actorId, const std::string& actorName, const std::string& scriptName, const std::string& code);
   bool has(int b, ScriptEvent e) const;
-  // arg: for onUpdate a number, for onOverlap/onHit an actor id ("" = nothing, "@player" = the player), for onKey a key code
+  // arg: for onUpdate a number, for onOverlap/onHit an actor id ("" = nothing, "@player" = the player), for onKey a key code;
+  // onDamage / onPlayerDamage: num = amount, arg = the details (JSON); onJointBreak: arg = the joint; onVehicleEnter / Exit: arg = the vehicle's id
   void call(int b, ScriptEvent e, double num = 0, const std::string& arg = "");
   void drop(int b);                                     // actor destroyed
   const std::string& actorOf(int b) const;

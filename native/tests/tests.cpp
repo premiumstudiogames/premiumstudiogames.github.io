@@ -256,6 +256,168 @@ int main(int argc, char** argv) {
     run(g, 8.0f); CHECK(hudOf("w") == "true" && hudOf("wd") == "true", ("a character walks over the hills (AI Move To): " + hudOf("w") + " " + hudOf("wd")).c_str());
     glm::vec3 wp = g.worldPos(g.find("Walker")); CHECK(std::abs(wp.y - 0.5f - la.land->heightAt(wp.x, wp.z)) < 0.3f, "…on the ground");
   }
+  {   // the gameplay toolkit: line traces, attaching, damage, explosions, decals, joints, carrying, ragdolls, cars
+    std::printf("gameplay\n");
+    Project q = makeTemplate("Blank", "Gameplay"); Level& L = q.levels[0].second; L.actors.clear(); L.world.gameMode = "FirstPerson";
+    auto box = [&](const char* n, glm::vec3 p, glm::vec3 s, bool sim = false, float mass = 1) { Actor a = newActor("StaticMesh", n); a.p = p; a.s = s; a.physics.simulate = sim; a.physics.mass = mass; L.actors.push_back(a); return a.id; };
+    box("Floor", {0, -0.5f, 0}, {200, 1, 200});
+    std::string target = box("Target", {0, 1, -10}, {1, 2, 1});
+    std::string crate = box("Crate", {6, 0.5f, -6}, {1, 1, 1}, true, 20);
+    std::string door = box("Door", {-6, 1.1f, -10.5f}, {1, 2, 0.1f}, true, 15);
+    Actor hinge = newActor("PhysicsConstraint", "DoorHinge"); hinge.p = {-6.5f, 1.1f, -10.5f}; hinge.joint.kind = "Hinge"; hinge.joint.a = door; hinge.joint.min = -100; hinge.joint.max = 100; L.actors.push_back(hinge);
+    std::string weak = box("Weak", {12, 3, -12}, {0.5f, 0.5f, 0.5f}, true, 50);
+    Actor rope = newActor("PhysicsConstraint", "WeakLink"); rope.p = {12, 3.25f, -12}; rope.joint.kind = "Fixed"; rope.joint.a = weak; rope.joint.breakForce = 1500; rope.script = "SC_Link"; L.actors.push_back(rope);
+    std::string lift = box("Lift", {-12, 0.3f, 6}, {2, 0.2f, 2}, true, 100);
+    Actor sl = newActor("PhysicsConstraint", "LiftRail"); sl.p = {-12, 0.3f, 6}; sl.r = {0, 0, 90}; sl.joint.kind = "Slider"; sl.joint.a = lift; sl.joint.min = 0; sl.joint.max = 4; sl.joint.motorSpeed = 2; sl.joint.motorForce = 1e5f; L.actors.push_back(sl);
+    Actor car = newActor("StaticMesh", "Car"); car.p = {20, 1.2f, 0}; car.s = {1.9f, 0.75f, 4.2f}; car.physics.simulate = true; car.physics.mass = 1300; car.vehicle.enabled = true; L.actors.push_back(car);
+    Actor cab = newActor("StaticMesh", "Cabin"); cab.parent = car.id; cab.p = {0, 0.95f, 0.08f}; cab.s = {0.92f, 0.9f, 0.5f}; L.actors.push_back(cab);
+    Actor man = newActor("StaticMesh", "Enemy"); man.mesh = "Characters/Mannequin.glb"; man.material.clear(); man.p = {-3, 0, -4}; man.physics.collision = false; man.anim = "Idle"; man.script = "SC_Enemy"; L.actors.push_back(man);
+    Actor gun = newActor("StaticMesh", "Gun"); gun.p = {0, 5, 0}; gun.s = {0.1f, 0.1f, 0.4f}; gun.physics.collision = false; L.actors.push_back(gun);
+    Actor torch = newActor("SpotLight", "Torch"); L.actors.push_back(torch);
+    Actor ps = newActor("PlayerStart", "Start"); ps.p = {0, 0.1f, 0}; L.actors.push_back(ps);
+    q.scripts["SC_Enemy"] = {"SC_Enemy", "let hp = 100; function onDamage(n, info) { hp -= n; world.hud('enemy', hp + ':' + info.type + ':' + (info.from ? info.from.name : 'none') + ':' + (info.point ? info.point.y.toFixed(1) : '?'));\n"
+      "  if (hp <= 0 && !self.isRagdoll) self.ragdoll({ impulse: [0, 50, -300], point: info.point }); }"};
+    q.scripts["SC_Link"] = {"SC_Link", "function onJointBreak(j) { world.hud('broke', 'yes ' + j); }"};
+    q.scripts["SC_Player"] = {"SC_Player", "function onPlayerDamage(n, info) { world.hud('pd', n + ':' + info.type); } function onVehicleEnter(v) { world.hud('in', v.name); } function onVehicleExit(v) { world.hud('out', v.name); }"};
+    Actor gm = newActor("Empty", "Rules"); gm.script = "SC_Player"; L.actors.push_back(gm);
+    { Project back; CHECK(fromJson(toJson(q), back) && back.levels[0].second.actors[9].vehicle.enabled && back.levels[0].second.actors[4].joint.a == door && back.levels[0].second.actors[6].joint.breakForce == 1500,
+        "cars and constraints save and load"); }
+    Game g(q, "Main"); logClear(); CHECK(g.start(), "a level with cars, constraints and a character starts");
+    auto hudOf = [&](const std::string& id) { for (auto& h : g.hudLines()) if (h.first == id) return h.second; return std::string(); };
+    auto J = [](const std::string& s) { return json::parse(s.empty() ? "null" : s); };
+    run(g, 0.5f);
+    // line traces
+    { json h = J(g.gameplay("raycast", "{\"from\":[0,1,0],\"to\":[0,1,-30],\"ignorePlayer\":true}", ""));
+      CHECK(h.is_object() && h.value("a", "") == target && std::abs(h["p"][2].get<float>() + 9.5f) < 0.06f && h["n"][2].get<float>() > 0.9f, ("a line trace hits the target's face: " + h.dump()).c_str());
+      json h2 = J(g.gameplay("raycast", json{{"from", {0, 1, 0}}, {"to", {0, 1, -30}}, {"ignorePlayer", true}, {"ignore", {target}}}.dump(), ""));
+      CHECK(h2.is_null() || h2.value("a", "") != target, "…and goes through what it ignores");
+      json h3 = J(g.gameplay("raycast", "{\"from\":[0,1,5],\"to\":[0,1,-5]}", "")); CHECK(h3.is_object() && h3.value("pl", false), "…and hits the player unless told not to"); }
+    // attaching: a gun to the character's hand, a light to the camera, a box to the player
+    { CHECK(g.gameplay("attach", g.find("Gun"), json{{"to", g.find("Enemy")}, {"bone", "Hand_R"}}.dump()) == "1", "attach a gun to a bone");
+      json b = J(g.animation(g.find("Enemy"), "bone", "Hand_R")); glm::vec3 hand(b["p"][0].get<float>(), b["p"][1].get<float>(), b["p"][2].get<float>());
+      CHECK(glm::length(g.worldPos(g.find("Gun")) - hand) < 0.01f, "…the gun is in the hand");
+      run(g, 0.4f); b = J(g.animation(g.find("Enemy"), "bone", "Hand_R")); hand = {b["p"][0].get<float>(), b["p"][1].get<float>(), b["p"][2].get<float>()};
+      CHECK(glm::length(g.worldPos(g.find("Gun")) - hand) < 0.01f, "…and stays in it while the animation plays");
+      CHECK(g.gameplay("attach", g.find("Torch"), json{{"to", "@camera"}, {"offset", {0.2, -0.2, -0.3}}}.dump()) == "1", "attach a light to the camera");
+      run(g, 0.1f); glm::vec3 tp = g.worldPos(g.find("Torch")), want = g.cameraPos() + g.cameraDir() * 0.3f; CHECK(glm::length(tp - want) < 0.45f, "…it is in front of the camera");
+      g.gameplay("detach", g.find("Gun"), "{}"); glm::vec3 at = g.worldPos(g.find("Gun")); run(g, 0.2f); CHECK(glm::length(g.worldPos(g.find("Gun")) - at) < 0.01f && g.gameplay("parent", g.find("Gun"), "").empty(), "detach: it stays where it was"); }
+    // damage: the character's onDamage, the player's health
+    { g.gameplay("damage", json(g.find("Enemy")).dump(), json{{"amount", 30}, {"type", "bullet"}, {"from", "@player"}, {"point", {-3, 1.5, -4}}}.dump());
+      CHECK(hudOf("enemy") == "70:bullet:Player:1.5", ("onDamage(amount, { type, from, point }): " + hudOf("enemy")).c_str());
+      g.gameplay("damage", "\"@player\"", json{{"amount", 25}, {"type", "fall"}}.dump()); CHECK(std::abs(g.playerHealth() - 75) < 0.01f && hudOf("pd") == "25:fall", ("the player loses health, onPlayerDamage: " + hudOf("pd")).c_str());
+      g.gameplay("damage", "\"@player\"", json{{"amount", 500}}.dump()); CHECK(g.playerHealth() == 0 && J(g.playerGet()).value("dead", false), "health 0: dead");
+      run(g, 3.3f); CHECK(std::abs(g.playerHealth() - 100) < 0.01f && !J(g.playerGet()).value("dead", true), "no onPlayerDeath: the player starts again with full health"); }
+    // decals
+    { int n0 = g.decalCount(); g.gameplay("decal", json{{"position", {0, 0, -3}}, {"normal", {0, 1, 0}}, {"type", "blood"}}.dump(), "");
+      g.gameplay("decal", json{{"position", {0, 1, -9.5}}, {"normal", {0, 0, 1}}, {"type", "bullet"}, {"actor", target}}.dump(), "");
+      g.gameplay("decal", json{{"position", {1, 0, -3}}, {"normal", {0, 1, 0}}, {"type", "scorch"}, {"life", 0.5}}.dump(), "");
+      CHECK(g.decalCount() == n0 + 3, "decals: blood, a bullet hole, a scorch mark"); run(g, 0.8f); CHECK(g.decalCount() == n0 + 2, "…one with a life span fades away");
+      g.destroyActor(target); run(g, 0.05f); CHECK(g.decalCount() == n0 + 1, "…one on an actor goes with it");
+      for (int i = 0; i < 600; i++) g.gameplay("decal", json{{"position", {i * 0.01, 0, 3}}, {"normal", {0, 1, 0}}}.dump(), ""); CHECK(g.decalCount() == 512, "…at most 512 (the oldest go)"); }
+    // joints: a door on a hinge, a breakable link, a lift on a powered slider
+    { glm::vec3 d0 = g.worldPos(door); g.addForce(door, {0, 0, -60}); run(g, 1.0f); glm::vec3 d1 = g.worldPos(door); glm::vec3 r1 = g.getVec(door, 'r');
+      CHECK(std::abs(r1.y) > 0.2f && std::abs(d1.y - d0.y) < 0.1f && glm::length(glm::vec2(d1.x + 6.5f, d1.z + 10.5f)) < 0.6f, ("the door swings on its hinge (turned " + std::to_string(glm::degrees(r1.y)) + " deg)").c_str());
+      run(g, 1.0f); glm::vec3 w = g.worldPos(weak); CHECK(hudOf("broke").empty() && std::abs(w.y - 3) < 0.2f, "a Fixed link holds a 50 kg box up");
+      g.addForce(weak, {0, -2000, 0}); run(g, 0.5f); CHECK(hudOf("broke").rfind("yes", 0) == 0, "…pulled too hard it breaks: onJointBreak");
+      run(g, 1.0f); CHECK(g.worldPos(weak).y < 0.5f, "…and the box falls");
+      CHECK(g.worldPos(lift).y > 2.5f, ("a powered slider lifts the platform (" + std::to_string(g.worldPos(lift).y) + " m)").c_str());
+      std::string jid = g.gameplay("joint", json{{"kind", "BallSocket"}, {"a", crate}, {"pivot", {6, 3, -6}}}.dump(), ""); CHECK(!jid.empty() && !g.gameplay("jointGet", jid, "").empty(), "world.addJoint: a ball socket made by a script");
+      g.gameplay("jointSet", jid, "{\"remove\":true}"); CHECK(g.gameplay("jointGet", jid, "").empty(), "…and removed"); }
+    // carrying: grab the crate, lift it, throw it
+    { std::string h = g.gameplay("grab", json{{"actor", crate}}.dump(), ""); CHECK(!h.empty(), "grab a physics box");
+      for (int i = 0; i < 90; i++) { g.gameplay("grabMove", h, json{{"target", {6, 3, -6}}}.dump()); g.update(1.f / 60); }
+      glm::vec3 c = g.worldPos(crate); CHECK(glm::length(c - glm::vec3(6, 3, -6)) < 0.3f, ("…it is carried where the handle is (" + std::to_string(c.y) + " m up)").c_str());
+      g.gameplay("release", h, json{{"velocity", {0, 0, -15}}}.dump()); run(g, 0.3f); CHECK(g.worldPos(crate).z < -8, "…and thrown"); }
+    // ragdoll: enough damage kills the character (its script makes it a ragdoll), it falls; its bones follow the bodies
+    { g.gameplay("damage", json(g.find("Enemy")).dump(), json{{"amount", 80}, {"type", "bullet"}, {"point", {-3, 1.6, -4}}}.dump());
+      CHECK(g.gameplay("ragdollState", g.find("Enemy"), "") == "1", "a character becomes a ragdoll");
+      run(g, 2.5f); json h = J(g.gameplay("raycast", "{\"from\":[-3,3,-4.3],\"to\":[-3,-1,-4.3]}", "")); glm::vec3 ep = g.worldPos(g.find("Enemy"));
+      json hb = J(g.animation(g.find("Enemy"), "bone", "Head")); float headY = hb.is_object() ? hb["p"][1].get<float>() : 9;
+      CHECK(headY < 0.7f, ("…it falls to the ground (head at " + std::to_string(headY) + " m)").c_str());
+      bool boneHit = false; for (float x = -5; x <= -1 && !boneHit; x += 0.25f) for (float z = -8; z <= 0 && !boneHit; z += 0.25f) { json r = J(g.gameplay("raycast", json{{"from", {x, 2, z}}, {"to", {x, -1, z}}}.dump(), "")); if (r.is_object() && r.value("a", "") == g.find("Enemy") && !r.value("bone", "").empty()) boneHit = true; }
+      CHECK(boneHit, "…a line trace hits its body parts (with the bone's name)");
+      std::string hd = g.gameplay("grab", json{{"actor", g.find("Enemy")}, {"point", {ep.x, 0.2, ep.z}}}.dump(), "");
+      for (int i = 0; i < 120; i++) { g.gameplay("grabMove", hd, json{{"target", {ep.x, 2.2, ep.z}}}.dump()); g.update(1.f / 60); }
+      float maxY = -9; for (int i = 0; i < 18; i++) { json bb = J(g.animation(g.find("Enemy"), "bone", std::vector<std::string>{"Hips", "Spine", "Chest", "Head", "Hand_L", "Hand_R", "Foot_L", "Foot_R"}[i % 8])); if (bb.is_object()) maxY = std::max(maxY, bb["p"][1].get<float>()); }
+      CHECK(maxY > 1.2f, ("…a body can be picked up and dragged (highest bone " + std::to_string(maxY) + " m)").c_str()); g.gameplay("release", hd, "{}"); }
+    // radial damage: pushes the crate, hurts the player near it
+    { glm::vec3 c0 = g.worldPos(crate); g.playerTeleport(c0 + glm::vec3(2, 1, 0)); run(g, 0.3f); c0 = g.worldPos(crate); float hp = g.playerHealth();
+      json hit = J(g.gameplay("radial", json{{"center", {c0.x, c0.y, c0.z + 1.0f}}, {"radius", 6}, {"amount", 40}, {"impulse", 400}}.dump(), ""));
+      run(g, 0.4f); CHECK(glm::length(g.worldPos(crate) - c0) > 0.5f, "an explosion throws the box"); CHECK(g.playerHealth() < hp, ("…and hurts the player near it (" + std::to_string(g.playerHealth()) + ")").c_str()); }
+    // the car: the player gets in with E, drives with W, steers with D, gets out with E
+    { std::string cid = g.find("Car"); json st = J(g.gameplay("vehicle", cid, "{}")); CHECK(st.is_object(), "a Static Mesh with Vehicle on is a car");
+      run(g, 1.5f); CHECK(g.worldPos(cid).y > 0.4f && g.worldPos(cid).y < 1.8f, ("…it stands on its wheels (" + std::to_string(g.worldPos(cid).y) + " m)").c_str());
+      glm::vec3 cabin = g.worldPos(g.find("Cabin")) - g.worldPos(cid); CHECK(cabin.y > 0.5f, "…with its cabin on top (welded)");
+      g.playerTeleport(g.worldPos(cid) + glm::vec3(-2.2f, 0.3f, 0)); run(g, 0.3f);
+      g.event(keyEv(SDL_KEYDOWN, SDL_SCANCODE_E)); g.update(1.f / 60); g.event(keyEv(SDL_KEYUP, SDL_SCANCODE_E));
+      CHECK(g.driving() == cid && hudOf("in") == "Car", "E next to the car: the player drives it (onVehicleEnter)");
+      glm::vec3 p0 = g.worldPos(cid); g.event(keyEv(SDL_KEYDOWN, SDL_SCANCODE_W)); run(g, 4.0f);
+      st = J(g.gameplay("vehicle", cid, "{}")); float kmh = st["speed"].get<float>() * 3.6f; glm::vec3 p1 = g.worldPos(cid);
+      CHECK(kmh > 40 && p1.z < p0.z - 15, ("W: it drives forward (" + std::to_string((int)kmh) + " km/h, " + std::to_string(p0.z - p1.z) + " m)").c_str());
+      CHECK(glm::length(g.playerPos() - p1) < 2.5f, "…the player goes with it");
+      glm::vec3 r0 = g.getVec(cid, 'r'); g.event(keyEv(SDL_KEYDOWN, SDL_SCANCODE_D)); run(g, 1.5f); g.event(keyEv(SDL_KEYUP, SDL_SCANCODE_D)); glm::vec3 r1 = g.getVec(cid, 'r');
+      float turned = glm::degrees(std::remainder(r1.y - r0.y, 6.2831853f)); CHECK(turned < -15, ("D: it turns right (" + std::to_string((int)turned) + " deg)").c_str());
+      CHECK(std::abs(r1.x) < 0.35f && std::abs(r1.z) < 0.35f, ("…without rolling over (lean " + std::to_string(glm::degrees(r1.z)) + " deg)").c_str());
+      g.event(keyEv(SDL_KEYUP, SDL_SCANCODE_W)); g.event(keyEv(SDL_KEYDOWN, SDL_SCANCODE_S)); float slowest = 1e9f, back = 0; double stopT = -1;
+      for (int i = 0; i < 600; i++) { g.update(1.f / 60); float sp = J(g.gameplay("vehicle", cid, "{}"))["speed"].get<float>(); if (std::abs(sp) < slowest) slowest = std::abs(sp); if (sp > 0.3f) stopT = i / 60.0; back = std::min(back, sp); if (back < -3) break; }
+      g.event(keyEv(SDL_KEYUP, SDL_SCANCODE_S));
+      CHECK(slowest < 0.5f && stopT > 0 && stopT < 6, ("S: it brakes to a stop (" + std::to_string(stopT) + " s)").c_str()); CHECK(back < -3, "…then S drives it backwards");
+      g.event(keyEv(SDL_KEYDOWN, SDL_SCANCODE_SPACE)); run(g, 2.5f); g.event(keyEv(SDL_KEYUP, SDL_SCANCODE_SPACE));
+      st = J(g.gameplay("vehicle", cid, "{}")); CHECK(std::abs(st["speed"].get<float>()) < 0.5f, "Space: the hand brake stops it");
+      g.event(keyEv(SDL_KEYDOWN, SDL_SCANCODE_E)); g.update(1.f / 60); g.event(keyEv(SDL_KEYUP, SDL_SCANCODE_E)); run(g, 0.5f);
+      glm::vec3 pp = g.playerPos(), cp = g.worldPos(cid); CHECK(g.driving().empty() && hudOf("out") == "Car" && glm::length(glm::vec2(pp.x - cp.x, pp.z - cp.z)) < 4 && pp.y > cp.y - 1, "E again: the player gets out beside it (onVehicleExit)");
+      // a car driven by a script (AI)
+      g.gameplay("vehicle", cid, "{\"input\":[1,0,0,0]}"); run(g, 2.0f); st = J(g.gameplay("vehicle", cid, "{}")); CHECK(std::abs(st["speed"].get<float>()) > 4, "a script drives the car (setInput)");
+      g.gameplay("vehicle", cid, "{\"input\":[0,0,1,1]}"); run(g, 3.0f);
+      // a car built by a script: blocks attached to a body, then made a car
+      std::string b = g.spawn("Cube", "{\"position\":[30,1.2,20],\"scale\":[2,0.5,4],\"physics\":true}"); std::string top = g.spawn("Cube", "{\"position\":[30,2,20],\"scale\":[1.5,0.8,1.5]}");
+      CHECK(g.gameplay("attach", top, json{{"to", b}, {"keepWorld", true}}.dump()) == "1" && g.gameplay("vehicleMake", b, "{\"mass\":900,\"drive\":\"rear\"}") == "1", "a car built from blocks (attach, makeVehicle)");
+      run(g, 1.0f); CHECK(g.worldPos(top).y > g.worldPos(b).y + 0.4f, "…its parts ride with it");
+      g.gameplay("vehicle", b, "{\"input\":[1,0.3,0,0]}"); run(g, 2.0f); st = J(g.gameplay("vehicle", b, "{}")); CHECK(std::abs(st["speed"].get<float>()) > 3, "…and it drives"); }
+    // a heavier car is slower to speed up; the mass set is the mass it has
+    { std::string light = g.spawn("Cube", json{{"position", {60, 1.2, 0}}, {"scale", {1.8, 0.5, 4}}, {"physics", true}}.dump()), heavy = g.spawn("Cube", json{{"position", {75, 1.2, 0}}, {"scale", {1.8, 0.5, 4}}, {"physics", true}}.dump());
+      g.gameplay("vehicleMake", light, "{\"mass\":900}"); g.gameplay("vehicleMake", heavy, "{\"mass\":4000}"); run(g, 1.0f);
+      g.gameplay("vehicle", light, "{\"input\":[1,0,0,0]}"); g.gameplay("vehicle", heavy, "{\"input\":[1,0,0,0]}"); run(g, 2.0f);
+      float vl = J(g.gameplay("vehicle", light, "{}"))["speed"].get<float>(), vh = J(g.gameplay("vehicle", heavy, "{}"))["speed"].get<float>();
+      CHECK(vl > vh * 1.4f && vh > 1, ("a 900 kg car outruns a 4000 kg one (" + std::to_string(vl) + " / " + std::to_string(vh) + " m/s)").c_str()); }
+  }
+  {   // the gameplay API from a script, and the Blueprint nodes
+    Project q = makeTemplate("Blank", "Api"); Level& L = q.levels[0].second; L.actors.clear();
+    Actor f = newActor("StaticMesh", "Floor"); f.p = {0, -0.5f, 0}; f.s = {60, 1, 60}; L.actors.push_back(f);
+    Actor t = newActor("StaticMesh", "Wall"); t.p = {0, 1, -6}; t.s = {4, 2, 0.5f}; L.actors.push_back(t);
+    Actor b = newActor("StaticMesh", "Ball"); b.mesh = "Sphere"; b.p = {3, 0.5f, 0}; b.physics.simulate = true; b.physics.mass = 5; L.actors.push_back(b);
+    Actor ps = newActor("PlayerStart", "Start"); ps.p = {0, 0.1f, 4}; L.actors.push_back(ps);
+    Actor s = newActor("Empty", "Logic"); s.script = "SC_Api"; L.actors.push_back(s);
+    q.scripts["SC_Api"] = {"SC_Api", "function onStart() { const h = world.raycast([0, 1, 0], [0, 1, -20]); world.hud('ray', h ? h.actor.name + ':' + h.position.z.toFixed(2) + ':' + h.normal.z.toFixed(0) : 'none');\n"
+      " const w = world.find('Wall'); world.spawnDecal(h.position, h.normal, { type: 'bullet', actor: w }); w.applyDamage(5, { type: 'test' });\n"
+      " const ball = world.find('Ball'); const j = world.addJoint({ kind: 'Distance', a: ball, pivot: [3, 3, 0], min: 0, max: 2 }); world.hud('joint', j ? 'yes' : 'no');\n"
+      " const g = world.grab(ball); world.vars.g = g; world.hud('grab', g ? 'yes' : 'no');\n"
+      " const hp = world.player.health; world.player.damage(10, { type: 'x' }); world.hud('hp', hp + '>' + world.player.health); world.player.heal(5); world.hud('hp2', String(world.player.health));\n"
+      " const c = world.spawn('Cube', { position: [10, 1.2, 0], scale: [1.9, 0.7, 4], physics: true, vehicle: { torque: 900 } }); world.hud('car', c.vehicle ? 'yes' : 'no'); world.vars.car = c; }\n"
+      "function onUpdate() { if (world.vars.g) world.vars.g.moveTo([3, 2, 0]); }\n"};
+    Game g(q, "Main"); CHECK(g.start(), "a game using the gameplay API starts");
+    auto hudOf = [&](const std::string& id) { for (auto& h : g.hudLines()) if (h.first == id) return h.second; return std::string(); };
+    CHECK(hudOf("ray") == "Wall:-5.75:1", ("world.raycast: " + hudOf("ray")).c_str());
+    CHECK(hudOf("joint") == "yes" && hudOf("grab") == "yes" && hudOf("car") == "yes", "world.addJoint, world.grab, world.spawn({ vehicle })");
+    CHECK(hudOf("hp") == "100>90" && hudOf("hp2") == "95", ("world.player.damage / heal: " + hudOf("hp") + " " + hudOf("hp2")).c_str());
+    run(g, 1.5f); glm::vec3 bp = g.worldPos(g.find("Ball")); CHECK(glm::length(bp - glm::vec3(3, 2, 0)) < 0.4f, "grab.moveTo every frame carries the ball");
+    CHECK(g.decalCount() == 1, "world.spawnDecal");
+    { Project q2 = q; q2.levels[0].second.world.gameMode = "FirstPerson"; q2.scripts["SC_Api"].code = "function onStart() { const c = world.spawn('Cube', { position: [6, 1.2, 0], scale: [1.9, 0.7, 4], physics: true, vehicle: true }); world.hud('in', String(world.player.enterVehicle(c))); }";
+      Game g2(q2, "Main"); g2.start(); run(g2, 0.5f); bool in = false; for (auto& h : g2.hudLines()) if (h.first == "in") in = h.second == "true";
+      CHECK(in && !g2.driving().empty(), "world.player.enterVehicle"); }   // the game ends with the player in the car: no crash
+    CHECK(true, "a game that ends with the player in a car closes cleanly");
+    // the Blueprint nodes compile
+    Blueprint gbp; int id = 1; auto node = [&](const std::string& type, json v = json::object()) { BpNode n; n.id = id++; n.type = type; n.values = v; gbp.nodes.push_back(n); return n.id; };
+    int ev = node("Event.BeginPlay"), tr = node("Physics.TraceFromCamera"), dm = node("Damage.Apply"), dc = node("Decal.Spawn"), rad = node("Damage.ApplyRadial"), at = node("Attach.ToCamera"), jn = node("Physics.AddJoint", {{"Kind", "Hinge"}}), mo = node("Physics.JointMotor"), en = node("Vehicle.Enter"), rg = node("Physics.Ragdoll");
+    int ad = node("Event.AnyDamage"), pr = node("Utilities.PrintString"), de = node("Event.PlayerDeath"), hl = node("Player.SetHealth"), ve = node("Event.VehicleEnter"), jb = node("Event.JointBreak"), pd = node("Event.PlayerDamage"), vx = node("Event.VehicleExit");
+    gbp.links = {{ev, "then", tr, "exec"}, {tr, "then", dm, "exec"}, {tr, "HitActor", dm, "DamagedActor"}, {tr, "Location", dm, "HitLocation"}, {dm, "then", dc, "exec"}, {tr, "Location", dc, "Location"}, {tr, "Normal", dc, "Normal"},
+                {dc, "then", rad, "exec"}, {rad, "then", at, "exec"}, {at, "then", jn, "exec"}, {jn, "then", mo, "exec"}, {jn, "Joint", mo, "Joint"}, {mo, "then", en, "exec"}, {en, "then", rg, "exec"},
+                {ad, "then", pr, "exec"}, {ad, "DamageType", pr, "InString"}, {de, "then", hl, "exec"}};
+    (void)ve; (void)jb; (void)pd; (void)vx;
+    std::vector<BpMessage> ms; std::string code = bpCompile(gbp, "BP_Gameplay", ms); int errs = 0; std::string all; for (auto& x : ms) { errs += x.error; if (x.error) all += x.text + "; "; }
+    CHECK(errs == 0 && code.find("function onDamage(amount, info)") != std::string::npos && code.find("function onPlayerDeath()") != std::string::npos, ("the gameplay Blueprint nodes compile " + all).c_str());
+    CHECK(ScriptHost::check(code).empty(), ("…to code that runs: " + ScriptHost::check(code)).c_str());
+  }
   {   // playing together: a host and a player on this computer, messages both ways, the LAN beacon, leaving
     pge::Net h, c; double t = 0; CHECK(h.host(46655, "Test world", 4, "info"), "net: host a game");
     c.lanSearch(true); CHECK(c.join("127.0.0.1", 46655), "net: join it");

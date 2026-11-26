@@ -207,6 +207,84 @@ static std::vector<BpNodeDef> buildLibrary() {
   add("AI.IsMoving", "AI", U, "Is Moving", "هل يمشي؟", "True while the actor walks somewhere (AI Move To).", "صح طول ما الممثل يمشي لمكان.", {T, "<ReturnValue:bool@!!($in(Target) && $in(Target).isMoving)"});
   add("Event.MoveFinished", "Events", E, "On Move Finished", "عند انتهاء المشي", "This actor's walk (AI Move To) ended: Success = it got there.", "مشي هذا الممثل انتهى: Success = وصل.", {"<then", "<Success:bool"});
 
+  // ---- gameplay: traces, damage, attaching, decals, physics joints, carrying bodies, ragdolls, cars
+  add("Physics.LineTrace", "Physics", X, "Line Trace", "تتبّع خط", "Finds the first thing on the line from Start to End (shooting, looking at things). Ignores this actor (and the player if Ignore Player).",
+      "يلقى أول شيء على الخط من Start إلى End (للإطلاق، أو تعرف وش اللاعب يطالع). يتجاهل هذا الممثل (واللاعب إذا Ignore Player).",
+      {">exec", ">Start:vector", ">End:vector=[0,0,-10]", ">IgnorePlayer:bool=true", "<then", "<Hit:bool", "<Location:vector", "<Normal:vector", "<HitActor:actor", "<Distance:number", "<Bone:string"},
+      "{ const __h = world.raycast(__bp.vec($in(Start)), __bp.vec($in(End)), { ignore: self ? [self] : [], ignorePlayer: !!$in(IgnorePlayer) }); __bp.lastHit = __h;\n$out(Hit) = !!__h; $out(Location) = __h ? __h.position : __bp.vec($in(End)); $out(Normal) = __h ? __h.normal : __bp.v(0, 1, 0);\n"
+      "$out(HitActor) = __h ? (__h.player ? world.player : __h.actor) : null; $out(Distance) = __h ? __h.distance : 0; $out(Bone) = __h ? __h.bone : ''; }\n$exec(then)");
+  add("Physics.TraceFromCamera", "Physics", X, "Line Trace From Camera", "تتبّع من الكاميرا", "A line from the camera where the player looks, Length metres long (aiming, interacting).", "خط من الكاميرا للمكان اللي يطالعه اللاعب بطول Length متر (للتصويب والتفاعل).",
+      {">exec", ">Length:number=100", "<then", "<Hit:bool", "<Location:vector", "<Normal:vector", "<HitActor:actor", "<Distance:number"},
+      "{ const __c = world.camera; const __h = world.raycast(__c.position, __bp.vadd(__c.position, __bp.vmul(__c.forward, +$in(Length))), { ignorePlayer: true }); __bp.lastHit = __h;\n$out(Hit) = !!__h; $out(Location) = __h ? __h.position : __bp.vadd(__c.position, __bp.vmul(__c.forward, +$in(Length)));\n"
+      "$out(Normal) = __h ? __h.normal : __bp.v(0, 1, 0); $out(HitActor) = __h ? __h.actor : null; $out(Distance) = __h ? __h.distance : 0; }\n$exec(then)");
+  add("Damage.Apply", "Damage", X, "Apply Damage", "طبّق ضرر", "Hurts an actor (its Event Any Damage runs) or the player (loses health). Impulse pushes a physics body or a ragdoll where it was hit.",
+      "يضر ممثل (يشتغل عنده حدث Any Damage) أو اللاعب (تنقص صحته). Impulse يدفع الجسم الفيزيائي أو الجثة من مكان الضربة.",
+      {">exec", ">DamagedActor:actor", ">BaseDamage:number=20", ">DamageType:string=\"bullet\"", ">HitLocation:vector", ">Impulse:number=0", "<then"},
+      "{ const __t = $in(DamagedActor), __p = __bp.pt($in(HitLocation)) || __bp.pos(__t); const __d = __bp.vnorm(__bp.vsub(__p, __bp.pos(self)));\n"
+      "if (__t) world.applyDamage(__t, +$in(BaseDamage), { type: __bp.str($in(DamageType)), from: self, point: __p, direction: __d, impulse: +$in(Impulse) }); }\n$exec(then)");
+  add("Damage.ApplyRadial", "Damage", X, "Apply Radial Damage", "ضرر دائري (انفجار)", "An explosion: hurts every actor and the player within Radius (less further away, walls shield), pushes bodies away.",
+      "انفجار: يضر كل الممثلين واللاعب داخل نصف القطر (أقل كل ما بعدوا، والجدران تحمي)، ويدفع الأجسام بعيد.",
+      {">exec", ">Origin:vector", ">Radius:number=6", ">BaseDamage:number=80", ">Impulse:number=1500", ">DamageType:string=\"explosion\"", "<then", "<HitActors:array"},
+      "$out(HitActors) = world.applyRadialDamage(__bp.vec($in(Origin)), +$in(Radius), +$in(BaseDamage), { impulse: +$in(Impulse), type: __bp.str($in(DamageType)), from: self });\n$exec(then)");
+  add("Event.AnyDamage", "Events", E, "Event Any Damage", "حدث أي ضرر", "This actor was hurt (Apply Damage, an explosion, a script). Damage = how much; Instigator = who did it.",
+      "هذا الممثل انضر (Apply Damage أو انفجار أو سكربت). Damage = كم الضرر، Instigator = مين سواه.", {"<then", "<Damage:number", "<DamageType:string", "<Instigator:actor", "<HitLocation:vector"});
+  add("Event.PlayerDamage", "Events", E, "Event Player Damaged", "حدث ضرر اللاعب", "The player was hurt (health went down).", "اللاعب انضر (نقصت صحته).", {"<then", "<Damage:number", "<DamageType:string", "<Instigator:actor"});
+  add("Event.PlayerDeath", "Events", E, "Event Player Death", "حدث موت اللاعب", "The player's health reached 0. (With nothing here the player starts again at the Player Start.)", "صحة اللاعب وصلت صفر. (إذا ما فيه شيء هنا اللاعب يرجع من نقطة البداية.)", {"<then"});
+  add("Player.GetHealth", "Player", U, "Get Player Health", "صحة اللاعب", "The player's health (100 at the start) and the most it can be.", "صحة اللاعب (100 في البداية) وأعلى قيمة لها.", {"<Health:number@world.player.health", "<MaxHealth:number@world.player.maxHealth"});
+  add("Player.SetHealth", "Player", X, "Set Player Health", "حدد صحة اللاعب", "Sets the player's health (and its most). Above 0 brings a dead player back.", "يحدد صحة اللاعب (وأعلى قيمة). فوق الصفر يرجّع اللاعب الميت.",
+      {">exec", ">Health:number=100", ">MaxHealth:number=100", "<then"}, "world.player.set({ maxHealth: +$in(MaxHealth), health: +$in(Health) });\n$exec(then)");
+  add("Player.Heal", "Player", X, "Heal Player", "عالج اللاعب", "Gives the player health (up to the most).", "يزيد صحة اللاعب (لين أعلى قيمة).", {">exec", ">Amount:number=25", "<then"}, "world.player.heal(+$in(Amount));\n$exec(then)");
+  add("Attach.ToActor", "Attach", X, "Attach Actor To Actor", "ألصق ممثل بممثل", "Target moves with Parent from now on (a weapon in a hand: Bone = Hand_R). Keep World = it stays where it is; else it goes to the bone / parent.",
+      "الممثل Target يتحرك مع Parent من الحين (سلاح في اليد: Bone = Hand_R). Keep World = يبقى مكانه، وإلا يروح للعظمة / الأب.",
+      {">exec", T, ">Parent:actor", ">Bone:string=\"\"", ">KeepWorld:bool=false", ">Offset:vector", ">Rotation:vector", "<then"},
+      "{ const __t = $in(Target), __p = $in(Parent); if (__t && __t.attachTo && __p) __t.attachTo(__p, { bone: __bp.str($in(Bone)), keepWorld: !!$in(KeepWorld), offset: __bp.vec($in(Offset)), rotation: __bp.vec($in(Rotation)) }); }\n$exec(then)");
+  add("Attach.ToCamera", "Attach", X, "Attach To Camera", "ألصق بالكاميرا", "Target moves with the camera (a weapon in first person, a flashlight). Offset: X right, Y up, Z back (-Z in front).",
+      "الممثل يتحرك مع الكاميرا (سلاح بمنظور الشخص الأول، كشاف). Offset: X يمين، Y فوق، Z ورا (‎-Z قدّام).",
+      {">exec", T, ">Offset:vector=[0.25,-0.25,-0.5]", ">Rotation:vector", "<then"}, "{ const __t = $in(Target); if (__t && __t.attachTo) __t.attachTo('camera', { offset: __bp.vec($in(Offset)), rotation: __bp.vec($in(Rotation)) }); }\n$exec(then)");
+  add("Attach.Detach", "Attach", X, "Detach From Actor", "افصل الممثل", "Target stops moving with its parent and stays where it is (a physics actor falls).", "الممثل يتوقف عن الحركة مع أبوه ويبقى مكانه (لو فيزيائي يطيح).",
+      {">exec", T, "<then"}, "{ const __t = $in(Target); if (__t && __t.detach) __t.detach({ keepWorld: true }); }\n$exec(then)");
+  add("Decal.Spawn", "Decals", X, "Spawn Decal", "ارسم أثر (Decal)", "Lays a picture on a surface: Blood, Bullet (a hole), Scorch, or a picture of the project. Use a Line Trace's Location and Normal. Life Span 0 = stays.",
+      "يرسم صورة على سطح: Blood دم، Bullet أثر رصاصة، Scorch أثر حريق، أو صورة من المشروع. استخدم Location و Normal من Line Trace. Life Span صفر = يبقى.",
+      {">exec", ">Type:string=\"Blood\"", ">Location:vector", ">Normal:vector=[0,1,0]", ">Size:number=0.8", ">Color:string=\"\"", ">AttachTo:actor", ">LifeSpan:number=0", "<then"},
+      "{ const __o = { type: __bp.str($in(Type)), size: +$in(Size), life: +$in(LifeSpan) }; if ($in(Color)) __o.color = __bp.str($in(Color)); const __a = $in(AttachTo); if (__a && __a.id) __o.actor = __a;\n"
+      "const __lt = String(__o.type).toLowerCase(); if (!['blood', 'bullet', 'scorch', 'splat', 'hole', 'burn'].includes(__lt)) __o.texture = __o.type; world.spawnDecal(__bp.vec($in(Location)), __bp.vec($in(Normal)), __o); }\n$exec(then)");
+  add("Physics.Ragdoll", "Physics", X, "Ragdoll", "حوّله جثة (Ragdoll)", "A character model goes limp and falls (each bone a physics body). Impulse pushes it, from Hit Location.",
+      "مجسم الشخصية يرتخي ويطيح (كل عظمة تصير جسم فيزيائي). Impulse يدفعه من Hit Location.", {">exec", T, ">Impulse:vector", ">HitLocation:vector", "<then"},
+      "{ const __t = $in(Target); if (__t && __t.ragdoll) { const __o = { impulse: __bp.vec($in(Impulse)) }; const __p = __bp.pt($in(HitLocation)); if (__p) __o.point = __p; __t.ragdoll(__o); } }\n$exec(then)");
+  add("Physics.IsRagdoll", "Physics", U, "Is Ragdoll", "هل هو جثة؟", "True when the actor is a ragdoll.", "صح لو الممثل صار جثة.", {T, "<ReturnValue:bool@!!($in(Target) && $in(Target).isRagdoll)"});
+  add("Physics.AddImpulseAt", "Physics", X, "Add Impulse at Location", "ادفع من نقطة", "Pushes a physics actor (or a ragdoll) at a point: it spins as well as moves.", "يدفع ممثل فيزيائي (أو جثة) من نقطة: يدور ويتحرك.",
+      {">exec", T, ">Impulse:vector=[0,0,-500]", ">Location:vector", "<then"}, "{ const __t = $in(Target); if (__t && __t.addImpulse) __t.addImpulse(__bp.vec($in(Impulse)), __bp.pt($in(Location))); }\n$exec(then)");
+  add("Physics.AddJoint", "Physics", X, "Add Physics Constraint", "أضف وصلة فيزيائية", "Holds two actors together (Actor 2 empty = the world): Hinge (a door), Fixed, BallSocket (a chain), Slider (a drawer), Distance (a rope). Limits: Min / Max (degrees or m).",
+      "يربط ممثلين ببعض (Actor 2 فاضي = العالم): Hinge مفصلة باب، Fixed ثابت، BallSocket كرة (سلسلة)، Slider ينزلق (درج)، Distance مسافة (حبل). الحدود Min و Max (درجات أو متر).",
+      {">exec", ">Kind:string=\"Hinge\"", ">Actor1:actor=\"self\"", ">Actor2:actor", ">Pivot:vector", ">Axis:vector=[0,1,0]", ">Min:number=-90", ">Max:number=90", ">BreakForce:number=0", "<then", "<Joint:string"},
+      "{ const __a = $in(Actor1); const __o = { kind: __bp.str($in(Kind)), a: __a, b: $in(Actor2) || null, axis: __bp.vec($in(Axis)), min: +$in(Min), max: +$in(Max), breakForce: +$in(BreakForce) };\n"
+      "const __pv = __bp.vec($in(Pivot)); if (__pv.x || __pv.y || __pv.z) __o.pivot = __pv; const __j = __a ? world.addJoint(__o) : null; $out(Joint) = __j ? __j.id : ''; }\n$exec(then)");
+  add("Physics.JointMotor", "Physics", X, "Set Constraint Motor", "محرّك الوصلة", "Turns a Hinge (degrees/s) or moves a Slider (m/s) by itself, up to Force. Force 0 = off.", "يدوّر المفصلة (درجة/ثانية) أو يحرك المنزلق (متر/ثانية) لحاله بقوة Force. القوة 0 = طافي.",
+      {">exec", ">Joint:string", ">Speed:number=90", ">Force:number=5000", "<then"}, "__bp.joint($in(Joint)).setMotor(+$in(Speed), +$in(Force));\n$exec(then)");
+  add("Physics.JointTarget", "Physics", X, "Set Constraint Target", "هدف الوصلة", "A Hinge turns to an angle (degrees) or a Slider moves to a position (m), and holds there.", "المفصلة تدور لزاوية (درجات) أو المنزلق يتحرك لمكان (متر) ويثبت.",
+      {">exec", ">Joint:string", ">Target:number=90", ">Force:number=5000", "<then"}, "__bp.joint($in(Joint)).setTarget(+$in(Target), +$in(Force));\n$exec(then)");
+  add("Physics.BreakJoint", "Physics", X, "Break Constraint", "اكسر الوصلة", "Removes a physics constraint: the actors come apart.", "يشيل الوصلة: الممثلين ينفصلون.", {">exec", ">Joint:string", "<then"}, "__bp.joint($in(Joint)).remove();\n$exec(then)");
+  add("Physics.GetJoint", "Physics", U, "Get Constraint", "وصلة الممثل", "The joint of a Physics Constraint actor (its id).", "الوصلة حق ممثل Physics Constraint (معرّفها).", {T, "<Joint:string@(($in(Target) && $in(Target).joint) ? $in(Target).joint.id : '')"});
+  add("Event.JointBreak", "Events", E, "On Constraint Broken", "عند انكسار الوصلة", "A physics constraint of this actor broke (pulled harder than its Break Force).", "وصلة فيزيائية حق هذا الممثل انكسرت (انسحبت أقوى من Break Force).", {"<then", "<Joint:string"});
+  add("Physics.Grab", "Physics", X, "Grab", "امسك جسم", "Picks up a physics body (a box, a ragdoll's arm) at a point; move it with Move Grabbed every frame, then Release.", "يمسك جسم فيزيائي (صندوق، يد جثة) من نقطة؛ حركه بـ Move Grabbed كل إطار، وبعدين Release.",
+      {">exec", T, ">Location:vector", "<then", "<Handle:string"}, "{ const __g = $in(Target) ? world.grab($in(Target), __bp.vec($in(Location))) : null; $out(Handle) = __g ? __g.id : ''; }\n$exec(then)");
+  add("Physics.MoveGrabbed", "Physics", X, "Move Grabbed", "حرّك الممسوك", "Pulls what is grabbed toward Location (in front of the camera to carry it).", "يسحب الشيء الممسوك لمكان Location (قدّام الكاميرا عشان تشيله).",
+      {">exec", ">Handle:string", ">Location:vector", "<then"}, "__bp.grab($in(Handle)).moveTo(__bp.vec($in(Location)));\n$exec(then)");
+  add("Physics.Release", "Physics", X, "Release", "اترك الممسوك", "Lets go of what is grabbed; Velocity throws it.", "يترك الشيء الممسوك؛ Velocity ترميه.", {">exec", ">Handle:string", ">Velocity:vector", "<then"},
+      "__bp.grab($in(Handle)).release(__bp.vec($in(Velocity)));\n$exec(then)");
+  add("Vehicle.Enter", "Vehicle", X, "Enter Vehicle", "اركب السيارة", "The player gets in this car and drives it (W / S, A / D, Space hand brake, E out).", "اللاعب يركب السيارة ويسوقها (W و S، A و D، Space فرامل اليد، E نزول).",
+      {">exec", T, "<then"}, "{ const __t = $in(Target); if (__t && __t.vehicle) __t.vehicle.enter(); }\n$exec(then)");
+  add("Vehicle.Exit", "Vehicle", X, "Exit Vehicle", "انزل من السيارة", "The player gets out of the car they drive.", "اللاعب ينزل من السيارة.", {">exec", "<then"}, "world.player.exitVehicle();\n$exec(then)");
+  add("Vehicle.SetInput", "Vehicle", X, "Set Vehicle Input", "تحكم السيارة", "Drives a car from the Blueprint (a car of the AI): Throttle -1..1, Steering -1 (left) .. 1 (right), Brake and Handbrake 0..1.",
+      "يسوق السيارة من البلوبرنت (سيارة الذكاء الاصطناعي): Throttle البنزين من ‎-1 إلى 1، Steering الدركسون من ‎-1 يسار إلى 1 يمين، Brake و Handbrake من 0 إلى 1.",
+      {">exec", T, ">Throttle:number=1", ">Steering:number=0", ">Brake:number=0", ">Handbrake:number=0", "<then"},
+      "{ const __t = $in(Target); const __v = __t && __t.vehicle; if (__v) __v.setInput(+$in(Throttle), +$in(Steering), +$in(Brake), +$in(Handbrake)); }\n$exec(then)");
+  add("Vehicle.Speed", "Vehicle", U, "Get Vehicle Speed", "سرعة السيارة", "How fast the car goes (km/h; below 0 = backwards), its engine's RPM and gear.", "سرعة السيارة (كم/ساعة؛ تحت الصفر = رجوع)، ودورات المحرك والقير.",
+      {T, "<Speed:number@(($in(Target) && $in(Target).vehicle) ? $in(Target).vehicle.speed : 0)", "<RPM:number@(($in(Target) && $in(Target).vehicle) ? $in(Target).vehicle.rpm : 0)", "<Gear:number@(($in(Target) && $in(Target).vehicle) ? $in(Target).vehicle.gear : 0)"});
+  add("Vehicle.PlayerVehicle", "Vehicle", U, "Get Player Vehicle", "سيارة اللاعب", "The car the player drives (nothing when walking).", "السيارة اللي يسوقها اللاعب (لا شيء لو يمشي).", {"<Vehicle:actor@world.player.vehicle"});
+  add("Event.VehicleEnter", "Events", E, "On Vehicle Enter", "عند ركوب السيارة", "The player got in a car.", "اللاعب ركب سيارة.", {"<then", "<Vehicle:actor"});
+  add("Event.VehicleExit", "Events", E, "On Vehicle Exit", "عند النزول من السيارة", "The player got out of a car.", "اللاعب نزل من سيارة.", {"<then", "<Vehicle:actor"});
+
   // ---- functions (made in My Blueprint > Functions; their pins come from the function)
   add("Function.Entry", "Functions", E, "Function Entry", "بداية الدالة", "Where the function starts. Its outputs are the values it was called with.", "من هنا تبدأ الدالة. مخارجها هي القيم اللي انطلبت فيها.", {"<then"}, "", {{"Function", "NewFunction"}});
   add("Function.Return", "Functions", X, "Return Node", "إرجاع", "Ends the function and gives back its outputs.", "ينهي الدالة ويرجّع مخارجها.", {">exec"}, "", {{"Function", "NewFunction"}});
@@ -434,6 +512,11 @@ static const char* BP_RUNTIME = R"JS(const __bp = (() => {
       'saturation': 'saturation', 'contrast': 'contrast', 'bloom': 'bloom', 'temperature': 'temperature' }[String(name).trim().toLowerCase()];
     if (!k) { log('Set Camera Effect: no effect called "' + name + '" (Vignette, Film Grain, Chromatic Aberration, VHS, Scanlines, Saturation, Contrast, Bloom, Temperature)'); return; }
     world.setPostProcess({ [k]: +v }); },
+  lastHit: null,
+  pt(v) { v = B.vec(v); return (v.x || v.y || v.z) ? v : null; },
+  joint(id) { return id ? { setMotor(s, f) { __n.gp('jointSet', String(id), JSON.stringify({ motorSpeed: +s || 0, motorForce: +f || 0 })); },
+    setTarget(v, f) { __n.gp('jointSet', String(id), JSON.stringify({ target: +v || 0, motorForce: +f || 0 })); }, remove() { __n.gp('jointSet', String(id), JSON.stringify({ remove: true })); } } : { setMotor() {}, setTarget() {}, remove() {} }; },
+  grab(id) { return id ? { moveTo(p) { __n.gp('grabMove', String(id), JSON.stringify({ target: B.arr(p) })); }, release(v) { const a = B.arr(v); __n.gp('release', String(id), JSON.stringify({ velocity: (a[0] || a[1] || a[2]) ? a : null })); } } : { moveTo() {}, release() {} }; },
   bone(a, n) { const b = a && a.bone ? a.bone(String(n)) : null; return b ? B.v(b.position.x, b.position.y, b.position.z) : B.pos(a); },
   pos(a) { if (!a) return B.v(0, 0, 0); if (a.isPlayer) return a.position; return a.worldPosition ? a.worldPosition : B.vec(a); },
   setPos(a, v) { v = B.vec(v); if (a.isPlayer) a.teleport(v.x, v.y, v.z); else if (a.position) a.position.set(v.x, v.y, v.z); },
@@ -620,7 +703,8 @@ std::string bpCompile(const Blueprint& bp, const std::string& name, std::vector<
   // the events → the engine's functions
   std::map<std::string, std::vector<const BpNode*>> ev;
   for (auto& n : bp.nodes) if (const BpNodeDef* d = bpDef(n.type)) if (d->kind == BpNodeDef::Event) ev[n.type].push_back(&n);
-  for (const char* one : {"Event.BeginPlay", "Event.Tick", "Event.ActorBeginOverlap", "Event.Hit", "Event.EndPlay", "Event.AnyKey", "Event.AnimationEnd", "Event.MoveFinished"})
+  for (const char* one : {"Event.BeginPlay", "Event.Tick", "Event.ActorBeginOverlap", "Event.Hit", "Event.EndPlay", "Event.AnyKey", "Event.AnimationEnd", "Event.MoveFinished",
+                          "Event.AnyDamage", "Event.PlayerDamage", "Event.PlayerDeath", "Event.JointBreak", "Event.VehicleEnter", "Event.VehicleExit"})
     if (ev[one].size() > 1) for (size_t i = 1; i < ev[one].size(); i++) g.err(ev[one][i]->id, std::string("Only one ") + bpDef(one)->en + " can be in a Blueprint", std::string("ما يصير أكثر من ") + bpDef(one)->ar + " في البلوبرنت");
   auto body = [&](const BpNode* n) { return g.execOut(*n, "then", 1); };
   auto setOut = [&](const BpNode* n, const std::string& pin, const std::string& value) { return g.outVar(n->id, pin) + " = " + value + ";\n"; };
@@ -639,6 +723,12 @@ std::string bpCompile(const Blueprint& bp, const std::string& name, std::vector<
   if (!ev["Event.EndPlay"].empty()) { std::string b; for (auto* n : ev["Event.EndPlay"]) b += body(n); fn("function onStop()", "", b); }
   if (!ev["Event.MoveFinished"].empty()) { std::string b, pre; for (auto* n : ev["Event.MoveFinished"]) { pre += setOut(n, "Success", "ok"); b += body(n); } fn("function onMoveFinished(ok)", pre, b); }
   if (!ev["Event.AnimationEnd"].empty()) { std::string b, pre; for (auto* n : ev["Event.AnimationEnd"]) { pre += setOut(n, "Animation", "name"); b += body(n); } fn("function onAnimationEnd(name)", pre, b); }
+  if (!ev["Event.AnyDamage"].empty()) { std::string b, pre; for (auto* n : ev["Event.AnyDamage"]) { pre += setOut(n, "Damage", "amount") + setOut(n, "DamageType", "String(info.type || '')") + setOut(n, "Instigator", "info.from") + setOut(n, "HitLocation", "info.point || __bp.pos(self)"); b += body(n); } fn("function onDamage(amount, info)", pre, b); }
+  if (!ev["Event.PlayerDamage"].empty()) { std::string b, pre; for (auto* n : ev["Event.PlayerDamage"]) { pre += setOut(n, "Damage", "amount") + setOut(n, "DamageType", "String(info.type || '')") + setOut(n, "Instigator", "info.from"); b += body(n); } fn("function onPlayerDamage(amount, info)", pre, b); }
+  if (!ev["Event.PlayerDeath"].empty()) { std::string b; for (auto* n : ev["Event.PlayerDeath"]) b += body(n); fn("function onPlayerDeath()", "", b); }
+  if (!ev["Event.JointBreak"].empty()) { std::string b, pre; for (auto* n : ev["Event.JointBreak"]) { pre += setOut(n, "Joint", "j"); b += body(n); } fn("function onJointBreak(j)", pre, b); }
+  if (!ev["Event.VehicleEnter"].empty()) { std::string b, pre; for (auto* n : ev["Event.VehicleEnter"]) { pre += setOut(n, "Vehicle", "v"); b += body(n); } fn("function onVehicleEnter(v)", pre, b); }
+  if (!ev["Event.VehicleExit"].empty()) { std::string b, pre; for (auto* n : ev["Event.VehicleExit"]) { pre += setOut(n, "Vehicle", "v"); b += body(n); } fn("function onVehicleExit(v)", pre, b); }
   for (auto* n : ev["Event.Custom"]) fn("function __ce_" + bpSanitize(g.field(*n, "Name")) + "()", "", body(n));
   // the functions: __fn_Name(inputs) → [outputs]
   for (auto& f : bp.funcs) {

@@ -24,6 +24,21 @@ struct LightProps { glm::vec3 color{1}; float intensity = 1, range = 12, angle =
 struct TextProps { std::string value = "Text"; glm::vec3 color{1}; float size = 0.6f; };
 struct PhysicsProps { bool simulate = false, collision = true; float mass = 1; };
 struct ProbeProps { float radius = 10, intensity = 1; };   // Sphere Reflection Capture: what it reflects, within radius m
+// a car (Unreal's Wheeled Vehicle): a Static Mesh with Simulate Physics drives on 4 wheels (placed from its size, or by wheel list)
+struct VehicleProps {
+  bool enabled = false, enterable = true;
+  float torque = 650, maxRpm = 6000, maxSteer = 35, wheelRadius = 0.4f, wheelWidth = 0.3f, travel = 0.3f, stiffness = 1.5f, axleInset = 0.18f, camDistance = 7;
+  int drive = 2;                                  // 0 rear, 1 front, 2 all wheels
+  std::string wheelMesh = "Cylinder", wheelMaterial = "M_Tire";   // drawn at each wheel ("" = none: the model has its own)
+  bool isDefault() const { return !enabled; }
+};
+// Physics Constraint (Unreal's): holds two actors together (or one to the world): a door's hinge, a chain, a drawer, a rope
+struct JointProps {
+  std::string kind = "Hinge";                     // Hinge, Fixed, BallSocket, Slider, Distance
+  std::string a, b;                               // actor ids (b "" = the world)
+  bool limits = true; float min = -90, max = 90;  // Hinge degrees, Slider / Distance m
+  float motorSpeed = 0, motorForce = 0, friction = 0, breakForce = 0;
+};
 
 struct Actor {
   std::string id, name, type, parent;           // type: StaticMesh, Empty, PointLight, SpotLight, DirectionalLight, PlayerStart, CameraActor, TriggerBox, TextRender, ReflectionCapture
@@ -32,7 +47,7 @@ struct Actor {
   std::vector<std::string> tags;
   std::string mesh = "Cube", material = "M_Default", script;   // mesh: a shape (Cube, Sphere, ...) or a model file of the project (Models/Robot.glb); material "" = the model's own
   std::string anim; bool animLoop = true; float animSpeed = 1;   // a model's animation that plays from the start
-  PhysicsProps physics; LightProps light; TextProps text; ProbeProps probe;
+  PhysicsProps physics; LightProps light; TextProps text; ProbeProps probe; VehicleProps vehicle; JointProps joint;
   LandscapeRef land;   // a Landscape actor's heights and paint
   bool isLight() const { return type == "PointLight" || type == "SpotLight" || type == "DirectionalLight"; }
 };

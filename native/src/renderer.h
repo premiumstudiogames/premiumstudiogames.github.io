@@ -13,7 +13,7 @@ struct Camera { glm::mat4 view{1}, proj{1}; glm::vec3 pos{0}; bool ortho = false
 struct DrawItem { const GpuMesh* mesh = nullptr; glm::mat4 model{1}; glm::vec3 color{1}, emissive{0}; float metal = 0, rough = 0.6f, opacity = 1; bool castShadow = true, unlit = false, pickOnly = false; unsigned id = 0;   // pickOnly: invisible, only for clicking (editor icons)
   // textures (GL names, 0 = none): base colour (sRGB, alpha), roughness (green), metal (blue), normal, ambient occlusion (red), emissive (sRGB)
   unsigned tex[6] = {0, 0, 0, 0, 0, 0}; glm::vec2 tiling{1}; float normalScale = 1, aoStrength = 1, cutoff = -1;   // cutoff >= 0: cut out where alpha is below it
-  bool vcolor = false, worldUV = false, flipGreen = false, blend = false, linear = false;   // linear: color / emissive are linear light (glTF), not screen colours;   // vertex colours (models), textures laid on the world (no stretching), DirectX normal map, see-through
+  bool vcolor = false, worldUV = false, flipGreen = false, blend = false, linear = false, decal = false;   // decal: drawn over the surface under it (no z-fighting)   // linear: color / emissive are linear light (glTF), not screen colours;   // vertex colours (models), textures laid on the world (no stretching), DirectX normal map, see-through
   const glm::mat4* bones = nullptr; int boneCount = 0;
   // a landscape: 4 painted layers blended by the vertex colour (their colour, picture laid on the world every `tile` m, roughness)
   bool splat = false; unsigned layerTex[4] = {0, 0, 0, 0}; glm::vec3 layerCol[4] = {glm::vec3(1), glm::vec3(1), glm::vec3(1), glm::vec3(1)}; float layerTile[4] = {4, 4, 4, 4}, layerRough[4] = {0.9f, 0.9f, 0.9f, 0.9f}; };   // a skinned model: its joints (model space), model = the actor

@@ -225,12 +225,35 @@ int main(int argc, char** argv) {
           ed.L().world.gameMode = std::getenv("PGE_MT_FP") ? "FirstPerson" : "ThirdPerson"; for (auto& a : ed.L().actors) if (a.type == "PlayerStart") a.p = {0, 12, 8}; ed.touch(); ed.play(); }
         if (frame > 203 && frame < 240 && ed.game && std::getenv("PGE_DEBUG_PLAY")) { glm::vec3 pp = ed.game->playerPos(), cp = ed.game->cameraPos(); std::fprintf(stderr, "f%d player %.3f %.3f %.3f cam %.3f %.3f %.3f t=%u\n", frame, pp.x, pp.y, pp.z, cp.x, cp.y, cp.z, SDL_GetTicks()); }
         if (std::getenv("PGE_DEBUG_PLAY") || (std::getenv("PGE_MT_VARIANT") && frame > 200)) { std::fprintf(stderr, "frame %d t=%u draws=%d tris=%d\n", frame, SDL_GetTicks(), ed.R.drawCalls, ed.R.triangles); std::fflush(stderr); }
-        if (frame == 240) { glm::vec3 pp = ed.game ? ed.game->playerPos() : glm::vec3(0); pge::Actor* la = ed.actor(landId); float gy = la ? la->land->heightAt(pp.x, pp.z) : -99;
+        // the landscape check waits for 3 s of game time (a fast graphics card makes many frames in a moment)
+        static int landCheckAt = 0; if (frame > 203 && !landCheckAt && ed.game && ed.game->gameTime() >= 3.0) landCheckAt = frame;
+        if (frame > 203 && !landCheckAt && frame > 2400) landCheckAt = frame;
+        if (landCheckAt && frame == landCheckAt) { glm::vec3 pp = ed.game ? ed.game->playerPos() : glm::vec3(0); pge::Actor* la = ed.actor(landId); float gy = la ? la->land->heightAt(pp.x, pp.z) : -99;
           check(ed.game && std::abs(pp.y - 0.9f - gy) < 0.3f, "Play: the mannequin stands on the landscape (feet " + std::to_string(pp.y - 0.9f) + ", ground " + std::to_string(gy) + ")"); ed.shotFile = mtest + "/landscape-play.bmp"; }
-        if (frame == 244) { ed.stopPlay(); }
-        if (frame == 248) { check(ed.packageOk, "Package"); check(fs::exists(fs::u8path(ed.packageDir) / "Models" / "TestBot.glb") && fs::exists(fs::u8path(ed.packageDir) / "Textures" / "Grass.png"), "the packaged game has the model and the picture");
-          check(glGetError() == GL_NO_ERROR, "no OpenGL errors");
+        if (landCheckAt && frame == landCheckAt + 4) { ed.stopPlay(); }
+        if (landCheckAt && frame == landCheckAt + 8) { check(ed.packageOk, "Package"); check(fs::exists(fs::u8path(ed.packageDir) / "Models" / "TestBot.glb") && fs::exists(fs::u8path(ed.packageDir) / "Textures" / "Grass.png"), "the packaged game has the model and the picture"); }
+        // gameplay: a car placed from Place Actors (its wheels drawn), a door on a Physics Constraint; Play: in the car, W drives it; blood and bullet holes drawn
+        static std::string carId, doorId; static glm::vec3 car0(0); static int carAt = 0, carDone = 0;
+        if (landCheckAt && frame == landCheckAt + 10) { pge::Actor* la = ed.actor(landId); float gy = la ? la->land->heightAt(4, 0) : 0;
+          glm::vec3 at(4, gy + 1.4f, 0); pge::Actor& car = ed.addActor("Vehicle", "", &at); carId = car.id;
+          check(car.vehicle.enabled && car.physics.simulate && ed.P.materials.count("M_Tire"), "Place Actors > Vehicle: a car (a body, a cabin, 4 wheels)");
+          glm::vec3 dp(-4, (la ? la->land->heightAt(-4, 0) : 0) + 1.2f, 0); pge::Actor& door = ed.addActor("StaticMesh", "Cube", &dp); door.s = {1, 2, 0.1f}; door.physics.simulate = true; door.physics.mass = 15; doorId = door.id;
+          glm::vec3 hp = dp + glm::vec3(-0.5f, 0, 0); pge::Actor& hinge = ed.addActor("PhysicsConstraint", "", &hp); hinge.joint.a = doorId; ed.sel = carId; ed.touch();
+          ed.camPos = {4, gy + 4, 9}; ed.camYaw = 0; ed.camPitch = -0.35f; ed.shotFile = mtest + "/vehicle-editor.bmp"; }
+        if (landCheckAt && frame == landCheckAt + 14) { ed.L().world.gameMode = "ThirdPerson"; for (auto& a : ed.L().actors) if (a.type == "PlayerStart") a.p = {0, 12, 8}; ed.touch(); ed.play(); }
+        if (landCheckAt && frame > landCheckAt + 14 && !carAt && ed.game && ed.game->gameTime() >= 1.5) { carAt = frame; std::string cid = ed.game->find(ed.actor(carId) ? ed.actor(carId)->name : "");
+          check(!cid.empty() && ed.game->gameplay("vehicle", cid, "{\"enter\":true}") == "1", "Play: the player gets in the car"); car0 = ed.game->worldPos(cid);
+          SDL_Event k{}; k.type = SDL_KEYDOWN; k.key.keysym.scancode = SDL_SCANCODE_W; ed.game->event(k);
+          for (int i = 0; i < 20; i++) { float x = car0.x - 3 + (i % 5) * 1.5f, z = car0.z + 2.5f + (i / 5) * 1.2f; auto h = nlohmann::json::parse(ed.game->gameplay("raycast", nlohmann::json{{"from", {x, car0.y + 20, z}}, {"to", {x, car0.y - 40, z}}, {"ignorePlayer", true}}.dump(), "").c_str(), nullptr, false);
+            if (h.is_object()) ed.game->gameplay("decal", nlohmann::json{{"position", h["p"]}, {"normal", h["n"]}, {"type", i % 3 == 0 ? "bullet" : i % 3 == 1 ? "blood" : "scorch"}, {"size", i % 3 == 0 ? 0.5 : 1.2}}.dump(), ""); } }
+        if (carAt && frame == carAt + 2) ed.shotFile = mtest + "/decals.bmp";
+        if (carAt && !carDone && ed.game && ed.game->gameTime() >= 4.5) { carDone = frame; std::string cid = ed.game->find(ed.actor(carId) ? ed.actor(carId)->name : ""); glm::vec3 p = ed.game->worldPos(cid);
+          check(glm::length(glm::vec2(p.x - car0.x, p.z - car0.z)) > 5, "…W drives it (" + std::to_string(glm::length(glm::vec2(p.x - car0.x, p.z - car0.z))) + " m)");
+          check(ed.game->decalCount() == 20, "…decals (blood, bullet holes, scorch) drawn"); ed.shotFile = mtest + "/vehicle-play.bmp"; }
+        if (carDone && frame == carDone + 4) ed.stopPlay();
+        if (carDone && frame == carDone + 8) { check(glGetError() == GL_NO_ERROR, "no OpenGL errors");
           std::ofstream o(fs::u8path(mtest + "/model-result.txt")); o << (code == 0 ? "PASS\n" : "FAIL\n") << log; for (auto& l : pge::logLines()) o << "[" << l.time << "] " << l.text << "\n"; break; }
+        if (landCheckAt && frame > landCheckAt + 6000) { check(false, "the gameplay part finished in time"); std::ofstream o(fs::u8path(mtest + "/model-result.txt")); o << "FAIL\n" << log; break; }
       }
       if (!ctest.empty()) {   // CI: the console version - its folder, the keyboard typing with the controller, a project made with it
         frame++; auto pad = [](int b, bool down = true) { SDL_Event e{}; e.type = down ? SDL_CONTROLLERBUTTONDOWN : SDL_CONTROLLERBUTTONUP; e.cbutton.button = (Uint8)b; SDL_PushEvent(&e); };

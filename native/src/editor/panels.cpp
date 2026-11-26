@@ -117,6 +117,7 @@ void Editor::addMenuItems(const glm::vec3* at) {
   section("BASIC");
   const char* basic[][2] = {{"Landscape", "Landscape"}, {"Empty Actor", "Empty"}, {"Player Start", "PlayerStart"}, {"Trigger Box", "TriggerBox"}, {"Camera Actor", "CameraActor"}, {"Text Render", "TextRender"}};
   for (auto& b : basic) if (ImGui::MenuItem(b[0])) addActor(b[1], "", at);
+  section("PHYSICS"); if (ImGui::MenuItem("Vehicle (Car)")) addActor("Vehicle", "", at); if (ImGui::MenuItem("Physics Constraint")) addActor("PhysicsConstraint", "", at); if (ImGui::MenuItem("Physics Box")) addActor("PhysicsBox", "", at);
   section("SHAPES"); for (int i = 0; i < MESH_COUNT; i++) if (ImGui::MenuItem(MESHES[i])) addActor("StaticMesh", MESHES[i], at);
   section("LIGHTS"); for (const char* t : {"DirectionalLight", "PointLight", "SpotLight", "ReflectionCapture"}) if (ImGui::MenuItem(actorTypeLabel(t))) addActor(t, "", at);
 }
@@ -401,8 +402,53 @@ void Editor::drawDetails() {
       rowLabel("Simulate Physics"); ch |= ImGui::Checkbox("##sim", &a->physics.simulate);
       rowLabel("Mass (kg)"); ImGui::BeginDisabled(!a->physics.simulate); ch |= ImGui::DragFloat("##mass", &a->physics.mass, 0.1f, 0.01f, 10000.f, "%.2f"); ImGui::EndDisabled();
       rowLabel("Collision"); ch |= ImGui::Checkbox("##col", &a->physics.collision);
+      if (isModelFile(a->mesh) && a->physics.simulate) { ModelRef md = model(a->mesh); if (md && !md->skins.empty()) { rowLabel(""); ImGui::TextDisabled("A character model: it falls as a ragdoll."); } }
+      ImGui::EndTable(); }
+    // a car: Unreal's Wheeled Vehicle (the player gets in with E)
+    if (ImGui::CollapsingHeader("Vehicle", a->vehicle.enabled ? ImGuiTreeNodeFlags_DefaultOpen : 0) && beginProps("vh")) { propCols(); VehicleProps& v = a->vehicle;
+      rowLabel("Is a Car"); if (ImGui::Checkbox("##ven", &v.enabled)) { ch = true; if (v.enabled && a->physics.mass < 100) a->physics.mass = 1300; if (v.enabled) a->physics.simulate = true; }
+      if (ImGui::IsItemHovered()) ImGui::SetTooltip("4 wheels from its size; it drives with W / S, A / D, Space (hand brake); E gets in and out.");
+      ImGui::BeginDisabled(!v.enabled);
+      rowLabel("Player Can Drive"); ch |= ImGui::Checkbox("##vent", &v.enterable);
+      rowLabel("Drive"); { const char* dr[] = {"Rear Wheels", "Front Wheels", "All Wheels"}; ch |= ImGui::Combo("##vdr", &v.drive, dr, 3); }
+      rowLabel("Engine Torque"); ch |= ImGui::DragFloat("##vtq", &v.torque, 5, 50, 20000, "%.0f Nm");
+      rowLabel("Max RPM"); ch |= ImGui::DragFloat("##vrpm", &v.maxRpm, 50, 1500, 20000, "%.0f");
+      rowLabel("Max Steering"); ch |= ImGui::SliderFloat("##vst", &v.maxSteer, 5, 70, "%.0f deg");
+      rowLabel("Wheel Radius"); ch |= ImGui::DragFloat("##vwr", &v.wheelRadius, 0.01f, 0.05f, 3, "%.2f m");
+      rowLabel("Wheel Width"); ch |= ImGui::DragFloat("##vww", &v.wheelWidth, 0.01f, 0.02f, 2, "%.2f m");
+      rowLabel("Suspension"); ch |= ImGui::DragFloat("##vtr", &v.travel, 0.01f, 0.05f, 2, "%.2f m travel");
+      rowLabel("Stiffness"); ch |= ImGui::DragFloat("##vsf", &v.stiffness, 0.05f, 0.3f, 6, "%.2f Hz"); if (ImGui::IsItemHovered()) ImGui::SetTooltip("How hard the springs are (1 soft .. 3 sporty)");
+      rowLabel("Axle Inset"); ch |= ImGui::SliderFloat("##vai", &v.axleInset, 0, 0.45f, "%.2f"); if (ImGui::IsItemHovered()) ImGui::SetTooltip("How far the axles are from the ends (part of its length)");
+      rowLabel("Camera Distance"); ch |= ImGui::DragFloat("##vcd", &v.camDistance, 0.1f, 2, 40, "%.1f m");
+      rowLabel("Wheel Mesh"); if (ImGui::BeginCombo("##vwm", v.wheelMesh.empty() ? "None (the model has wheels)" : v.wheelMesh.c_str())) {
+        if (ImGui::Selectable("None (the model has wheels)", v.wheelMesh.empty())) { v.wheelMesh.clear(); ch = true; } if (ImGui::Selectable("Cylinder", v.wheelMesh == "Cylinder")) { v.wheelMesh = "Cylinder"; ch = true; }
+        scanFiles(); for (auto& m : projModels) if (ImGui::Selectable(m.c_str(), v.wheelMesh == m)) { v.wheelMesh = m; ch = true; } ImGui::EndCombo(); }
+      if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drawn at each wheel, turning and steering. A wheel model has its axle along X.");
+      rowLabel("Wheel Material"); if (ImGui::BeginCombo("##vwmat", P.materials.count(v.wheelMaterial) ? v.wheelMaterial.c_str() : "Black rubber")) {
+        if (ImGui::Selectable("Black rubber", !P.materials.count(v.wheelMaterial))) { v.wheelMaterial = "M_Tire"; ch = true; }
+        for (auto& [id, m] : P.materials) if (ImGui::Selectable(id.c_str(), v.wheelMaterial == id)) { v.wheelMaterial = id; ch = true; } ImGui::EndCombo(); }
+      ImGui::EndDisabled();
       ImGui::EndTable(); }
   }
+  if (a->type == "PhysicsConstraint" && ImGui::CollapsingHeader("Constraint", ImGuiTreeNodeFlags_DefaultOpen) && beginProps("pc")) { propCols(); JointProps& c = a->joint;
+    rowLabel("Kind"); { const char* K[] = {"Hinge", "Fixed", "BallSocket", "Slider", "Distance"}; int cur = 0; for (int i = 0; i < 5; i++) if (c.kind == K[i]) cur = i;
+      if (ImGui::Combo("##pck", &cur, K, 5)) { c.kind = K[cur]; ch = true; if (cur == 3 || cur == 4) { c.min = 0; c.max = 1; } else { c.min = -90; c.max = 90; } } }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hinge: turns about the green (Y) axis (a door)\nFixed: held as it is (breakable)\nBallSocket: turns any way about the point (a chain, a lamp)\nSlider: moves along the red (X) axis (a drawer, a lift)\nDistance: keeps within Min..Max m (a rope)");
+    auto pick = [&](const char* label, const char* idn, std::string& who, bool world) { rowLabel(label); const Actor* cur = actor(who); std::string shown = cur ? cur->name : world ? "World" : "None";
+      if (ImGui::BeginCombo(idn, shown.c_str())) { if (ImGui::Selectable(world ? "World" : "None", who.empty())) { who.clear(); ch = true; }
+        for (auto& x : L().actors) if (x.type == "StaticMesh" && x.id != a->id && ImGui::Selectable((x.name + "##" + x.id).c_str(), who == x.id)) { who = x.id; ch = true; } ImGui::EndCombo(); }
+      if (ImGui::BeginDragDropTarget()) { if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("PGE_ACTOR")) { who.assign((const char*)pl->Data, pl->DataSize); ch = true; } ImGui::EndDragDropTarget(); } };
+    pick("Actor 1", "##pca", c.a, false); pick("Actor 2", "##pcb", c.b, true);
+    rowLabel(""); ImGui::TextDisabled("Actors need Collision; Simulate Physics to move.");
+    bool lin = c.kind == "Slider" || c.kind == "Distance"; bool lim = c.kind != "Fixed" && c.kind != "BallSocket";
+    if (lim) { rowLabel("Limited"); ch |= ImGui::Checkbox("##pcl", &c.limits); ImGui::BeginDisabled(!c.limits);
+      rowLabel(lin ? "Min (m)" : "Min (deg)"); ch |= ImGui::DragFloat("##pcmin", &c.min, lin ? 0.01f : 1, lin ? -100 : -180, lin ? 100 : 0, "%.2f");
+      rowLabel(lin ? "Max (m)" : "Max (deg)"); ch |= ImGui::DragFloat("##pcmax", &c.max, lin ? 0.01f : 1, lin ? -100 : 0, lin ? 100 : 180, "%.2f"); ImGui::EndDisabled(); }
+    if (c.kind == "Hinge" || c.kind == "Slider") { rowLabel(c.kind == "Hinge" ? "Motor (deg/s)" : "Motor (m/s)"); ch |= ImGui::DragFloat("##pcms", &c.motorSpeed, c.kind == "Hinge" ? 1 : 0.05f, -10000, 10000, "%.2f");
+      rowLabel("Motor Force"); ch |= ImGui::DragFloat("##pcmf", &c.motorForce, 10, 0, 1e7f, "%.0f"); if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = no motor; Nm for a hinge, N for a slider");
+      rowLabel("Friction"); ch |= ImGui::DragFloat("##pcfr", &c.friction, 1, 0, 1e6f, "%.0f"); }
+    rowLabel("Break Force"); ch |= ImGui::DragFloat("##pcbf", &c.breakForce, 50, 0, 1e8f, c.breakForce > 0 ? "%.0f N" : "Unbreakable");
+    ImGui::EndTable(); }
   if (a->isLight() && ImGui::CollapsingHeader("Light", ImGuiTreeNodeFlags_DefaultOpen) && beginProps("lt")) { propCols();
     rowLabel("Light Color"); ch |= ImGui::ColorEdit3("##lc", &a->light.color.x);
     rowLabel(a->type == "DirectionalLight" ? "Intensity (lux)" : "Intensity (cd)"); ch |= ImGui::DragFloat("##li", &a->light.intensity, a->type == "DirectionalLight" ? 0.02f : 0.5f, 0, 100000, "%.2f");
@@ -544,6 +590,7 @@ void Editor::drawPlaceActors() {
     drawIcon(dl, {p.x + h / 2, p.y + h / 2}, h * 0.32f, icon, IM_COL32(190, 190, 190, 255)); dl->AddText({p.x + h + 8, p.y + (h - ImGui::GetFontSize()) / 2}, ImGui::GetColorU32(ImGuiCol_Text), label);
     ImGui::PopID(); };
   if (ImGui::CollapsingHeader("Basic", ImGuiTreeNodeFlags_DefaultOpen)) { entry("Landscape", "Landscape", IC_Cube); entry("Empty Actor", "Empty", IC_Select); entry("Player Start", "PlayerStart", IC_Play); entry("Trigger Box", "TriggerBox", IC_Window); entry("Camera Actor", "CameraActor", IC_Window); entry("Text Render", "TextRender", IC_Script); }
+  if (ImGui::CollapsingHeader("Physics", ImGuiTreeNodeFlags_DefaultOpen)) { entry("Vehicle (Car)", "Vehicle", IC_Play); entry("Physics Constraint", "PhysicsConstraint", IC_Gear); entry("Physics Box", "PhysicsBox", IC_Cube); }
   if (ImGui::CollapsingHeader("Lights", ImGuiTreeNodeFlags_DefaultOpen)) for (const char* t : {"DirectionalLight", "PointLight", "SpotLight", "ReflectionCapture"}) entry(actorTypeLabel(t), t, IC_Gear);
   if (ImGui::CollapsingHeader("Shapes", ImGuiTreeNodeFlags_DefaultOpen)) for (int i = 0; i < MESH_COUNT; i++) entry(MESHES[i], std::string("StaticMesh|") + MESHES[i], IC_Cube);
   ImGui::End();

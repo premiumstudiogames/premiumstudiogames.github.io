@@ -17,6 +17,8 @@
 #include "audio.h"
 #include "models.h"
 #include "navigation.h"
+#include "assets.h"
+#include <nlohmann/json.hpp>
 #include <SDL.h>
 
 struct ImDrawList;
@@ -30,6 +32,9 @@ void addActorVisual(Frame& f, const Project& p, const Actor& a, const glm::mat4&
                     const glm::vec3* colorOverride = nullptr, const std::string* textOverride = nullptr, const Renderer* r = nullptr, const AnimPlay* anim = nullptr);
 // a material's colours, numbers and pictures on a draw
 void applyMaterial(DrawItem& d, const Material& m);
+// a car's 4 wheels from its size and Vehicle settings (body space, m); one wheel's look (local: a Y cylinder → body space)
+void vehicleWheels(const Actor& a, const glm::vec3& scale, std::vector<Physics::WheelDesc>& out);
+void addWheelDraw(Frame& f, const Project& P, const Actor& a, const glm::mat4& bodyW, const glm::mat4& local, unsigned id);
 std::string keyCode(SDL_Scancode sc);              // SDL scancode → "KeyW", "Space", ...
 
 class Game : public ScriptWorld {
@@ -112,6 +117,10 @@ public:
   void setQuality(const std::string& json) override { quality_ = json; qualityVer_++; }   // world.setQuality: the player applies it to the renderer
   const std::string& quality(int& ver) const { ver = qualityVer_; return quality_; }
   std::string net(const std::string& op, const std::string& a, const std::string& b) override;   // net.*: playing together (net.h)
+  std::string gameplay(const std::string& op, const std::string& a, const std::string& b) override;   // gameplay.cpp
+  const std::string& driving() const { return driving_; }   // the car the player is in ("" = none)
+  int decalCount() const { return (int)decals_.size(); }
+  float playerHealth() const { return health_; }
   void netPump();   // the network keeps going while the game is paused (the player calls it every frame)   // world.setSky: sky and fog colours, light, the sun's direction and colour (time of day, weather)
 
 private:
@@ -120,9 +129,42 @@ private:
     glm::vec3 color{1}; uint32_t body = NO_BODY; Motion motion = Motion::Static; int beh = -1;
     glm::mat4 lastWorld{1}; glm::vec3 bodyScale{1};
     AnimPlay anim;   // a model's animation
+    std::string bone;                 // attached to a bone of its parent's model
+    bool welded = false;              // its collision is part of its parent's moving body
+    uint32_t vehicle = NO_BODY; float vin[4] = {0, 0, 0, 0}; float steer = 0; double flipSince = -1;   // a car: the physics' vehicle, the input (throttle, steer, brake, handbrake)
+    struct RagPart { int node; uint32_t body; glm::mat4 offset; };
+    std::vector<RagPart> rag; glm::vec3 ragFrom{0};   // a ragdoll: a body per bone; where the actor is from its first part
+    uint32_t joint = NO_BODY;         // a Physics Constraint's joint
     struct Walk { bool active = false; std::vector<glm::vec3> path; size_t i = 1; float speed = 3.5f, accept = 0.5f, foot = 0; bool turn = true, player = false; std::string goal, result; glm::vec3 goalAt{0}; double repath = 0; } walk;   // AI Move To
   };
   NavGrid nav_; bool navBuilt_ = false;
+  // gameplay (gameplay.cpp)
+  struct Decal { glm::mat4 m{1}; std::string actor; uint32_t body = NO_BODY; const Texture* tex = nullptr; glm::vec3 color{1}; float rough = 0.6f, born = 0, life = 0, opacity = 1; };
+  std::vector<Decal> decals_;
+  struct Grab { uint32_t body = NO_BODY; glm::vec3 local{0}, target{0}; float strength = 1; bool targetSet = false; };
+  std::map<int, Grab> grabs_; int nextGrab_ = 1;
+  std::map<uint32_t, std::string> jointOwner_;   // joints made by Physics Constraint actors (their break events)
+  std::string driving_; bool driveInside_ = false; double driveIdle_ = 0;
+  float health_ = 100, maxHealth_ = 100; bool dead_ = false; double respawnAt_ = -1; std::string vehicleKey_ = "KeyE";
+  uint64_t frameNo_ = 0; mutable glm::mat4 camW_{1}; mutable bool camSet_ = false;
+  glm::mat4 playerMatrix() const;                                  // where the player stands, facing where they face
+  glm::mat4 boneWorld(const Obj& o, const std::string& bone) const;   // a bone of a model actor (no scale)
+  void cameraCompute(glm::vec3& pos, glm::mat4& view) const;
+  void startGameplay();                                            // joints and vehicles of the level
+  void gameplayFrame(float dt, bool post);                         // vehicles, grabs (before the physics step); joints, ragdolls, the driver, decals (after)
+  glm::mat4 playerBone(const std::string& bone) const;
+  void rebuildBody(Obj& o);
+  std::string hint_;                                               // "[E] Drive", the car's speed
+  void addVehicle(Obj& o);
+  void vehicleLayout(const Obj& o, std::vector<Physics::WheelDesc>& w) const;
+  bool enterVehicle(Obj& v); void exitVehicle();
+  bool ragdoll(Obj& o, const glm::vec3& impulse, const glm::vec3& point, bool hasPoint);
+  void damage(const std::string& target, float amount, nlohmann::json info);
+  void addDecal(const nlohmann::json& o);
+  void drawGameplay(Frame& f) const;
+  std::string attach(Obj& o, const nlohmann::json& j);
+  void detach(Obj& o, const nlohmann::json& j);
+  Obj* objOfBody(uint32_t body) const;
   // Third Person: the player's character, its animations chosen by how it moves (idle, walk, run, jump, fall), turning where it goes
   std::string pModel_, pAnimName_; AnimPlay pAnim_; float charYaw_ = 0; void playerAnimFrame(float dt);
   void ensureNav();
