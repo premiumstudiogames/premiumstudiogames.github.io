@@ -389,7 +389,8 @@ void Game::buildFrame(Frame& f, Camera& cam, float aspect) const {
       d.model = glm::rotate(glm::translate(glm::mat4(1), c), face, AY); d.color = glm::vec3(0.227f, 0.482f, 1.f); d.rough = 0.5f; f.draws.push_back(d); }
     glm::vec3 back = glm::vec3(std::sin(yaw_) * std::cos(pitch_), -std::sin(pitch_), std::cos(yaw_) * std::cos(pitch_)) * 4.5f;
     glm::vec3 cp = eye + back + glm::vec3(0, 0.3f, 0);
-    { Physics::Hit h; if (phys_->rayCast(eye, cp, h, true)) cp = eye + (cp - eye) * std::max(0.f, h.fraction - 0.06f); }   // like a spring arm: the camera comes in front of walls
+    { Physics::Hit h; float len = glm::length(cp - eye);   // like a spring arm: the camera comes in front of walls (never onto the player's head: the view needs a direction)
+      if (phys_->rayCast(eye, cp, h, true)) cp = eye + (cp - eye) / len * std::max(0.35f, len * h.fraction - 0.25f); }
     cam.view = glm::lookAt(cp, eye, AY); cam.pos = cp;
   } else { camW = glm::translate(glm::mat4(1), eye) * glm::mat4_cast(quatYXZ({pitch_, yaw_, 0})); cam.view = glm::inverse(camW); cam.pos = eye; }
   cam.proj = glm::perspective(glm::radians(glm::clamp(level_.world.fov, 20.f, 150.f)), std::max(aspect, 0.01f), 0.05f, 2000.f);

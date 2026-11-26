@@ -529,7 +529,11 @@ void Renderer::captureProbes(const Frame& f) {
   glBindFramebuffer(GL_FRAMEBUFFER, 0); glBindTexture(GL_TEXTURE_CUBE_MAP, pb.tex); glGenerateMipmap(GL_TEXTURE_CUBE_MAP); glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
   capturing_ = false; quality = keepQ; drawCalls = keepDc; triangles = keepTr; pb.ready = true; pb.version = f.probeVersion;
 }
+static bool finiteM(const glm::mat4& m) { for (int c = 0; c < 4; c++) for (int r = 0; r < 4; r++) if (!std::isfinite(m[c][r])) return false; return true; }
 void Renderer::render(const Frame& f, const Camera& cam, int w, int h, const RenderTarget* rt) {
+  if (!finiteM(cam.view) || !finiteM(cam.proj) || !std::isfinite(cam.pos.x + cam.pos.y + cam.pos.z)) {   // a broken camera: no picture this frame (some drivers stop on NaN)
+    static bool told = false; if (!told) { told = true; logMsg("warning: renderer: the camera's view isn't a number this frame (skipped)", LogKind::Warn); }
+    glBindFramebuffer(GL_FRAMEBUFFER, rt ? rt->fbo : 0); glViewport(0, 0, std::max(w, 1), std::max(h, 1)); glClearColor(0, 0, 0, 1); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); return; }
   if (!capturing_ && !f.probes.empty() && f.viewMode == VM_Lit) captureProbes(f);
   drawCalls = triangles = 0; w = std::max(w, 1); h = std::max(h, 1);
   unsigned target = rt ? rt->fbo : 0;
