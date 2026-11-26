@@ -215,9 +215,16 @@ int main(int argc, char** argv) {
         if (frame == 199) { pge::Actor* la = ed.actor(landId); float h1 = la ? la->land->heightAt(brushAt.x, brushAt.z) : 0;
           check(la && h1 > hBefore + 0.3f, "Landscape: holding the mouse on it raises the ground under the brush (" + std::to_string(hBefore) + " → " + std::to_string(h1) + ")"); check(ed.canUndo(), "…one undo step");
           ed.landTool = -1; ed.shotFile = mtest + "/landscape.bmp"; }
-        if (frame == 203) { ed.L().world.gameMode = "ThirdPerson"; for (auto& a : ed.L().actors) if (a.type == "PlayerStart") a.p = {0, 12, 8}; ed.touch(); ed.play(); }
+        if (frame == 203) { if (const char* v = std::getenv("PGE_MT_VARIANT")) { std::string vv = v;   // CI: which part of a Play on a landscape stops a driver
+            if (vv.find("noprobe") != std::string::npos) for (auto it = ed.L().actors.begin(); it != ed.L().actors.end();) { if (it->type == "ReflectionCapture") it = ed.L().actors.erase(it); else ++it; }
+            if (vv.find("nomsaa") != std::string::npos) ed.R.quality.msaa = 0;
+            if (vv.find("noshadow") != std::string::npos) ed.R.quality.shadowDistance = 0;
+            if (vv.find("nopost") != std::string::npos) { ed.R.quality.ssao = false; ed.R.quality.bloom = false; }
+            if (vv.find("noland") != std::string::npos) for (auto it = ed.L().actors.begin(); it != ed.L().actors.end();) { if (it->type == "Landscape") it = ed.L().actors.erase(it); else ++it; }
+            std::fprintf(stderr, "variant %s\n", v); }
+          ed.L().world.gameMode = std::getenv("PGE_MT_FP") ? "FirstPerson" : "ThirdPerson"; for (auto& a : ed.L().actors) if (a.type == "PlayerStart") a.p = {0, 12, 8}; ed.touch(); ed.play(); }
         if (frame > 203 && frame < 240 && ed.game && std::getenv("PGE_DEBUG_PLAY")) { glm::vec3 pp = ed.game->playerPos(), cp = ed.game->cameraPos(); std::fprintf(stderr, "f%d player %.3f %.3f %.3f cam %.3f %.3f %.3f t=%u\n", frame, pp.x, pp.y, pp.z, cp.x, cp.y, cp.z, SDL_GetTicks()); }
-        if (std::getenv("PGE_DEBUG_PLAY")) std::fprintf(stderr, "frame %d t=%u draws=%d tris=%d\n", frame, SDL_GetTicks(), ed.R.drawCalls, ed.R.triangles);
+        if (std::getenv("PGE_DEBUG_PLAY") || (std::getenv("PGE_MT_VARIANT") && frame > 200)) { std::fprintf(stderr, "frame %d t=%u draws=%d tris=%d\n", frame, SDL_GetTicks(), ed.R.drawCalls, ed.R.triangles); std::fflush(stderr); }
         if (frame == 240) { glm::vec3 pp = ed.game ? ed.game->playerPos() : glm::vec3(0); pge::Actor* la = ed.actor(landId); float gy = la ? la->land->heightAt(pp.x, pp.z) : -99;
           check(ed.game && std::abs(pp.y - 0.9f - gy) < 0.3f, "Play: the mannequin stands on the landscape (feet " + std::to_string(pp.y - 0.9f) + ", ground " + std::to_string(gy) + ")"); ed.shotFile = mtest + "/landscape-play.bmp"; }
         if (frame == 244) { ed.stopPlay(); }
