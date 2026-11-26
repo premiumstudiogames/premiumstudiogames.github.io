@@ -282,7 +282,7 @@ void Editor::drawViewport() {
     if (ImGui::BeginPopup("vpCam")) { section("PERSPECTIVE"); if (ImGui::MenuItem("Perspective", nullptr, view == View::Perspective)) view = View::Perspective; section("ORTHOGRAPHIC");
       for (int i = 1; i < 4; i++) if (ImGui::MenuItem(views[i], nullptr, (int)view == i)) { view = (View)i; if (Actor* a = actor(sel)) orthoCenter = glm::vec3(worldOf(*a)[3]); } ImGui::EndPopup(); }
     if (ImGui::BeginPopup("vpMode")) { section("VIEW MODE"); for (int i = 0; i < 4; i++) if (ImGui::MenuItem(modes[i], nullptr, viewMode == i)) viewMode = i; ImGui::EndPopup(); }
-    if (ImGui::BeginPopup("vpShow")) { ImGui::MenuItem("Grid", nullptr, &showGrid); ImGui::MenuItem("Editor Icons", nullptr, &showIcons); ImGui::MenuItem("Stats (FPS)", nullptr, &showStats); ImGui::EndPopup(); }
+    if (ImGui::BeginPopup("vpShow")) { ImGui::MenuItem("Grid", nullptr, &showGrid); ImGui::MenuItem("Editor Icons", nullptr, &showIcons); ImGui::MenuItem("Stats (FPS)", nullptr, &showStats); ImGui::MenuItem("Navigation", "P", &showNav); ImGui::EndPopup(); }
     // right side: transform tools and snapping
     float rw = 430; ImGui::SetCursorScreenPos({pos.x + size.x - rw, pos.y + 6});
     auto tog = [&](const char* l, bool on, const char* tip) { ImGui::PushStyleColor(ImGuiCol_Button, on ? IM_COL32(0, 112, 224, 255) : IM_COL32(20, 20, 20, 200)); bool r = ImGui::Button(l); ImGui::PopStyleColor(); if (tip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip); return r; };
@@ -474,6 +474,15 @@ void Editor::drawWorldSettings() {
     rowLabel("Tint"); ch |= ImGui::ColorEdit3("##ptn", &q.tint.x);
     rowLabel(""); if (ImGui::Button("Reset")) { q = PostProcess(); ch = true; } ImGui::SameLine(); if (ImGui::Button("Found Footage")) { q = PostProcess(); q.vhs = 0.6f; q.grain = 0.35f; q.vignette = 0.45f; q.chromatic = 0.3f; q.scanlines = 0.25f; q.saturation = 0.8f; ch = true; }
     ImGui::SameLine(); if (ImGui::Button("Cinematic")) { q = PostProcess(); q.vignette = 0.35f; q.grain = 0.12f; q.contrast = 1.12f; q.temperature = 0.15f; q.bloom = 1.4f; ch = true; }
+    ImGui::EndTable(); }
+  if (ImGui::CollapsingHeader("Navigation (AI)") && beginProps("nv")) { propCols(); NavSettings& n = w.nav;
+    rowLabel("Show (P)"); ImGui::Checkbox("##nvs", &showNav);
+    rowLabel("Agent Radius"); ch |= ImGui::DragFloat("##nvr", &n.radius, 0.01f, 0.05f, 5, "%.2f m"); if (ImGui::IsItemHovered()) ImGui::SetTooltip("How wide the characters are: they keep this far from walls.");
+    rowLabel("Agent Height"); ch |= ImGui::DragFloat("##nvh", &n.height, 0.02f, 0.2f, 20, "%.2f m"); if (ImGui::IsItemHovered()) ImGui::SetTooltip("They don't walk under anything lower than this.");
+    rowLabel("Max Step Height"); ch |= ImGui::DragFloat("##nvst", &n.step, 0.01f, 0.f, 3, "%.2f m");
+    rowLabel("Max Slope"); ch |= ImGui::SliderFloat("##nvsl", &n.maxSlope, 5, 85, "%.0f deg");
+    rowLabel("Cell Size"); ch |= ImGui::DragFloat("##nvc", &n.cell, 0.01f, 0.1f, 4, "%.2f m"); if (ImGui::IsItemHovered()) ImGui::SetTooltip("Smaller = finer (narrow doors), slower to make. Big levels get coarser cells by themselves.");
+    rowLabel(""); ImGui::TextDisabled("Scripts: self.moveTo(...). Blueprints: AI Move To.");
     ImGui::EndTable(); }
   if (ImGui::CollapsingHeader("Physics", ImGuiTreeNodeFlags_DefaultOpen) && beginProps("wp")) { propCols();
     rowLabel("Gravity Z"); ch |= ImGui::DragFloat("##grav", &w.gravity, 0.05f, -100, 100, "%.2f m/s2");

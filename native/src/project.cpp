@@ -198,7 +198,7 @@ Project makeTemplate(const std::string& kind, const std::string& name) {
     { Actor ps = newActor("PlayerStart", "PlayerStart"); ps.p = {0, 1, 10}; A.push_back(ps); }
     float W[4][4] = {{0, -15, 30, 1}, {0, 15, 30, 1}, {-15, 0, 1, 30}, {15, 0, 1, 30}};
     for (auto& w : W) A.push_back(mesh("Wall", "Cube", {w[0], 1.5f, w[1]}, {w[2], 3, w[3]}, "M_Wall"));
-    A.push_back(mesh("Ramp", "Wedge", {-7, 1, -4}, {4, 2, 4}, "M_Wall", {0, 90, 0}));
+    A.push_back(mesh("Ramp", "Wedge", {-7, 1, -4}, {4, 2, 4}, "M_Wall", {0, -90, 0}));   // its high end meets the platform
     A.push_back(mesh("Platform", "Cube", {-7, 1, -9}, {4, 2, 6}, "M_Wall"));
     for (int i = 0; i < 4; i++) A.push_back(mesh("Step", "Cube", {7, 0.25f + i * 0.5f, -2.f - i}, {3, 0.5f + i, 1}, "M_Wall"));
     for (int i = 0; i < 6; i++) { Actor c = mesh("PhysicsCube", "Cube", {-2 + (i % 3) * 1.1f, 0.5f + (i / 3) * 1.05f, -2}, glm::vec3(1), "M_Accent"); c.physics.simulate = true; c.physics.mass = 5; A.push_back(c); }
@@ -255,6 +255,7 @@ static json worldJson(const WorldSettings& w) {
           {"gravity", w.gravity}, {"killZ", w.killZ}, {"fog", w.fog}, {"fogColor", colorHex(w.fogColor)}, {"fogDensity", w.fogDensity}, {"fov", w.fov}};
   if (!w.post.isDefault()) { const PostProcess& q = w.post; j["post"] = {{"vignette", q.vignette}, {"grain", q.grain}, {"chromatic", q.chromatic}, {"scanlines", q.scanlines}, {"vhs", q.vhs},
       {"saturation", q.saturation}, {"contrast", q.contrast}, {"temperature", q.temperature}, {"bloom", q.bloom}, {"tint", colorHex(q.tint)}}; }
+  if (!w.nav.isDefault()) j["navigation"] = {{"radius", w.nav.radius}, {"height", w.nav.height}, {"step", w.nav.step}, {"maxSlope", w.nav.maxSlope}, {"cell", w.nav.cell}};
   return j;
 }
 static WorldSettings worldFrom(const json& j) {
@@ -265,6 +266,8 @@ static WorldSettings worldFrom(const json& j) {
   if (j.contains("post") && j["post"].is_object()) { const json& q = j["post"]; PostProcess& o = w.post; o.vignette = get<float>(q, "vignette", 0); o.grain = get<float>(q, "grain", 0); o.chromatic = get<float>(q, "chromatic", 0);
     o.scanlines = get<float>(q, "scanlines", 0); o.vhs = get<float>(q, "vhs", 0); o.saturation = get<float>(q, "saturation", 1); o.contrast = get<float>(q, "contrast", 1); o.temperature = get<float>(q, "temperature", 0);
     o.bloom = get<float>(q, "bloom", 1); o.tint = col(q, "tint", glm::vec3(1)); }
+  if (j.contains("navigation") && j["navigation"].is_object()) { const json& q = j["navigation"]; NavSettings& n = w.nav; n.radius = get<float>(q, "radius", n.radius); n.height = get<float>(q, "height", n.height);
+    n.step = get<float>(q, "step", n.step); n.maxSlope = get<float>(q, "maxSlope", n.maxSlope); n.cell = get<float>(q, "cell", n.cell); }
   return w;
 }
 static json levelJ(const Level& l) { json a = json::array(); for (auto& x : l.actors) a.push_back(actorJson(x)); return {{"actors", a}, {"world", worldJson(l.world)}}; }

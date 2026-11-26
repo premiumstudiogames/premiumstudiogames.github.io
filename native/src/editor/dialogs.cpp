@@ -22,6 +22,7 @@ Scripts are JavaScript. Add one to an actor in Details > Script. These functions
   function onHit(other) { }       a physics body hit this actor (needs collision)
   function onKey(code) { }        a key was pressed, e.g. 'KeyE', 'Space', 'Digit1'
   function onAnimationEnd(name) { }   a model's animation that doesn't loop reached its end
+  function onMoveFinished(ok) { }     this actor's walk (moveTo) ended: ok = it got there
 
 self  - the actor the script is on
   self.name, self.tags, self.id
@@ -44,10 +45,15 @@ self  - the actor the script is on
   self.animations                ['Idle', 'Walk', 'Run', ...]
   self.animationSpeed = 2        twice as fast (-1 = backwards)
   self.bone('Hand_R')            { position, rotation } of a bone (joint) in the world: hold things, shoot from a muzzle
+  walking (AI) on the level's floors, round walls, up ramps and stairs:
+  self.moveTo([x, y, z] | actor | world.player, { speed: 3.5, acceptance: 0.5, turn: true })   false if there's no way; an actor is followed
+  self.stopMoving()   self.isMoving   self.moveResult ('success', 'fail', 'stopped')
 
 world
   world.time                     seconds since the game started
   world.spawn('Models/Robot.glb', { position: [0, 0, 5], animation: 'Idle' })   a model of the project (or 'Cube', 'Sphere', ...)
+  world.findPath(from, to)       the way between two places (or actors / the player): [Vec3, ...] or null
+  world.navigation.rebuild()     after the level changed (walls moved, built, broken); world.navigation.info
   world.setPostProcess({ vignette: 0.5, grain: 0.3, vhs: 0.6, chromatic: 0.2, scanlines: 0.3, saturation: 0.8, contrast: 1.1, temperature: -0.3, bloom: 2, tint: '#ffeedd' })
                                  camera effects (0..1; saturation / contrast / bloom 1 = as is); only what you give changes; null = all off. world.postProcess = now
   world.vars                     an object to keep your own values (score, ...)
@@ -303,6 +309,9 @@ static const char* DOCS_TEXT = R"(PREMIUM ENGINE - QUICK START
    it from Content Browser > Models. Details > Animation picks the one that plays from the start; scripts and Blueprints play others.
    A model changed on disk (exported again) is loaded again by itself. Pictures go into Textures the same way.
    Export from Blender: File > Export > glTF 2.0 (.glb), +Y Up, with Animation; no Draco compression.
+5d. AI: characters walk on the level's floors with self.moveTo (scripts) or AI Move To / AI Move To Actor (Blueprints): round walls,
+   up ramps and stairs, following the player. The floors come from the still meshes with collision; World Settings > Navigation sets
+   the characters' size, step and slope. Show > Navigation (P) shows where they can walk.
 5c. Camera effects: World Settings > Post Process - vignette, film grain, chromatic aberration, VHS tape, scanlines, saturation, contrast,
    temperature, bloom, tint (Found Footage and Cinematic presets). Scripts: world.setPostProcess; Blueprints: Set Camera Effect.
 6. Scripts: Tools > New Script, or Details > Script > New Script. Press F7 to compile. See Help > Script API Reference.

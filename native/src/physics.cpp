@@ -19,6 +19,10 @@
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
+#include <Jolt/Physics/Collision/CollideShape.h>
+#include <Jolt/Physics/Collision/ObjectLayer.h>
+#include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyFilter.h>
 #include <mutex>
@@ -191,6 +195,27 @@ bool Physics::rayHit(const glm::vec3& from, const glm::vec3& to, uint32_t ignore
   IgnoreSingleBodyFilter f(BodyID(ignore == NO_BODY ? BodyID::cInvalidBodyID : ignore));
   return d->sys->GetNarrowPhaseQuery().CastRay(ray, hit, {}, {}, f);
 }
+bool Physics::rayCast(const glm::vec3& from, const glm::vec3& to, Hit& out, bool staticOnly, uint32_t ignore) const {
+  if (!d->sys) return false;
+  RRayCast ray{RVec3(from.x, from.y, from.z), J(to - from)}; RayCastSettings rs; rs.mTreatConvexAsSolid = false; rs.mBackFaceModeTriangles = EBackFaceMode::IgnoreBackFaces; rs.mBackFaceModeConvex = EBackFaceMode::IgnoreBackFaces;
+  ClosestHitCollisionCollector<CastRayCollector> col; IgnoreSingleBodyFilter bf(BodyID(ignore == NO_BODY ? BodyID::cInvalidBodyID : ignore));
+  SpecifiedObjectLayerFilter only(Layers::STATIC); ObjectLayerFilter all;
+  d->sys->GetNarrowPhaseQuery().CastRay(ray, rs, col, {}, staticOnly ? (const ObjectLayerFilter&)only : all, bf);
+  if (!col.HadHit()) return false;
+  out.fraction = col.mHit.mFraction; RVec3 p = ray.GetPointOnRay(col.mHit.mFraction); out.point = {(float)p.GetX(), (float)p.GetY(), (float)p.GetZ()};
+  BodyLockRead lock(d->sys->GetBodyLockInterface(), col.mHit.mBodyID);
+  if (lock.Succeeded()) { const Body& b = lock.GetBody(); out.normal = G(b.GetWorldSpaceSurfaceNormal(col.mHit.mSubShapeID2, p)); out.userData = b.GetUserData();
+    if (glm::dot(out.normal, to - from) > 0) out.normal = -out.normal; }
+  return true;
+}
+bool Physics::boxOverlaps(const glm::vec3& c, const glm::vec3& h, bool staticOnly) const {
+  if (!d->sys) return false;
+  BoxShape box(J(glm::max(h, glm::vec3(0.01f)))); box.SetEmbedded(); CollideShapeSettings cs; cs.mActiveEdgeMode = EActiveEdgeMode::CollideOnlyWithActive; cs.mBackFaceMode = EBackFaceMode::CollideWithBackFaces;
+  AnyHitCollisionCollector<CollideShapeCollector> col; SpecifiedObjectLayerFilter only(Layers::STATIC); ObjectLayerFilter all;
+  d->sys->GetNarrowPhaseQuery().CollideShape(&box, Vec3::sReplicate(1), RMat44::sTranslation(RVec3(c.x, c.y, c.z)), cs, RVec3::sZero(), col, {}, staticOnly ? (const ObjectLayerFilter&)only : all);
+  return col.HadHit();
+}
+void Physics::optimize() { if (d->sys) d->sys->OptimizeBroadPhase(); }
 void Physics::setGravity(float y) { d->sys->SetGravity(Vec3(0, y, 0)); }
 std::vector<std::pair<uint64_t, uint64_t>> Physics::takeContacts() { std::lock_guard<std::mutex> g(d->contacts.m); auto r = std::move(d->contacts.list); d->contacts.list.clear(); return r; }
 int Physics::bodyCount() const { return d->sys ? (int)d->sys->GetNumBodies() : 0; }

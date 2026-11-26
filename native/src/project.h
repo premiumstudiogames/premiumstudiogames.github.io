@@ -38,11 +38,14 @@ struct PostProcess {
   float vignette = 0, grain = 0, chromatic = 0, scanlines = 0, vhs = 0, saturation = 1, contrast = 1, temperature = 0, bloom = 1; glm::vec3 tint{1};
   bool isDefault() const { return vignette == 0 && grain == 0 && chromatic == 0 && scanlines == 0 && vhs == 0 && saturation == 1 && contrast == 1 && temperature == 0 && bloom == 1 && tint == glm::vec3(1); }
 };
+// the characters that walk with AI Move To: their size, the highest step, the steepest slope; how fine the grid is (m)
+struct NavSettings { float radius = 0.35f, height = 1.8f, step = 0.45f, maxSlope = 45, cell = 0.5f;
+  bool isDefault() const { return radius == 0.35f && height == 1.8f && step == 0.45f && maxSlope == 45 && cell == 0.5f; } };
 struct WorldSettings {
   std::string gameMode = "FirstPerson";
   glm::vec3 sky{0.56f, 0.72f, 0.88f}, skyLight{0.87f, 0.92f, 1.0f}, groundLight{0.23f, 0.25f, 0.29f}, fogColor{0.56f, 0.72f, 0.88f};
   float ambient = 0.8f, exposure = 1, gravity = -9.81f, killZ = -30, fogDensity = 0.01f, fov = 75;
-  bool fog = false; PostProcess post;
+  bool fog = false; PostProcess post; NavSettings nav;
   // a sky drawn behind everything (scripts, world.setSky): colour at the top (sky is the horizon), the sun's disc and glow,
   // the moon, stars. Not saved with the level; skyTop.x < 0 = a flat sky of the sky colour (as before)
   glm::vec3 skyTop{-1, -1, -1}, sunDisc{0}, sunDiscDir{0, 1, 0}; float sunSize = 0.035f, moon = 0, stars = 0;

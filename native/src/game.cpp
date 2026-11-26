@@ -141,7 +141,7 @@ bool Game::start() {
   setAssetRoot(project_.path.empty() ? std::string() : std::filesystem::u8path(project_.path).parent_path().u8string());
   level_ = *L; time_ = 0; restartRequested_ = false; tune_ = Tune(); sunSet_ = false; mouseSens_ = 1; grounded_ = running_ = sneaking_ = tapRun_ = false;
   for (auto& a : level_.actors) { auto o = std::make_unique<Obj>(); o->a = a; o->p = a.p; o->r = glm::radians(a.r); o->s = a.s; o->visible = a.visible; byId_[a.id] = o.get(); objs_.push_back(std::move(o)); }
-  phys_.reset(new Physics()); phys_->init(level_.world.gravity); gravity_ = level_.world.gravity; swimming_ = false;
+  phys_.reset(new Physics()); phys_->init(level_.world.gravity); gravity_ = level_.world.gravity; swimming_ = false; nav_.clear(); navBuilt_ = false;
   for (size_t i = 0; i < objs_.size(); i++) { Obj& o = *objs_[i]; if (o.a.type == "StaticMesh" && (o.a.physics.collision || o.a.physics.simulate)) addBody(o); }
   // player
   mode_ = level_.world.gameMode; if (mode_ != "ThirdPerson" && mode_ != "Spectator") mode_ = "FirstPerson";
@@ -341,6 +341,7 @@ void Game::update(float dt) {
     if (glm::any(glm::greaterThan(glm::abs(sc - o.bodyScale), glm::vec3(1e-4f)))) { phys_->setShape(o.body, o.a.mesh, sc); o.bodyScale = sc; }
     if (o.motion == Motion::Kinematic) phys_->moveKinematic(o.body, pos, q); else phys_->teleport(o.body, pos, q);
     o.lastWorld = W; }
+  walkFrame(dt);
   // models' animations move on; a script hears when one that doesn't loop reaches its end
   for (size_t i = 0; i < objs_.size(); i++) { Obj& o = *objs_[i]; if (!o.alive || o.anim.anim < 0) continue; ModelRef m = model(o.a.mesh); if (!m) continue;
     if (o.anim.advance(*m, dt) && o.anim.anim >= 0 && o.anim.anim < (int)m->anims.size()) scripts_->call(o.beh, EV_AnimEnd, 0, m->anims[o.anim.anim].name); }
@@ -469,6 +470,75 @@ std::string Game::spawn(const std::string& mesh, const std::string& opts) {
   if (!a.anim.empty()) { ModelRef m = model(a.mesh); int ai = m ? m->anim(a.anim) : -1; if (ai >= 0) ref.anim.play(ai, true, 1, 0); }
   if (o.contains("script") && o["script"].is_string()) { auto it = project_.scripts.find(o["script"]); if (it != project_.scripts.end()) { ref.a.script = it->first; ref.beh = scripts_->attach(a.id, a.name, it->second.name, it->second.code); scripts_->call(ref.beh, EV_Start); } }
   return a.id;
+}
+/* ------------------------------------------------------------------ walking (AI Move To) */
+// the level's floors, made the first time something walks or asks for a way (levels without AI pay nothing)
+void Game::ensureNav() {
+  if (navBuilt_ || !phys_) return; navBuilt_ = true;
+  glm::vec3 mn(1e9f), mx(-1e9f); int n = 0;
+  for (auto& op : objs_) { const Obj& o = *op; if (!o.alive || o.body == NO_BODY || o.motion != Motion::Static) continue;
+    const MeshData& md = meshShape(o.a.mesh); glm::mat4 W = world(o);
+    for (int k = 0; k < 8; k++) { glm::vec3 c((k & 1) ? md.bmax.x : md.bmin.x, (k & 2) ? md.bmax.y : md.bmin.y, (k & 4) ? md.bmax.z : md.bmin.z), w = glm::vec3(W * glm::vec4(c, 1)); mn = glm::min(mn, w); mx = glm::max(mx, w); } n++; }
+  if (vox_) { glm::vec3 p = playerPos(); mn = glm::min(mn, p - glm::vec3(48, 40, 48)); mx = glm::max(mx, p + glm::vec3(48, 40, 48)); n++; }   // a block world: around the player
+  if (!n) { logMsg("warning: navigation: the level has no still meshes with collision to walk on", LogKind::Warn); return; }
+  mn = glm::max(mn, glm::vec3(-2000)); mx = glm::min(mx, glm::vec3(2000)); phys_->optimize();
+  nav_.build(*phys_, mn, mx, level_.world.nav);
+  char b[160]; std::snprintf(b, sizeof b, "Navigation: %d walkable cells of %.2f m (%.0f ms)", nav_.walkable(), nav_.cell(), nav_.buildMs()); logMsg(b);
+}
+static float footOf(const Actor& a, const glm::vec3& scale) { if (a.type != "StaticMesh") return 0; return -meshShape(a.mesh).bmin.y * std::abs(scale.y); }   // the actor's origin above its feet
+bool Game::walkPath(Obj& o, const glm::vec3& goal) {
+  ensureNav(); auto& w = o.walk; glm::vec3 feet = o.p - glm::vec3(0, w.foot, 0); std::vector<glm::vec3> path;
+  if (!nav_.ready() || !nav_.findPath(feet, goal, path)) return false;
+  w.path = path; w.i = 1; w.goalAt = goal; return true;
+}
+void Game::walkFinish(Obj& o, bool ok) { o.walk.active = false; o.walk.result = ok ? "success" : "fail"; o.walk.path.clear(); if (scripts_) scripts_->call(o.beh, EV_MoveDone, ok ? 1 : 0); }
+void Game::walkFrame(float dt) {
+  for (size_t k = 0; k < objs_.size(); k++) { Obj& o = *objs_[k]; auto& w = o.walk; if (!o.alive || !w.active) continue;
+    glm::vec3 feet = o.p - glm::vec3(0, w.foot, 0);
+    // following an actor or the player: a new way when it has moved
+    if (w.player || !w.goal.empty()) { glm::vec3 g; if (w.player) g = playerPos() - glm::vec3(0, mode_ == "Spectator" ? 1.6f : 0.9f, 0); else { Obj* t = get(w.goal); if (!t) { walkFinish(o, false); continue; } g = worldPos(w.goal) - glm::vec3(0, footOf(t->a, t->s), 0); }
+      if (glm::length(glm::vec2(g.x - feet.x, g.z - feet.z)) <= w.accept && std::abs(g.y - feet.y) < 2.f) { walkFinish(o, true); continue; }
+      if (time_ >= w.repath && glm::length(g - w.goalAt) > 0.6f) { w.repath = time_ + 0.35; if (!walkPath(o, g) && w.path.empty()) { walkFinish(o, false); continue; } } }
+    if (w.i >= w.path.size()) { walkFinish(o, w.player || !w.goal.empty() ? false : true); continue; }
+    glm::vec3 t = w.path[w.i]; glm::vec2 d(t.x - feet.x, t.z - feet.z); float len = glm::length(d); bool last = w.i + 1 >= w.path.size();
+    if (last && w.goal.empty() && !w.player && len <= w.accept) { walkFinish(o, true); continue; }
+    if (len < 0.05f) { w.i++; continue; }
+    float stepLen = std::min(w.speed * dt, len); glm::vec2 dir = d / len; feet.x += dir.x * stepLen; feet.z += dir.y * stepLen;
+    // on the floor: a short ray down (stairs, ramps), else between the way's points
+    float prevY = w.path[w.i - 1].y, along = glm::length(glm::vec2(t.x - w.path[w.i - 1].x, t.z - w.path[w.i - 1].z)); float u = along > 1e-4f ? 1 - glm::length(glm::vec2(t.x - feet.x, t.z - feet.z)) / along : 1;
+    float y = glm::mix(prevY, t.y, glm::clamp(u, 0.f, 1.f)); Physics::Hit h;
+    if (phys_->rayCast({feet.x, y + level_.world.nav.step + 0.3f, feet.z}, {feet.x, y - level_.world.nav.step - 0.5f, feet.z}, h, true)) y = h.point.y;
+    feet.y = y; o.p = feet + glm::vec3(0, w.foot, 0);
+    if (w.turn) { float want = std::atan2(dir.x, dir.y), cur = o.r.y, diff = std::remainder(want - cur, 6.2831853f); float mx = 10.f * dt; o.r.y = cur + glm::clamp(diff, -mx, mx); }
+  }
+}
+std::string Game::nav(const std::string& id, const std::string& op, const std::string& arg) {
+  json j = json::object(); if (!arg.empty()) { try { j = json::parse(arg); } catch (...) {} }
+  auto v3 = [](const json& a, glm::vec3 d) { if (a.is_array() && a.size() == 3 && a[0].is_number() && a[1].is_number() && a[2].is_number()) return glm::vec3(a[0].get<float>(), a[1].get<float>(), a[2].get<float>()); return d; };
+  if (id.empty()) {
+    if (op == "rebuild") { navBuilt_ = false; ensureNav(); return "1"; }
+    if (op == "info") { ensureNav(); return json{{"ready", nav_.ready()}, {"cells", nav_.walkable()}, {"cellSize", nav_.cell()}, {"ms", nav_.buildMs()}}.dump(); }
+    if (op == "path") { ensureNav(); glm::vec3 a = v3(j.value("from", json()), glm::vec3(0)), b = v3(j.value("to", json()), glm::vec3(0));
+      if (j.value("fromPlayer", false)) a.y -= 0.9f; if (j.value("toPlayer", false)) b.y -= 0.9f;
+      std::vector<glm::vec3> p; if (!nav_.findPath(a, b, p)) return ""; json r = json::array(); for (auto& q : p) r.push_back({q.x, q.y, q.z}); return r.dump(); }
+    return ""; }
+  Obj* o = get(id); if (!o) return ""; auto& w = o->walk;
+  if (op == "state") return json{{"moving", w.active}, {"result", w.result}}.dump();
+  if (op == "stop") { if (w.active) walkFinish(*o, false); w.result = "stopped"; return "1"; }
+  if (op == "move") {
+    if (o->motion == Motion::Dynamic) { logMsg("warning: " + o->a.name + ": Move To moves actors without Simulate Physics", LogKind::Warn); return "0"; }
+    // the same walk again (a Blueprint's Tick, a script's onUpdate): just its speed changes, no new way
+    bool samePlayer = j.value("player", false) && w.active && w.player, sameActor = j.contains("actor") && j["actor"].is_string() && w.active && w.goal == j["actor"].get<std::string>();
+    bool samePlace = w.active && !w.player && w.goal.empty() && !j.contains("actor") && !j.value("player", false) && glm::length(glm::vec3(j.value("x", 0.f), j.value("y", 0.f), j.value("z", 0.f)) - w.goalAt) < 0.1f;
+    if (samePlayer || sameActor || samePlace) { w.speed = std::max(0.f, j.value("speed", w.speed)); w.accept = std::max(0.05f, j.value("acceptance", w.accept)); return "1"; }
+    w = Obj::Walk(); w.foot = footOf(o->a, o->s); w.speed = std::max(0.f, j.value("speed", 3.5f)); w.accept = std::max(0.05f, j.value("acceptance", 0.5f)); w.turn = j.value("turn", true);
+    glm::vec3 goal;
+    if (j.value("player", false)) { w.player = true; goal = playerPos() - glm::vec3(0, 0.9f, 0); }
+    else if (j.contains("actor") && j["actor"].is_string()) { w.goal = j["actor"]; Obj* t = get(w.goal); if (!t) return "0"; goal = worldPos(w.goal) - glm::vec3(0, footOf(t->a, t->s), 0); }
+    else goal = {j.value("x", 0.f), j.value("y", 0.f), j.value("z", 0.f)};
+    if (!walkPath(*o, goal)) { w.result = "fail"; logMsg("warning: " + o->a.name + ": no way to walk there" + (nav_.ready() ? "" : " (no navigation: the level needs still meshes with collision)"), LogKind::Warn); return "0"; }
+    w.active = true; w.repath = time_ + 0.35; return "1"; }
+  return "";
 }
 std::string Game::animation(const std::string& id, const std::string& op, const std::string& arg) {
   Obj* o = get(id); if (!o || o->a.type != "StaticMesh" || !isModelFile(o->a.mesh)) return ""; ModelRef m = model(o->a.mesh); if (!m || !m->ok()) return "";

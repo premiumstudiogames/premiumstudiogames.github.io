@@ -39,6 +39,11 @@ public:
   void teleport(uint32_t id, const glm::vec3& pos, const glm::quat& rot);
   void moveKinematic(uint32_t id, const glm::vec3& pos, const glm::quat& rot);   // applied over the next step
   bool rayHit(const glm::vec3& from, const glm::vec3& to, uint32_t ignore) const;
+  // the first surface on the way (staticOnly: the level's still things, not boxes and characters); a ray that starts inside a solid goes out through it
+  struct Hit { glm::vec3 point{0}, normal{0, 1, 0}; uint64_t userData = 0; float fraction = 1; };
+  bool rayCast(const glm::vec3& from, const glm::vec3& to, Hit& out, bool staticOnly, uint32_t ignore = NO_BODY) const;
+  bool boxOverlaps(const glm::vec3& center, const glm::vec3& half, bool staticOnly) const;   // anything in this box (upright)
+  void optimize();                                       // after adding many still bodies: faster queries
   void setGravity(float y);
   std::vector<std::pair<uint64_t, uint64_t>> takeContacts();   // new contacts since last call (userData pairs)
   int bodyCount() const;

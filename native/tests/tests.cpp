@@ -164,6 +164,44 @@ int main(int argc, char** argv) {
     std::string sp = g.spawn("Models/TestBot.glb", "{\"position\":[20,0,0],\"animation\":\"Bob\"}"); CHECK(!sp.empty() && g.animation(sp, "state", "").find("\"Bob\"") != std::string::npos, "world.spawn of a model with an animation");
     setAssetRoot(""); fs::remove_all(dir, ec);
   }
+  {   // walking (AI Move To): around a wall, up a ramp onto a platform, following the player; a Blueprint's AI Move To; no way to a closed room
+    std::printf("navigation\n");
+    Project q = makeTemplate("Blank", "NavTest"); Level& L = q.levels[0].second; L.actors.clear();
+    auto box = [&](const char* n, glm::vec3 p, glm::vec3 s, const char* mesh = "Cube", glm::vec3 r = glm::vec3(0)) { Actor a = newActor("StaticMesh", n); a.mesh = mesh; a.p = p; a.s = s; a.r = r; L.actors.push_back(a); return a.id; };
+    box("Floor", {0, -0.5f, 0}, {40, 1, 40});
+    box("Wall", {0, 1.5f, -2}, {12, 3, 0.4f});                       // between the walker (z = 4) and the goal (z = -8): go round its ends (x = ±6)
+    box("Platform", {12, 1, -10}, {6, 2, 6});                         // 2 m up, a ramp to it
+    box("Ramp", {12, 1, -4}, {6, 2, 6}, "Wedge", {0, -90, 0});
+    for (int k = 0; k < 4; k++) box("Room", {-12.f + (k % 2 ? 0 : (k / 2 ? 2.2f : -2.2f)), 1.5f, -10.f + (k % 2 ? (k / 2 ? 2.2f : -2.2f) : 0)}, k % 2 ? glm::vec3(4.8f, 3, 0.4f) : glm::vec3(0.4f, 3, 4.8f));   // a closed room at (-12, -10)
+    Actor w = newActor("StaticMesh", "Walker"); w.p = {0, 0.5f, 4}; w.physics.collision = false; w.script = "SC_Walk";
+    q.scripts["SC_Walk"] = {"SC_Walk", "function onStart() { world.hud('start', String(self.moveTo([0, 0, -8], { speed: 6 }))); }\n"
+      "function onMoveFinished(ok) { world.vars.n = (world.vars.n || 0) + 1; world.hud('done' + world.vars.n, String(ok) + ':' + self.position.x.toFixed(1) + ',' + self.position.y.toFixed(2) + ',' + self.position.z.toFixed(1));\n"
+      "  if (world.vars.n === 1) self.moveTo([12, 2, -10], { speed: 6 }); }\n"
+      "function onUpdate() { world.vars.maxX = Math.max(world.vars.maxX || 0, Math.abs(self.position.x)); world.hud('maxx', world.vars.maxX.toFixed(1)); }\n"};
+    L.actors.push_back(w);
+    { Blueprint bp; BpNode ev; ev.id = 1; ev.type = "Event.BeginPlay"; BpNode mv; mv.id = 2; mv.type = "AI.MoveToActor"; mv.values = {{"Speed", 8}, {"AcceptanceRadius", 1.5}};
+      BpNode ok; ok.id = 3; ok.type = "World.Hud"; ok.values = {{"Id", "chase"}, {"Text", "caught"}}; BpNode no; no.id = 4; no.type = "World.Hud"; no.values = {{"Id", "chase"}, {"Text", "lost"}};
+      bp.nodes = {ev, mv, ok, no}; bp.links = {{1, "then", 2, "exec"}, {2, "OnSuccess", 3, "exec"}, {2, "OnFail", 4, "exec"}};
+      std::vector<BpMessage> ms; std::string code = bpCompile(bp, "BP_Chase", ms); int errs = 0; std::string all; for (auto& x : ms) { errs += x.error; all += x.text + "; "; } CHECK(errs == 0, ("a Blueprint with AI Move To Actor compiles " + all).c_str());
+      q.scripts["BP_Chase"] = {"BP_Chase", code}; q.scripts["BP_Chase"].graph = bpToJson(bp); }
+    Actor ch = newActor("StaticMesh", "Chaser"); ch.p = {8, 0.5f, 8}; ch.s = glm::vec3(0.6f); ch.physics.collision = false; ch.script = "BP_Chase"; L.actors.push_back(ch);
+    Actor ps = newActor("PlayerStart", "Start"); ps.p = {-6, 0.1f, 10}; L.actors.push_back(ps);
+    Game g(q, "Main"); logClear(); CHECK(g.start(), "a level with walkers starts");
+    auto hudOf = [&](const std::string& id) { for (auto& h : g.hudLines()) if (h.first == id) return h.second; return std::string(); };
+    CHECK(hudOf("start") == "true", "self.moveTo: there is a way");
+    CHECK(hasLog("Navigation: ") && g.navigation().walkable() > 2000, ("the floors are found (" + std::to_string(g.navigation().walkable()) + " cells)").c_str());
+    run(g, 6.0f); std::string d1 = hudOf("done1");
+    CHECK(d1.rfind("true:", 0) == 0 && std::abs(std::atof(d1.substr(d1.rfind(',') + 1).c_str()) + 8) < 0.7f, ("onMoveFinished(true) at the goal behind the wall: " + d1).c_str());
+    CHECK(std::atof(hudOf("maxx").c_str()) > 5.8f, ("it went round the wall's end (|x| up to " + hudOf("maxx") + ")").c_str());
+    run(g, 6.0f); std::string d2 = hudOf("done2");
+    CHECK(d2.rfind("true:", 0) == 0 && d2.find(",2.") != std::string::npos, ("up the ramp onto the platform (y 2): " + d2).c_str());
+    CHECK(hudOf("chase") == "caught", ("Blueprint AI Move To Actor (the player): " + hudOf("chase")).c_str());
+    std::vector<glm::vec3> path; CHECK(!g.navigation().findPath({0, 0, 4}, {-12, 0, -10}, path), "no way into a closed room");
+    CHECK(g.nav("", "path", "{\"from\":[0,0,4],\"to\":[0,0,-8]}").size() > 10, "world.findPath gives the way");
+    { Project fp = makeTemplate("FirstPerson", "FP"); Game f(fp, "Main"); f.start(); std::string r = f.nav("", "path", "{\"from\":[0,0,0],\"to\":[-7,2,-9]}");
+      CHECK(!r.empty(), "First Person template: the ramp leads up onto the platform"); }
+    { Level back; Level lv; lv.world.nav.radius = 0.6f; lv.world.nav.cell = 0.25f; CHECK(levelFromJson(levelToJson(lv), back) && back.world.nav.radius == 0.6f && back.world.nav.cell == 0.25f, "a level saves its navigation settings"); }
+  }
   {   // playing together: a host and a player on this computer, messages both ways, the LAN beacon, leaving
     pge::Net h, c; double t = 0; CHECK(h.host(46655, "Test world", 4, "info"), "net: host a game");
     c.lanSearch(true); CHECK(c.join("127.0.0.1", 46655), "net: join it");

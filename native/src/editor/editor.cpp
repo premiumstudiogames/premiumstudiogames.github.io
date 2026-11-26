@@ -24,7 +24,7 @@ using json = nlohmann::json;
 namespace pge {
 
 Editor::Editor(AppWindow& w) : win(w) {}
-Editor::~Editor() { if (game) stopPlay(); R.freeTarget(vpRT); R.shutdown(); }
+Editor::~Editor() { if (game) stopPlay(); destroy(navLines); R.freeTarget(vpRT); R.shutdown(); }
 
 bool Editor::init() {
   R.init(); loadPrefs();
@@ -164,6 +164,21 @@ void Editor::frameAll() {
   glm::vec3 c = (mn + mx) * 0.5f; float r = std::max(glm::length(mx - mn) * 0.5f, 4.f);
   camYaw = 0.6f; camPitch = -0.45f; glm::vec3 f(-std::sin(camYaw) * std::cos(camPitch), std::sin(camPitch), -std::cos(camYaw) * std::cos(camPitch));
   camPos = c - f * (r * 1.6f + 3.f); orthoCenter = c; orthoZoom = r * 1.3f;
+}
+// Show > Navigation (P): the floors AI can walk on, made like the game makes them (from the still meshes with collision), green
+void Editor::navShow(Frame& f) {
+  double t = SDL_GetTicks() / 1000.0;
+  if (t - navAt_ > 0.5) { navAt_ = t; std::string lj = levelToJson(L()); size_t key = std::hash<std::string>()(lj) ^ std::hash<std::string>()(assetRoot());
+    if (key != navKey_) { navKey_ = key; Physics ph; ph.init(-9.81f); glm::vec3 mn(1e9f), mx(-1e9f); int n = 0;
+      for (auto& a : L().actors) { if (a.type != "StaticMesh" || !a.physics.collision || a.physics.simulate || !a.visible) continue;
+        glm::mat4 W = worldOf(a); glm::vec3 pos(W[3]), sc(glm::length(glm::vec3(W[0])), glm::length(glm::vec3(W[1])), glm::length(glm::vec3(W[2])));
+        glm::quat q = glm::quat_cast(glm::mat3(glm::vec3(W[0]) / std::max(sc.x, 1e-6f), glm::vec3(W[1]) / std::max(sc.y, 1e-6f), glm::vec3(W[2]) / std::max(sc.z, 1e-6f)));
+        ph.addMesh(a.mesh, sc, pos, glm::normalize(q), Motion::Static, 1, 0); const MeshData& md = meshShape(a.mesh);
+        for (int k = 0; k < 8; k++) { glm::vec3 w = W * glm::vec4((k & 1) ? md.bmax.x : md.bmin.x, (k & 2) ? md.bmax.y : md.bmin.y, (k & 4) ? md.bmax.z : md.bmin.z, 1); mn = glm::min(mn, w); mx = glm::max(mx, w); } n++; }
+      navPreview.clear(); if (n) { ph.optimize(); navPreview.build(ph, glm::max(mn, glm::vec3(-2000)), glm::min(mx, glm::vec3(2000)), L().world.nav); }
+      ph.shutdown(); destroy(navLines); std::vector<glm::vec3> L2; navPreview.lines(L2); if (!L2.empty()) navLines = uploadLines(L2);
+      logMsg("Navigation: " + std::to_string(navPreview.walkable()) + " walkable cells"); } }
+  if (navLines.vao) { LineItem l; l.mesh = &navLines; l.color = glm::vec4(0.2f, 0.95f, 0.35f, 0.55f); f.lines.push_back(l); }
 }
 void Editor::snapToFloor() {
   Actor* a = actor(sel); if (!a) return; glm::mat4 W = worldOf(*a);
@@ -410,7 +425,7 @@ void Editor::shortcuts() {
   if (ctrl && K(ImGuiKey_H)) run("showAll"); else if (!ctrl && K(ImGuiKey_H)) run("hide");
   if (K(ImGuiKey_Escape)) run("deselect"); if (K(ImGuiKey_Home)) run("frameAll");
   if (!flying && !ctrl && !alt) {
-    if (K(ImGuiKey_F)) run("focus"); if (K(ImGuiKey_G)) run("toggleIcons");
+    if (K(ImGuiKey_F)) run("focus"); if (K(ImGuiKey_G)) run("toggleIcons"); if (K(ImGuiKey_P)) showNav = !showNav;
     if (K(ImGuiKey_W)) gizmoOp = 0; if (K(ImGuiKey_E)) gizmoOp = 1; if (K(ImGuiKey_R)) gizmoOp = 2;
   }
 }
@@ -522,6 +537,7 @@ void Editor::buildFrame(Frame& f, Camera& cam, float aspect) {
     if (a.type == "StaticMesh" && !a.anim.empty() && isModelFile(a.mesh)) { ModelRef m = model(a.mesh); int ai = m ? m->anim(a.anim) : -1;
       if (ai >= 0) { float d = m->anims[ai].duration; ap.anim = ai; ap.playing = true; ap.time = d > 0 ? (a.animLoop ? std::fmod(std::fmod(animClock * a.animSpeed, d) + d, d) : std::min(std::fmod(animClock, d + 1.f) * std::abs(a.animSpeed), d)) : 0; anim = &ap; } }
     addActorVisual(f, P, a, worldOf(a), showIcons, idx, nullptr, nullptr, &R, anim); }
+  if (showNav) navShow(f);
   if (Actor* s = actor(sel)) {   // selection outline
     glm::mat4 W = worldOf(*s); LineItem l; l.color = glm::vec4(1, 0.55f, 0.1f, 1); l.onTop = false;
     if (s->type == "StaticMesh" && isModelFile(s->mesh)) { const MeshData& md = meshShape(s->mesh); l.mesh = &R.wireBox(); l.model = W * glm::translate(glm::mat4(1), (md.bmin + md.bmax) * 0.5f) * glm::scale(glm::mat4(1), glm::max(md.bmax - md.bmin, glm::vec3(0.01f))); f.lines.push_back(l); }

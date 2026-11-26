@@ -16,6 +16,7 @@
 #include "ui.h"
 #include "audio.h"
 #include "models.h"
+#include "navigation.h"
 #include <SDL.h>
 
 struct ImDrawList;
@@ -103,6 +104,8 @@ public:
   void playerSet(const std::string& json) override;
   std::string storage(const std::string& op, const std::string& key, const std::string& val) override;
   std::string animation(const std::string& id, const std::string& op, const std::string& arg) override;
+  std::string nav(const std::string& id, const std::string& op, const std::string& arg) override;
+  const NavGrid& navigation() const { return nav_; }
   void setSky(const std::string& json) override;
   std::string postGet() override;
   void setQuality(const std::string& json) override { quality_ = json; qualityVer_++; }   // world.setQuality: the player applies it to the renderer
@@ -116,7 +119,13 @@ private:
     glm::vec3 color{1}; uint32_t body = NO_BODY; Motion motion = Motion::Static; int beh = -1;
     glm::mat4 lastWorld{1}; glm::vec3 bodyScale{1};
     AnimPlay anim;   // a model's animation
+    struct Walk { bool active = false; std::vector<glm::vec3> path; size_t i = 1; float speed = 3.5f, accept = 0.5f, foot = 0; bool turn = true, player = false; std::string goal, result; glm::vec3 goalAt{0}; double repath = 0; } walk;   // AI Move To
   };
+  NavGrid nav_; bool navBuilt_ = false;
+  void ensureNav();
+  bool walkPath(Obj& o, const glm::vec3& goalFeet);
+  void walkFinish(Obj& o, bool ok);
+  void walkFrame(float dt);
   Project project_; Level level_;
   std::vector<std::unique_ptr<Obj>> objs_; std::unordered_map<std::string, Obj*> byId_;
   std::unique_ptr<Physics> phys_; std::unique_ptr<ScriptHost> scripts_; std::unique_ptr<VoxelWorld> vox_; bool voxHold_ = false, swimming_ = false; glm::vec3 voxHoldPos_{0}; float gravity_ = -9.81f;
