@@ -12,6 +12,7 @@
 #include "blueprint.h"
 #include "assets.h"
 #include "testmodel.h"
+#include "mannequin.h"
 #include <imgui.h>
 #include <chrono>
 #include <cstdio>
@@ -31,6 +32,7 @@ static void run(Game& g, float secs) { for (int i = 0; i < (int)(secs * 60); i++
 static bool hasLog(const char* s) { for (auto& l : logLines()) if (l.text.find(s) != std::string::npos) return true; return false; }
 
 int main(int argc, char** argv) {
+  if (argc == 3 && !std::strcmp(argv[1], "--write-mannequin")) return writeMannequin(argv[2]) ? 0 : 1;
   if (argc == 4 && !std::strcmp(argv[1], "--write-template")) { Project p = makeTemplate(argv[2], argv[2]); std::string err; return saveProjectFile(p, argv[3], &err) ? 0 : 1; }
   {   // Blueprints: nodes and wires compiled to the script code, run in a real game
     std::printf("blueprints\n");
@@ -94,6 +96,26 @@ int main(int argc, char** argv) {
     int pr = 3; BpNode pn; pn.id = pr; pn.type = "Utilities.PrintString"; loopy.nodes.push_back(pn); BpNode ev; ev.id = 4; ev.type = "Event.BeginPlay"; loopy.nodes.push_back(ev);
     loopy.links.push_back({4, "then", 3, "exec"}); loopy.links.push_back({1, "ReturnValue", 3, "InString"});
     bpCompile(loopy, "Loopy", m2); bool circ = false; for (auto& m : m2) circ = circ || m.error; CHECK(circ, "pure nodes feeding each other in a circle is an error, not a hang");
+    {   // functions: inputs and outputs, called with exec pins (AddTwice) and pure (Square), from the Event Graph and from each other
+      Blueprint fb; int nid = 1; auto nd = [&](BpGraph& g, const std::string& type, json v = json::object()) { BpNode n; n.id = nid++; n.type = type; n.values = v; g.nodes.push_back(n); return n.id; };
+      BpFunction sq; sq.name = "Square"; sq.pure = true; sq.inputs = {{"X", PinType::Number}}; sq.outputs = {{"Y", PinType::Number}};
+      { int e = nd(sq, "Function.Entry", {{"Function", "Square"}}), m = nd(sq, "Math.Multiply"), r = nd(sq, "Function.Return", {{"Function", "Square"}});
+        sq.links = {{e, "then", r, "exec"}, {e, "X", m, "A"}, {e, "X", m, "B"}, {m, "ReturnValue", r, "Y"}}; }
+      BpFunction at; at.name = "AddTwice"; at.inputs = {{"A", PinType::Number}, {"B", PinType::Number}}; at.outputs = {{"Sum", PinType::Number}, {"Label", PinType::String}};
+      fb.funcs = {sq, at};
+      { BpFunction& f = fb.funcs[1]; int e = nd(f, "Function.Entry", {{"Function", "AddTwice"}}), a1 = nd(f, "Math.Add"), a2 = nd(f, "Math.Add"), r = nd(f, "Function.Return", {{"Function", "AddTwice"}}), cs = nd(f, "Function.Call", {{"Function", "Square"}});
+        f.links = {{e, "then", r, "exec"}, {e, "A", a1, "A"}, {e, "B", a1, "B"}, {a1, "ReturnValue", a2, "A"}, {a1, "ReturnValue", a2, "B"}, {a2, "ReturnValue", r, "Sum"}, {e, "A", cs, "X"}, {cs, "Y", r, "Label"}}; }
+      int bpb = nd(fb, "Event.BeginPlay"), call = nd(fb, "Function.Call", {{"Function", "AddTwice"}, {"A", 3}, {"B", 4}}), h1 = nd(fb, "World.Hud", {{"Id", "sum"}}), h2 = nd(fb, "World.Hud", {{"Id", "label"}});
+      int sq5 = nd(fb, "Function.Call", {{"Function", "Square"}, {"X", 5}}), h3 = nd(fb, "World.Hud", {{"Id", "sq"}});
+      fb.links = {{bpb, "then", call, "exec"}, {call, "then", h1, "exec"}, {call, "Sum", h1, "Text"}, {h1, "then", h2, "exec"}, {call, "Label", h2, "Text"}, {h2, "then", h3, "exec"}, {sq5, "Y", h3, "Text"}};
+      fb.nextId = nid; std::vector<BpMessage> fm; std::string code = bpCompile(fb, "BP_Fn", fm); int ferr = 0; std::string all; for (auto& m : fm) { ferr += m.error; all += m.text + "; "; }
+      CHECK(ferr == 0, ("a Blueprint with functions compiles " + all).c_str());
+      Blueprint back = bpFromJson(bpToJson(fb)); CHECK(back.funcs.size() == 2 && back.funcs[1].outputs.size() == 2 && back.funcs[0].pure && back.funcs[1].nodes.size() == 5 && back.nextId == nid, "functions save and load");
+      Project fp = makeTemplate("Blank", "FnT"); fp.scripts["BP_Fn"] = {"BP_Fn", code}; Actor fa = newActor("Empty", "FnActor"); fa.script = "BP_Fn"; fp.levels[0].second.actors.push_back(fa);
+      Game fg(fp, "Main"); fg.start(); auto hudOf = [&](const char* id) { for (auto& h : fg.hudLines()) if (h.first == id) return h.second; return std::string(); };
+      CHECK(hudOf("sum") == "14" && hudOf("label") == "9" && hudOf("sq") == "25", ("AddTwice(3, 4) = 14 (and calls Square(3) = 9), Square(5) = 25: " + hudOf("sum") + " " + hudOf("label") + " " + hudOf("sq")).c_str());
+      Blueprint bad = fb; bad.funcs[0].nodes.erase(bad.funcs[0].nodes.begin()); bpCompile(bad, "Bad", fm); bool noEntry = false; for (auto& m : fm) noEntry = noEntry || m.error; CHECK(noEntry, "a function without its entry is an error");
+    }
     int ar = 0; for (auto& d : bpLibrary()) ar += !d.ar.empty() && !d.descAr.empty() && !d.descEn.empty(); CHECK(ar == (int)bpLibrary().size() && ar > 90, ("every node has English and Arabic names and explanations (" + std::to_string(ar) + ")").c_str());
   }
   {   // models: a rigged .glb with a picture inside and two animations, loaded, posed, played in a game, collided with, saved
@@ -201,6 +223,38 @@ int main(int argc, char** argv) {
     { Project fp = makeTemplate("FirstPerson", "FP"); Game f(fp, "Main"); f.start(); std::string r = f.nav("", "path", "{\"from\":[0,0,0],\"to\":[-7,2,-9]}");
       CHECK(!r.empty(), "First Person template: the ramp leads up onto the platform"); }
     { Level back; Level lv; lv.world.nav.radius = 0.6f; lv.world.nav.cell = 0.25f; CHECK(levelFromJson(levelToJson(lv), back) && back.world.nav.radius == 0.6f && back.world.nav.cell == 0.25f, "a level saves its navigation settings"); }
+  }
+  {   // Third Person: the engine's mannequin plays Idle, Walk, Run, Jump by how the player moves
+    std::printf("third person character\n");
+    ModelRef mq = model("Characters/Mannequin.glb"); CHECK(mq && mq->ok() && mq->anims.size() == 5 && mq->joints == 18, ("the mannequin: 18 bones, Idle / Walk / Run / Jump / Fall" + (mq ? " " + mq->error : std::string())).c_str());
+    Project tp = makeTemplate("ThirdPerson", "TP"); Game g(tp, "Main"); CHECK(g.start(), "a Third Person game starts");
+    run(g, 1.0f); CHECK(g.playerAnimation() == "Idle", ("standing: " + g.playerAnimation()).c_str());
+    SDL_Event w = keyEv(SDL_KEYDOWN, SDL_SCANCODE_W); g.event(w); run(g, 0.8f); CHECK(g.playerAnimation() == "Walk", ("W: " + g.playerAnimation()).c_str());
+    SDL_Event sh = keyEv(SDL_KEYDOWN, SDL_SCANCODE_LSHIFT); g.event(sh); run(g, 0.8f); CHECK(g.playerAnimation() == "Run", ("W + Shift: " + g.playerAnimation()).c_str());
+    SDL_Event sp = keyEv(SDL_KEYDOWN, SDL_SCANCODE_SPACE); g.event(sp); run(g, 0.15f); CHECK(g.playerAnimation() == "Jump", ("Space: " + g.playerAnimation()).c_str());
+    g.event(keyEv(SDL_KEYUP, SDL_SCANCODE_SPACE)); g.event(keyEv(SDL_KEYUP, SDL_SCANCODE_W)); g.event(keyEv(SDL_KEYUP, SDL_SCANCODE_LSHIFT)); run(g, 2.0f);
+    CHECK(g.playerAnimation() == "Idle", ("let go: back to " + g.playerAnimation()).c_str());
+  }
+  {   // Landscape: heights, brushes, paint, saved; the player stands on it, characters walk over it
+    std::printf("landscape\n");
+    Landscape L; L.resize(64, 64); L.hills(6, 20, 7); float h0 = L.heightAt(3.3f, -7.1f);
+    CHECK(std::abs(h0) <= 6.01f && std::abs(L.heightAt(0, 0) - L.h[32 * 64 + 32]) < 1.5f, "hills made");
+    float before = L.heightAt(10, 10); L.brush(Landscape::Raise, 10, 10, 4, 1, 0.5f); CHECK(L.heightAt(10, 10) > before + 1.5f && std::abs(L.heightAt(-20, -20) - Landscape(L).heightAt(-20, -20)) < 1e-6f, "Raise brush lifts the ground under it");
+    L.brush(Landscape::Flatten, -10, -10, 5, 5, 1, 0, 2.5f); CHECK(std::abs(L.heightAt(-10, -10) - 2.5f) < 0.3f, "Flatten brings it to a height");
+    L.brush(Landscape::Paint, 0, 0, 6, 5, 1, 2); size_t ci = (size_t)32 * 64 + 32; CHECK(L.w[ci * 4 + 2] > 200 && L.w[ci * 4] < 50, "Paint puts layer 3 where it paints");
+    float t = 0; CHECK(L.raycast({10, 50, 10}, {0, -1, 0}, 100, t) && std::abs(50 - t - L.heightAt(10, 10)) < 0.05f, "a ray finds the ground");
+    Landscape B; CHECK(B.fromJson(json::parse(L.toJson().dump())) && B.res == 64 && std::abs(B.heightAt(10, 10) - L.heightAt(10, 10)) < 1e-5f && B.w == L.w, "a landscape saves and loads (heights, paint)");
+    Project q = makeTemplate("Blank", "LandT"); Level& lv = q.levels[0].second; lv.actors.clear(); lv.world.gameMode = "FirstPerson";
+    Actor la = newActor("Landscape", "Land"); la.land->resize(64, 64); la.land->hills(5, 18, 3); lv.actors.push_back(la);
+    Actor ps = newActor("PlayerStart", "Start"); ps.p = {6, 20, 6}; lv.actors.push_back(ps);
+    Actor wk = newActor("StaticMesh", "Walker"); wk.p = {-20, la.land->heightAt(-20, -20) + 0.5f, -20}; wk.physics.collision = false; wk.script = "SC_W"; lv.actors.push_back(wk);
+    q.scripts["SC_W"] = {"SC_W", "function onStart() { world.hud('w', String(self.moveTo([20, 0, 20], { speed: 8 }))); } function onMoveFinished(ok) { world.hud('wd', String(ok)); }"};
+    { std::string e; std::string f = (std::filesystem::temp_directory_path() / "land.pge.json").u8string(); saveProjectFile(q, f, &e); Project r; CHECK(loadProjectFile(f, r, &e) && r.levels[0].second.actors[0].land && std::abs(r.levels[0].second.actors[0].land->heightAt(6, 6) - la.land->heightAt(6, 6)) < 1e-5f, "a project with a landscape saves and loads"); }
+    Game g(q, "Main"); CHECK(g.start(), "a game on a landscape starts"); run(g, 3.0f);
+    glm::vec3 pp = g.playerPos(); CHECK(std::abs(pp.y - 0.9f - la.land->heightAt(pp.x, pp.z)) < 0.25f, ("the player stands on it (feet " + std::to_string(pp.y - 0.9f) + ", ground " + std::to_string(la.land->heightAt(pp.x, pp.z)) + ")").c_str());
+    auto hudOf = [&](const char* id) { for (auto& h : g.hudLines()) if (h.first == id) return h.second; return std::string(); };
+    run(g, 8.0f); CHECK(hudOf("w") == "true" && hudOf("wd") == "true", ("a character walks over the hills (AI Move To): " + hudOf("w") + " " + hudOf("wd")).c_str());
+    glm::vec3 wp = g.worldPos(g.find("Walker")); CHECK(std::abs(wp.y - 0.5f - la.land->heightAt(wp.x, wp.z)) < 0.3f, "…on the ground");
   }
   {   // playing together: a host and a player on this computer, messages both ways, the LAN beacon, leaving
     pge::Net h, c; double t = 0; CHECK(h.host(46655, "Test world", 4, "info"), "net: host a game");

@@ -9,6 +9,9 @@ Premium Engine for Windows (experimental). Unzip and run PremiumEngine.exe.
 - Camera effects (post process): vignette, film grain, chromatic aberration, VHS tape, scanlines, saturation, contrast, temperature, bloom, tint
 - Reflections: Sphere Reflection Capture actors (shiny floors, metal, glass reflect the room)
 - AI navigation: characters walk round walls, up ramps and stairs, follow the player (scripts: moveTo, Blueprints: AI Move To); Show > Navigation
+- Landscape: big outdoor ground - sculpt (raise, lower, smooth, flatten, noise, hills) and paint 4 layers with the mouse; it collides and AI walks on it
+- Third Person: the engine's mannequin with Idle, Walk, Run, Jump, Fall (or your own character); a camera that comes in front of walls
+- Blueprint functions with inputs and outputs (pure or with exec pins)
 - Blueprints (visual scripting) with English and Arabic names and explanations
 
 Every build is tested on Windows: engine tests, the editor makes a project, plays and packages it, and the packaged game starts and walks.

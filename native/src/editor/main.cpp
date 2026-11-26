@@ -78,6 +78,15 @@ int main(int argc, char** argv) {
         if (frame == 170) { check(ed.playing && ed.game, "Play");
           float y1 = ed.game ? ed.game->worldPos(ed.game->find(ed.actor(cube) ? ed.actor(cube)->name : "")).y : 0; check(y1 > y0 + 0.2f, "the Blueprint moves the cube up while playing (" + std::to_string(y0) + " → " + std::to_string(y1) + ")");
           ed.stopPlay(); ed.undo(); check(t && t->bp.nodes.size() >= 4, "undo keeps the editor in step"); }
+        if (frame == 172 && t) {   // a function with an input and an output, opened in its own graph, called from the Event Graph
+          pge::BpFunction f; f.name = "Double"; f.inputs = {{"Value", pge::PinType::Number}}; f.outputs = {{"Result", pge::PinType::Number}};
+          pge::BpNode en; en.id = t->bp.nextId++; en.type = "Function.Entry"; en.values["Function"] = "Double"; pge::BpNode m; m.id = t->bp.nextId++; m.type = "Math.Multiply"; m.x = 260; m.y = 120; m.values["B"] = 2;
+          pge::BpNode rt; rt.id = t->bp.nextId++; rt.type = "Function.Return"; rt.x = 560; rt.values["Function"] = "Double"; f.nodes = {en, m, rt};
+          f.links = {{en.id, "then", rt.id, "exec"}, {en.id, "Value", m.id, "A"}, {m.id, "ReturnValue", rt.id, "Result"}}; t->bp.funcs.push_back(f);
+          pge::BpNode c; c.id = t->bp.nextId++; c.type = "Function.Call"; c.x = 700; c.y = 500; c.values["Function"] = "Double"; t->bp.nodes.push_back(c);
+          t->commit(ed); t->graph = 0; t->frameNext = true; ed.prefs.bpLang = 2; ImGui::SetWindowFocus("Blueprint Editor"); }
+        if (frame == 174) ed.shotFile = bptest + "/bp-function.bmp";
+        if (frame == 175 && t) { int errs = 0; for (auto& m : t->msgs) errs += m.error; check(errs == 0 && ed.P.scripts.count(bpId) && ed.P.scripts[bpId].code.find("function __fn_Double(__a0)") != std::string::npos, "a function (Double: Value → Result) compiles into the Blueprint's code"); ed.prefs.bpLang = 0; }
         if (frame == 176) { std::ofstream o(std::filesystem::u8path(bptest + "/bp-result.txt")); o << (code == 0 ? "PASS\n" : "FAIL\n") << log; break; }
       }
       if (!mtest.empty()) {   // CI: models and textures used like a person would - a .glb dropped on the viewport, its animation, a picture on a material, Play, Package
@@ -150,7 +159,32 @@ int main(int argc, char** argv) {
         if (frame == 118) { glm::vec3 at(0.4f, 1.5f, 2.6f); pge::Actor& c = ed.addActor("ReflectionCapture", "", &at); c.probe.radius = 8; ed.touch(); ed.sel.clear(); }
         if (frame == 126) { check(ed.R.probesReady() >= 1, "a Sphere Reflection Capture is made"); ed.shotFile = mtest + "/refl-on.bmp"; }
         if (frame == 128) { double dd = 0; cornerLum(mtest + "/refl-on.bmp", &dd, mtest + "/refl-off.bmp"); check(dd > 0.3, "…and shiny surfaces reflect what it sees (" + std::to_string(dd) + " per pixel)"); }
-        if (frame == 132) { check(ed.packageOk, "Package"); check(fs::exists(fs::u8path(ed.packageDir) / "Models" / "TestBot.glb") && fs::exists(fs::u8path(ed.packageDir) / "Textures" / "Grass.png"), "the packaged game has the model and the picture");
+        // Third Person: the mannequin runs (W + Shift) in Play, the camera behind it
+        if (frame == 132) { ed.L().world.gameMode = "ThirdPerson"; ed.touch(); ed.play(); }
+        if (frame == 140 && ed.game) { SDL_Event k{}; k.type = SDL_KEYDOWN; k.key.keysym.scancode = SDL_SCANCODE_W; ed.game->event(k); k.key.keysym.scancode = SDL_SCANCODE_LSHIFT; ed.game->event(k); }
+        if (frame == 170) { check(ed.game && ed.game->playerAnimation() == "Run", "Third Person: the mannequin runs (" + std::string(ed.game ? ed.game->playerAnimation() : "no game") + ")"); ed.shotFile = mtest + "/third-person.bmp"; }
+        if (frame == 174) { ed.stopPlay(); ed.L().world.gameMode = "FirstPerson"; }
+        // Landscape: placed, hills made, then sculpted with the mouse like a person would (left button held on it)
+        static std::string landId; static float hBefore = 0; static glm::vec3 brushAt(0);
+        Uint32 wid2 = SDL_GetWindowID(W.win); auto mouse2 = [&](float x, float y, int btn = 0, bool down = false, bool up = false) { SDL_WarpMouseInWindow(W.win, (int)x, (int)y); SDL_Event e{}; e.type = SDL_MOUSEMOTION; e.motion.windowID = wid2; e.motion.x = (int)x; e.motion.y = (int)y; SDL_PushEvent(&e);
+          if (down || up) { SDL_Event b{}; b.type = down ? SDL_MOUSEBUTTONDOWN : SDL_MOUSEBUTTONUP; b.button.button = (Uint8)btn; b.button.windowID = wid2; b.button.x = (int)x; b.button.y = (int)y; b.button.clicks = 1; SDL_PushEvent(&b); } };
+        if (frame == 178) { for (auto it = ed.L().actors.begin(); it != ed.L().actors.end();) { if (it->name == "Floor") it = ed.L().actors.erase(it); else ++it; }
+          glm::vec3 at(0); pge::Actor& la = ed.addActor("Landscape", "", &at); landId = la.id; la.land->resize(128, 96); la.land->hills(4, 25, 11); ed.landTool = 0; ed.landRadius = 6; ed.landStrength = 3; ed.sel = landId; ed.touch();
+          ed.camPos = {0, 18, 30}; ed.camYaw = 0; ed.camPitch = -0.5f; ImGui::SetWindowFocus("Viewport"); }
+        if (frame == 182) mouse2(ed.vpX + ed.vpW / 2, ed.vpY + ed.vpH / 2);
+        if (frame == 184) { // where the brush is: the landscape under the viewport's middle
+          pge::Actor* la = ed.actor(landId); if (la) { float px = ed.camPos.x, py = ed.camPos.y, pz = ed.camPos.z; glm::vec3 d(-std::sin(ed.camYaw) * std::cos(ed.camPitch), std::sin(ed.camPitch), -std::cos(ed.camYaw) * std::cos(ed.camPitch)); float tt = 0;
+            if (la->land->raycast({px, py, pz}, d, 500, tt)) { brushAt = glm::vec3(px, py, pz) + d * tt; hBefore = la->land->heightAt(brushAt.x, brushAt.z); } }
+          mouse2(ed.vpX + ed.vpW / 2, ed.vpY + ed.vpH / 2, SDL_BUTTON_LEFT, true); }
+        if (frame == 196) mouse2(ed.vpX + ed.vpW / 2, ed.vpY + ed.vpH / 2, SDL_BUTTON_LEFT, false, true);
+        if (frame == 199) { pge::Actor* la = ed.actor(landId); float h1 = la ? la->land->heightAt(brushAt.x, brushAt.z) : 0;
+          check(la && h1 > hBefore + 0.3f, "Landscape: holding the mouse on it raises the ground under the brush (" + std::to_string(hBefore) + " → " + std::to_string(h1) + ")"); check(ed.canUndo(), "…one undo step");
+          ed.landTool = -1; ed.shotFile = mtest + "/landscape.bmp"; }
+        if (frame == 203) { ed.L().world.gameMode = "ThirdPerson"; for (auto& a : ed.L().actors) if (a.type == "PlayerStart") a.p = {0, 12, 8}; ed.touch(); ed.play(); }
+        if (frame == 240) { glm::vec3 pp = ed.game ? ed.game->playerPos() : glm::vec3(0); pge::Actor* la = ed.actor(landId); float gy = la ? la->land->heightAt(pp.x, pp.z) : -99;
+          check(ed.game && std::abs(pp.y - 0.9f - gy) < 0.3f, "Play: the mannequin stands on the landscape (feet " + std::to_string(pp.y - 0.9f) + ", ground " + std::to_string(gy) + ")"); ed.shotFile = mtest + "/landscape-play.bmp"; }
+        if (frame == 244) { ed.stopPlay(); }
+        if (frame == 248) { check(ed.packageOk, "Package"); check(fs::exists(fs::u8path(ed.packageDir) / "Models" / "TestBot.glb") && fs::exists(fs::u8path(ed.packageDir) / "Textures" / "Grass.png"), "the packaged game has the model and the picture");
           check(glGetError() == GL_NO_ERROR, "no OpenGL errors");
           std::ofstream o(fs::u8path(mtest + "/model-result.txt")); o << (code == 0 ? "PASS\n" : "FAIL\n") << log; for (auto& l : pge::logLines()) o << "[" << l.time << "] " << l.text << "\n"; break; }
       }

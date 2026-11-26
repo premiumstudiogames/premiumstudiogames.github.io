@@ -46,10 +46,16 @@ struct BpNode {
 };
 struct BpLink { int from = 0; std::string fromPin; int to = 0; std::string toPin; };
 struct BpVar { std::string name; PinType type = PinType::Number; nlohmann::json def; };
-struct Blueprint {
-  std::vector<BpNode> nodes; std::vector<BpLink> links; std::vector<BpVar> vars; int nextId = 1;
+struct BpGraph { std::vector<BpNode> nodes; std::vector<BpLink> links; };   // the Event Graph, or a function's graph
+// a function of the Blueprint (like Unreal's): its own graph from Function.Entry (its inputs) to Function.Return (its outputs);
+// called with Function.Call nodes. Pure functions have no exec pins where they are called (like Get nodes).
+struct BpParam { std::string name; PinType type = PinType::Number; };
+struct BpFunction : BpGraph { std::string name = "NewFunction"; std::vector<BpParam> inputs, outputs; bool pure = false; };
+struct Blueprint : BpGraph {
+  std::vector<BpVar> vars; std::vector<BpFunction> funcs; int nextId = 1;   // node ids are unique across all the graphs
   BpNode* node(int id); const BpNode* node(int id) const;
   const BpVar* var(const std::string& name) const;
+  const BpFunction* func(const std::string& name) const;
 };
 
 nlohmann::json bpToJson(const Blueprint& bp);

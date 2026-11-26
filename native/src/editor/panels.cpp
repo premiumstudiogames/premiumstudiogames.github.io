@@ -115,7 +115,7 @@ void Editor::drawMenuBar() {
 
 void Editor::addMenuItems(const glm::vec3* at) {
   section("BASIC");
-  const char* basic[][2] = {{"Empty Actor", "Empty"}, {"Player Start", "PlayerStart"}, {"Trigger Box", "TriggerBox"}, {"Camera Actor", "CameraActor"}, {"Text Render", "TextRender"}};
+  const char* basic[][2] = {{"Landscape", "Landscape"}, {"Empty Actor", "Empty"}, {"Player Start", "PlayerStart"}, {"Trigger Box", "TriggerBox"}, {"Camera Actor", "CameraActor"}, {"Text Render", "TextRender"}};
   for (auto& b : basic) if (ImGui::MenuItem(b[0])) addActor(b[1], "", at);
   section("SHAPES"); for (int i = 0; i < MESH_COUNT; i++) if (ImGui::MenuItem(MESHES[i])) addActor("StaticMesh", MESHES[i], at);
   section("LIGHTS"); for (const char* t : {"DirectionalLight", "PointLight", "SpotLight", "ReflectionCapture"}) if (ImGui::MenuItem(actorTypeLabel(t))) addActor(t, "", at);
@@ -230,9 +230,10 @@ void Editor::drawViewport() {
     dl->PopClipRect();
     vpHovered = imgHovered;
   } else {
-    // gizmo
+    // gizmo (not while sculpting a landscape: the mouse is the brush)
     Actor* s = actor(sel); bool gizmoOver = false;
-    if (s) {
+    bool brush = landscapeBrush(C, pos, size, dl); if (brush) gizmoOver = true;
+    if (s && !brush) {
       ImGuizmo::SetOrthographic(view != View::Perspective); ImGuizmo::SetDrawlist(dl); ImGuizmo::SetRect(pos.x, pos.y, size.x, size.y);
       glm::mat4 W = worldOf(*s); float snap[3]; float* snapPtr = nullptr;
       ImGuizmo::OPERATION op = gizmoOp == 0 ? ImGuizmo::TRANSLATE : gizmoOp == 1 ? ImGuizmo::ROTATE : ImGuizmo::SCALE;
@@ -410,6 +411,30 @@ void Editor::drawDetails() {
     rowLabel("Cast Shadows"); ch |= ImGui::Checkbox("##ls", &a->light.shadows);
     if (a->type != "DirectionalLight" && a->light.shadows) { rowLabel(""); ImGui::TextDisabled("Shadows come from the Directional Light."); }
     ImGui::EndTable(); }
+  if (a->type == "Landscape" && a->land && ImGui::CollapsingHeader("Landscape", ImGuiTreeNodeFlags_DefaultOpen)) { Landscape& L = *a->land;
+    // tools, like Unreal's Landscape mode: Sculpt (Raise, Lower, Smooth, Flatten, Noise) and Paint (4 layers)
+    const char* tools[] = {"Raise", "Lower", "Smooth", "Flatten", "Noise", "Paint"}; const char* tips[] = {"Raise the ground (Shift: lower)", "Lower the ground", "Smooth bumps", "Flatten to the height where you start", "Rough it up", "Paint a layer"};
+    ImGui::TextDisabled("Hold the left mouse button on the landscape in the viewport. Alt: move the camera.");
+    for (int k = 0; k < 6; k++) { if (k) ImGui::SameLine(); bool on = landTool == k; if (on) ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(40, 110, 230, 255)); if (ImGui::Button(tools[k])) landTool = on ? -1 : k; if (on) ImGui::PopStyleColor(); if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tips[k]); }
+    if (beginProps("ls")) { propCols();
+      rowLabel("Brush Size"); ImGui::SliderFloat("##lbr", &landRadius, 0.5f, 60, "%.1f m", ImGuiSliderFlags_Logarithmic);
+      rowLabel("Strength"); ImGui::SliderFloat("##lbs", &landStrength, 0.05f, 5, "%.2f", ImGuiSliderFlags_Logarithmic);
+      for (int k = 0; k < 4; k++) { ImGui::PushID(k); char lb[32]; std::snprintf(lb, sizeof lb, "Layer %d", k + 1); rowLabel(lb);
+        if (ImGui::RadioButton("##pl", landTool == Landscape::Paint && landLayer == k)) { landTool = Landscape::Paint; landLayer = k; } if (ImGui::IsItemHovered()) ImGui::SetTooltip("Paint this layer");
+        ImGui::SameLine(); ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.62f);
+        if (ImGui::BeginCombo("##lm", L.layer[k].empty() ? "None" : L.layer[k].c_str())) { if (ImGui::Selectable("None", L.layer[k].empty())) { L.layer[k].clear(); L.changed(); ch = true; }
+          for (auto& [mid, m] : P.materials) if (ImGui::Selectable(mid.c_str(), L.layer[k] == mid)) { L.layer[k] = mid; L.changed(); ch = true; } ImGui::EndCombo(); }
+        if (ImGui::BeginDragDropTarget()) { if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("PGE_MAT")) { L.layer[k].assign((const char*)pl->Data, pl->DataSize); L.changed(); ch = true; } ImGui::EndDragDropTarget(); }
+        ImGui::SameLine(); ImGui::SetNextItemWidth(-1); if (ImGui::DragFloat("##lt", &L.tiling[k], 0.05f, 0.1f, 200, "%.1f m")) {} if (ImGui::IsItemDeactivatedAfterEdit()) ch = true; if (ImGui::IsItemHovered()) ImGui::SetTooltip("How many metres the layer's picture covers");
+        ImGui::PopID(); }
+      rowLabel("Hills"); ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.35f); ImGui::DragFloat("##hh", &hillsH, 0.1f, 0, 200, "%.0f m high"); ImGui::SameLine(); ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.5f); ImGui::DragFloat("##hs", &hillsScale, 0.5f, 2, 1000, "%.0f m wide"); ImGui::SameLine();
+      if (ImGui::Button("Make")) { L.hills(hillsH, hillsScale, (uint32_t)SDL_GetTicks()); ch = true; }
+      rowLabel(""); if (ImGui::Button("Flatten All")) { std::fill(L.h.begin(), L.h.end(), 0.f); L.changed(); ch = true; }
+      rowLabel("Size"); { float sz = L.size; int rs = L.res; ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.45f); bool c1 = ImGui::DragFloat("##lsz", &sz, 1, 8, 4000, "%.0f m"); ImGui::SameLine();
+        static const int R[] = {64, 128, 256, 512}; ImGui::SetNextItemWidth(-1); if (ImGui::BeginCombo("##lrs", (std::to_string(rs) + " x " + std::to_string(rs)).c_str())) { for (int r : R) if (ImGui::Selectable((std::to_string(r) + " x " + std::to_string(r)).c_str(), r == rs)) rs = r; ImGui::EndCombo(); }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Points along each side (more = finer detail). Changing it starts flat.");
+        if (rs != L.res) { L.resize(rs, L.size); ch = true; } else if (c1 && sz != L.size) { L.size = sz; L.changed(); ch = true; } }
+      ImGui::EndTable(); } }
   if (a->type == "ReflectionCapture" && ImGui::CollapsingHeader("Reflection Capture", ImGuiTreeNodeFlags_DefaultOpen) && beginProps("rc")) { propCols();
     rowLabel("Influence Radius"); ch |= ImGui::DragFloat("##rcr", &a->probe.radius, 0.1f, 0.5f, 500, "%.1f m"); if (ImGui::IsItemHovered()) ImGui::SetTooltip("Shiny surfaces within this distance reflect what the capture sees from here (floors, metal, glass, water).");
     rowLabel("Brightness"); ch |= ImGui::DragFloat("##rci", &a->probe.intensity, 0.01f, 0, 10, "%.2f");
@@ -452,6 +477,13 @@ void Editor::drawWorldSettings() {
   WorldSettings& w = L().world; bool ch = false;
   if (ImGui::CollapsingHeader("Game Mode", ImGuiTreeNodeFlags_DefaultOpen) && beginProps("gm")) { propCols();
     rowLabel("GameMode Override"); if (ImGui::BeginCombo("##gm", w.gameMode.c_str())) { for (const char* m : {"FirstPerson", "ThirdPerson", "Spectator"}) if (ImGui::Selectable(m, w.gameMode == m)) { w.gameMode = m; ch = true; } ImGui::EndCombo(); }
+    if (w.gameMode == "ThirdPerson") { rowLabel("Player Character"); const char* shown = w.playerModel.empty() ? "Mannequin (the engine's)" : w.playerModel.c_str();
+      if (ImGui::BeginCombo("##pch", shown, ImGuiComboFlags_HeightLarge)) {
+        if (ImGui::Selectable("Mannequin (the engine's)", w.playerModel.empty())) { w.playerModel.clear(); ch = true; }
+        if (ImGui::Selectable("Capsule", w.playerModel == "Capsule")) { w.playerModel = "Capsule"; ch = true; }
+        scanFiles(); if (!projModels.empty()) ImGui::Separator(); for (auto& m : projModels) if (ImGui::Selectable(m.c_str(), w.playerModel == m)) { w.playerModel = m; ch = true; }
+        ImGui::EndCombo(); }
+      if (ImGui::IsItemHovered()) ImGui::SetTooltip("The player's character. Its animations are picked by name: Idle, Walk, Run, Jump, Fall (Mixamo / Blender names work).\nScripts: world.player.set({ model: 'Models/Hero.glb' })."); }
     rowLabel("Field of View"); ch |= ImGui::SliderFloat("##fov", &w.fov, 40, 120, "%.0f deg");
     ImGui::EndTable(); }
   if (ImGui::CollapsingHeader("Lighting", ImGuiTreeNodeFlags_DefaultOpen) && beginProps("li")) { propCols();
@@ -511,7 +543,7 @@ void Editor::drawPlaceActors() {
     ImDrawList* dl = ImGui::GetWindowDrawList(); dl->AddRectFilled({p.x + 2, p.y + 2}, {p.x + h - 2, p.y + h - 2}, IM_COL32(15, 15, 15, 255), 3);
     drawIcon(dl, {p.x + h / 2, p.y + h / 2}, h * 0.32f, icon, IM_COL32(190, 190, 190, 255)); dl->AddText({p.x + h + 8, p.y + (h - ImGui::GetFontSize()) / 2}, ImGui::GetColorU32(ImGuiCol_Text), label);
     ImGui::PopID(); };
-  if (ImGui::CollapsingHeader("Basic", ImGuiTreeNodeFlags_DefaultOpen)) { entry("Empty Actor", "Empty", IC_Select); entry("Player Start", "PlayerStart", IC_Play); entry("Trigger Box", "TriggerBox", IC_Window); entry("Camera Actor", "CameraActor", IC_Window); entry("Text Render", "TextRender", IC_Script); }
+  if (ImGui::CollapsingHeader("Basic", ImGuiTreeNodeFlags_DefaultOpen)) { entry("Landscape", "Landscape", IC_Cube); entry("Empty Actor", "Empty", IC_Select); entry("Player Start", "PlayerStart", IC_Play); entry("Trigger Box", "TriggerBox", IC_Window); entry("Camera Actor", "CameraActor", IC_Window); entry("Text Render", "TextRender", IC_Script); }
   if (ImGui::CollapsingHeader("Lights", ImGuiTreeNodeFlags_DefaultOpen)) for (const char* t : {"DirectionalLight", "PointLight", "SpotLight", "ReflectionCapture"}) entry(actorTypeLabel(t), t, IC_Gear);
   if (ImGui::CollapsingHeader("Shapes", ImGuiTreeNodeFlags_DefaultOpen)) for (int i = 0; i < MESH_COUNT; i++) entry(MESHES[i], std::string("StaticMesh|") + MESHES[i], IC_Cube);
   ImGui::End();

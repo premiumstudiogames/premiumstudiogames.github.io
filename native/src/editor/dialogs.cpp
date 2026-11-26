@@ -309,6 +309,13 @@ static const char* DOCS_TEXT = R"(PREMIUM ENGINE - QUICK START
    it from Content Browser > Models. Details > Animation picks the one that plays from the start; scripts and Blueprints play others.
    A model changed on disk (exported again) is loaded again by itself. Pictures go into Textures the same way.
    Export from Blender: File > Export > glTF 2.0 (.glb), +Y Up, with Animation; no Draco compression.
+5h. Landscape: Place Actors > Landscape. Details > Landscape: Raise (Shift: lower), Lower, Smooth, Flatten, Noise, Paint (4 layers, each a
+   material of the project; tiling in metres), Hills > Make, Size and detail. Hold the left mouse button on it in the viewport.
+5f. Third Person: the player is the engine's mannequin (Idle, Walk, Run, Jump, Fall, picked by how it moves); World Settings > Player
+   Character puts your own model there (its animations are found by name). The camera comes in front of walls. Scripts:
+   world.player.set({ model: 'Models/Hero.glb' }).
+5g. Blueprint functions: My Blueprint > Functions > + Function: its own graph, inputs and outputs, Pure or with exec pins; call it from
+   the right-click menu (Functions).
 5e. Reflections: place a Sphere Reflection Capture (Place Actors > Lights) in a room or a street: shiny floors, metal, glass and water
    within its radius reflect what it sees from there (the editor makes it again when the level changes; Details > Recapture).
 5d. AI: characters walk on the level's floors with self.moveTo (scripts) or AI Move To / AI Move To Actor (Blueprints): round walls,

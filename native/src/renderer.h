@@ -14,7 +14,9 @@ struct DrawItem { const GpuMesh* mesh = nullptr; glm::mat4 model{1}; glm::vec3 c
   // textures (GL names, 0 = none): base colour (sRGB, alpha), roughness (green), metal (blue), normal, ambient occlusion (red), emissive (sRGB)
   unsigned tex[6] = {0, 0, 0, 0, 0, 0}; glm::vec2 tiling{1}; float normalScale = 1, aoStrength = 1, cutoff = -1;   // cutoff >= 0: cut out where alpha is below it
   bool vcolor = false, worldUV = false, flipGreen = false, blend = false, linear = false;   // linear: color / emissive are linear light (glTF), not screen colours;   // vertex colours (models), textures laid on the world (no stretching), DirectX normal map, see-through
-  const glm::mat4* bones = nullptr; int boneCount = 0; };   // a skinned model: its joints (model space), model = the actor
+  const glm::mat4* bones = nullptr; int boneCount = 0;
+  // a landscape: 4 painted layers blended by the vertex colour (their colour, picture laid on the world every `tile` m, roughness)
+  bool splat = false; unsigned layerTex[4] = {0, 0, 0, 0}; glm::vec3 layerCol[4] = {glm::vec3(1), glm::vec3(1), glm::vec3(1), glm::vec3(1)}; float layerTile[4] = {4, 4, 4, 4}, layerRough[4] = {0.9f, 0.9f, 0.9f, 0.9f}; };   // a skinned model: its joints (model space), model = the actor
 struct LightItem { int type = 1; glm::vec3 pos{0}, dir{0, -1, 0}, color{1}; float intensity = 1, range = 10, cosOuter = 0.8f; bool shadows = false; };
 struct LineItem { const GpuMesh* mesh = nullptr; glm::mat4 model{1}; glm::vec4 color{1}; bool onTop = false, wire = false; unsigned id = 0; };   // wire: draw a triangle mesh as wireframe
 struct ProbeItem { glm::vec3 pos{0}; float radius = 10, intensity = 1; unsigned id = 0; };   // a Sphere Reflection Capture (id: for the editor's clicks)

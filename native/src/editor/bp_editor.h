@@ -9,7 +9,9 @@
 namespace pge {
 class Editor;
 struct BpTab {
-  std::string id; Blueprint bp; nlohmann::json saved;      // saved = what the project has (undo / redo bring a new one)
+  std::string id; Blueprint bp; nlohmann::json saved;
+  int graph = -1;   // -1 the Event Graph, else a function's graph
+  BpGraph& G() { if (graph >= (int)bp.funcs.size()) graph = -1; return graph >= 0 ? (BpGraph&)bp.funcs[graph] : (BpGraph&)bp; }      // saved = what the project has (undo / redo bring a new one)
   std::vector<BpMessage> msgs; bool compiledOnce = false, focus = false, frameNext = false, showCode = false;
   ImVec2 pan{200, 150}; float zoom = 1; std::set<int> sel; int centerOn = 0;
   // dragging

@@ -102,6 +102,7 @@ in vec3 vPos; in vec3 vNor; in vec4 vLight; in vec2 vUv; in vec4 vCol; out vec4 
 uniform vec3 uColor, uEmissive; uniform float uMetal, uRough, uOpacity; uniform int uUnlit;
 uniform sampler2D uBaseTex, uRoughTex, uMetalTex, uNormTex, uAoTex, uEmisTex; uniform int uMaps, uVColor, uWorldUV, uFlipG;
 uniform vec2 uTiling; uniform float uNormalScale, uAoStr, uCutoff;
+uniform int uSplat; uniform sampler2D uL0, uL1, uL2, uL3; uniform vec3 uLCol[4]; uniform float uLTile[4], uLRough[4]; uniform int uLHas[4];
 )";
 static const char* LIT_FS_MAIN = R"(
 // normal maps without stored tangents: the surface's frame from how position and uv change across the pixel
@@ -118,6 +119,11 @@ void main(){
   if(uVColor == 1) base *= vCol;
   if(uCutoff >= 0.0 && base.a < uCutoff) discard;
   float rough = uRough, metal = uMetal;
+  if(uSplat == 1){   // landscape layers, blended by their painted weights, pictures laid on the world
+    vec4 wv = vCol; float ws = wv.x + wv.y + wv.z + wv.w; wv = ws > 0.001 ? wv / ws : vec4(1.0, 0.0, 0.0, 0.0); vec2 wp = vPos.xz;
+    vec3 c0 = uLCol[0] * (uLHas[0] == 1 ? texture(uL0, wp / uLTile[0]).rgb : vec3(1.0)), c1 = uLCol[1] * (uLHas[1] == 1 ? texture(uL1, wp / uLTile[1]).rgb : vec3(1.0));
+    vec3 c2 = uLCol[2] * (uLHas[2] == 1 ? texture(uL2, wp / uLTile[2]).rgb : vec3(1.0)), c3 = uLCol[3] * (uLHas[3] == 1 ? texture(uL3, wp / uLTile[3]).rgb : vec3(1.0));
+    base = vec4(c0 * wv.x + c1 * wv.y + c2 * wv.z + c3 * wv.w, 1.0); rough = dot(wv, vec4(uLRough[0], uLRough[1], uLRough[2], uLRough[3])); metal = 0.0; }
   if((uMaps & 2) != 0) rough *= texture(uRoughTex, uv).g;
   if((uMaps & 4) != 0) metal *= texture(uMetalTex, uv).b;
   if((uMaps & 8) != 0){ vec3 m = texture(uNormTex, uv).xyz * 2.0 - 1.0; if(uFlipG == 1) m.y = -m.y; m.xy *= uNormalScale; N = perturb(Ng, vPos, uv, normalize(m)); }
@@ -301,6 +307,7 @@ static const char* TEXT_FS = R"(#version 330 core
 in vec2 vUv; uniform sampler2D uTex; uniform vec4 uColor; uniform int uId; out vec4 frag;
 void main(){ float a = texture(uTex, vUv).a; if(uId==1){ if(a<0.3) discard; frag = uColor; return; } frag = vec4(uColor.rgb, uColor.a*a); })";
 
+static bool inView(const glm::mat4& vp, const DrawItem& it);
 static unsigned compile(const char* vs, const char* fs, const char* name) {
   auto sh = [&](GLenum t, const char* src) { unsigned s = glCreateShader(t); glShaderSource(s, 1, &src, nullptr); glCompileShader(s); int ok = 0; glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
     if (!ok) { char b[2048]; glGetShaderInfoLog(s, 2048, nullptr, b); logMsg(std::string("error: shader ") + name + ": " + b, LogKind::Error); } return s; };
@@ -351,7 +358,7 @@ bool Renderer::init() {
 }
 void Renderer::shutdown() { glDeleteProgram(vox_); glDeleteProgram(wat_); glDeleteProgram(text_); glDeleteVertexArrays(1, &textVao_); glDeleteBuffers(1, &textVbo_); glDeleteProgram(lit_); glDeleteProgram(flat_); glDeleteProgram(depth_); glDeleteProgram(vdepth_); glDeleteProgram(idp_); glDeleteTextures(1, &boneTex_); for (auto& [k, pb] : probes_) glDeleteTextures(1, &pb.tex); probes_.clear(); if (capFbo_) glDeleteFramebuffers(1, &capFbo_); freeTarget(capRT_); glDeleteFramebuffers(1, &shadowFbo_); glDeleteTextures(1, &shadowTex_);
   for (unsigned q : {ssao_, aoBlur_, bloomPre_, bloomDown_, bloomUp_, compose_, sky_}) glDeleteProgram(q); glDeleteVertexArrays(1, &postVao_); freePost();
-  for (GpuMesh* m : {&wireBox_, &wireCapsule_, &arrow_, &axes_, &wireCam_, &grid_}) destroy(*m); releasePrimitives(); releaseAssets(); }
+  for (GpuMesh* m : {&wireBox_, &wireCapsule_, &arrow_, &axes_, &wireCam_, &grid_}) destroy(*m); releasePrimitives(); releaseAssets(); releaseLandscapes(); }
 
 // quads for each glyph of the ImGui font atlas (the big font, index 1 when loaded), centred on the origin, 1 unit = text size
 int Renderer::buildText(const TextItem& t) {
@@ -445,7 +452,11 @@ void Renderer::shadowPass(const Frame& f, const Camera& cam, bool& has) {
       for (int k = 0; k < 8; k++) { glm::vec3 q = glm::vec3(view * glm::vec4((k & 1) ? mx.x : mn.x, (k & 2) ? mx.y : mn.y, (k & 4) ? mx.z : mn.z, 1)); lo = glm::min(lo, q); hi = glm::max(hi, q); }
       return !(hi.x < -r || lo.x > r || hi.y < -r || lo.y > r); };
     glUseProgram(depth_); M4(depth_, "uVP", vp); glUniform1i(U(depth_, "uBaseTex"), 1); glUniform1i(U(depth_, "uBones"), 7);
-    for (auto& it : f.draws) { if (!it.castShadow || !it.mesh || !it.mesh->vao || it.opacity < 0.5f || it.pickOnly || it.unlit) continue; M4(depth_, "uModel", it.model); bindBones(depth_, it);
+    for (auto& it : f.draws) { if (!it.castShadow || !it.mesh || !it.mesh->vao || it.opacity < 0.5f || it.pickOnly || it.unlit) continue;
+      if (!it.bones) { glm::vec3 lo(1e9f), hi(-1e9f); const glm::vec3 &a = it.mesh->bmin, &b = it.mesh->bmax;   // only what this cascade covers
+        for (int k = 0; k < 8; k++) { glm::vec3 w = glm::vec3(it.model * glm::vec4((k & 1) ? b.x : a.x, (k & 2) ? b.y : a.y, (k & 4) ? b.z : a.z, 1)); lo = glm::min(lo, w); hi = glm::max(hi, w); }
+        if (a.x <= b.x && !inBox(lo, hi)) continue; }
+      M4(depth_, "uModel", it.model); bindBones(depth_, it);
       bool cut = it.cutoff >= 0 && it.tex[0]; glUniform1f(U(depth_, "uCutoff"), cut ? it.cutoff : -1.f); glUniform2f(U(depth_, "uTiling"), it.tiling.x, it.tiling.y);
       if (cut) { glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, it.tex[0]); glActiveTexture(GL_TEXTURE0); }
       glBindVertexArray(it.mesh->vao); glDrawElements(GL_TRIANGLES, it.mesh->count, GL_UNSIGNED_INT, nullptr); }
@@ -574,11 +585,15 @@ void Renderer::render(const Frame& f, const Camera& cam, int w, int h, const Ren
       common(p);
       static const char* TN[6] = {"uBaseTex", "uRoughTex", "uMetalTex", "uNormTex", "uAoTex", "uEmisTex"};
       for (int k = 0; k < 6; k++) glUniform1i(U(p, TN[k]), 1 + k); glUniform1i(U(p, "uBones"), 7);
+      { const char* LN[4] = {"uL0", "uL1", "uL2", "uL3"}; for (int k = 0; k < 4; k++) glUniform1i(U(p, LN[k]), 9 + k); }
       for (auto& it : f.draws) {
-        if (!it.mesh || !it.mesh->vao || it.pickOnly || (pass == 0) != (it.opacity >= 0.999f && !it.blend)) continue;
+        if (!it.mesh || !it.mesh->vao || it.pickOnly || (pass == 0) != (it.opacity >= 0.999f && !it.blend) || !inView(vp, it)) continue;
         M4(p, "uModel", it.model); V3(p, "uColor", it.linear ? it.color : lin(it.color)); V3(p, "uEmissive", it.linear ? it.emissive : lin(it.emissive)); bindBones(p, it);
         glUniform1f(U(p, "uMetal"), it.metal); glUniform1f(U(p, "uRough"), it.rough); glUniform1f(U(p, "uOpacity"), it.opacity); glUniform1i(U(p, "uUnlit"), it.unlit ? 1 : 0);
         int maps = 0; for (int k = 0; k < 6; k++) if (it.tex[k]) { maps |= 1 << k; glActiveTexture(GL_TEXTURE1 + k); glBindTexture(GL_TEXTURE_2D, it.tex[k]); } glActiveTexture(GL_TEXTURE0);
+        glUniform1i(U(p, "uSplat"), it.splat ? 1 : 0);
+        if (it.splat) { int has[4]; glm::vec3 lc[4]; for (int k = 0; k < 4; k++) { has[k] = it.layerTex[k] ? 1 : 0; lc[k] = lin(it.layerCol[k]); if (it.layerTex[k]) { glActiveTexture(GL_TEXTURE9 + k); glBindTexture(GL_TEXTURE_2D, it.layerTex[k]); } }
+          glActiveTexture(GL_TEXTURE0); glUniform1iv(U(p, "uLHas"), 4, has); glUniform3fv(U(p, "uLCol"), 4, &lc[0].x); glUniform1fv(U(p, "uLTile"), 4, it.layerTile); glUniform1fv(U(p, "uLRough"), 4, it.layerRough); }
         glUniform1i(U(p, "uMaps"), maps); glUniform1i(U(p, "uVColor"), it.vcolor ? 1 : 0); glUniform1i(U(p, "uWorldUV"), it.worldUV ? 1 : 0); glUniform1i(U(p, "uFlipG"), it.flipGreen ? 1 : 0);
         glUniform2f(U(p, "uTiling"), it.tiling.x, it.tiling.y); glUniform1f(U(p, "uNormalScale"), it.normalScale); glUniform1f(U(p, "uAoStr"), it.aoStrength); glUniform1f(U(p, "uCutoff"), it.cutoff);
         { const ProbeItem* best = nullptr; const Probe* bp = nullptr; glm::vec3 c(it.model[3]);   // the smallest capture around it (like Unreal)
@@ -671,6 +686,14 @@ void Renderer::render(const Frame& f, const Camera& cam, int w, int h, const Ren
   glBindVertexArray(0); glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
+// outside the view (all 8 corners of its box beyond one side): not drawn. Skinned models move away from their rest box, so they are kept.
+static bool inView(const glm::mat4& vp, const DrawItem& it) {
+  if (!it.mesh || it.bones) return true; const glm::vec3 &a = it.mesh->bmin, &b = it.mesh->bmax; if (a.x > b.x) return true;
+  glm::mat4 m = vp * it.model; int out[6] = {0, 0, 0, 0, 0, 0};
+  for (int k = 0; k < 8; k++) { glm::vec4 c = m * glm::vec4((k & 1) ? b.x : a.x, (k & 2) ? b.y : a.y, (k & 4) ? b.z : a.z, 1);
+    out[0] += c.x < -c.w; out[1] += c.x > c.w; out[2] += c.y < -c.w; out[3] += c.y > c.w; out[4] += c.z < -c.w; out[5] += c.z > c.w; }
+  for (int i = 0; i < 6; i++) if (out[i] == 8) return false; return true;
+}
 // a skinned model's joints into the bone texture (unit 7), or none
 void Renderer::bindBones(unsigned prog, const DrawItem& it) {
   bool on = it.bones && it.boneCount > 0; glUniform1i(U(prog, "uSkin"), on ? 1 : 0); if (!on) return;

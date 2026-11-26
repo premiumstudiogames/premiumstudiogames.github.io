@@ -207,6 +207,11 @@ static std::vector<BpNodeDef> buildLibrary() {
   add("AI.IsMoving", "AI", U, "Is Moving", "هل يمشي؟", "True while the actor walks somewhere (AI Move To).", "صح طول ما الممثل يمشي لمكان.", {T, "<ReturnValue:bool@!!($in(Target) && $in(Target).isMoving)"});
   add("Event.MoveFinished", "Events", E, "On Move Finished", "عند انتهاء المشي", "This actor's walk (AI Move To) ended: Success = it got there.", "مشي هذا الممثل انتهى: Success = وصل.", {"<then", "<Success:bool"});
 
+  // ---- functions (made in My Blueprint > Functions; their pins come from the function)
+  add("Function.Entry", "Functions", E, "Function Entry", "بداية الدالة", "Where the function starts. Its outputs are the values it was called with.", "من هنا تبدأ الدالة. مخارجها هي القيم اللي انطلبت فيها.", {"<then"}, "", {{"Function", "NewFunction"}});
+  add("Function.Return", "Functions", X, "Return Node", "إرجاع", "Ends the function and gives back its outputs.", "ينهي الدالة ويرجّع مخارجها.", {">exec"}, "", {{"Function", "NewFunction"}});
+  add("Function.Call", "Functions", X, "Call Function", "استدعاء دالة", "Runs one of this Blueprint's functions with these inputs; its outputs come out here.", "يشغّل دالة من دوال البلوبرنت بهذي المدخلات، ونتائجها تطلع هنا.", {}, "", {{"Function", "NewFunction"}});
+
   // ---- animation (models with animations: .glb / .gltf)
   add("Event.AnimationEnd", "Events", E, "On Animation End", "عند انتهاء الحركة", "A model's animation that doesn't loop reached its end. Animation = its name.",
       "حركة المجسم (اللي ما تتكرر) وصلت لنهايتها. Animation = اسم الحركة.", {"<then", "<Animation:string"});
@@ -306,7 +311,7 @@ const BpNodeDef* bpDef(const std::string& type) {
 }
 std::string bpCategoryAr(const std::string& c) {
   static const std::map<std::string, std::string> m = {{"Events", "الأحداث"}, {"Flow Control", "التحكم بالتنفيذ"}, {"Utilities", "أدوات"}, {"Actor", "الممثل"}, {"World", "العالم"},
-    {"Player", "اللاعب والكاميرا"}, {"Input", "الإدخال"}, {"Audio", "الصوت"}, {"Animation", "الحركات (الأنيميشن)"}, {"AI", "الذكاء الاصطناعي (المشي)"}, {"Save Game", "حفظ اللعبة"}, {"Math", "رياضيات ومنطق"}, {"Vector", "المتجهات"}, {"String", "النصوص"},
+    {"Player", "اللاعب والكاميرا"}, {"Input", "الإدخال"}, {"Audio", "الصوت"}, {"Animation", "الحركات (الأنيميشن)"}, {"Functions", "الدوال"}, {"AI", "الذكاء الاصطناعي (المشي)"}, {"Save Game", "حفظ اللعبة"}, {"Math", "رياضيات ومنطق"}, {"Vector", "المتجهات"}, {"String", "النصوص"},
     {"Array", "القوائم"}, {"Variables", "المتغيرات"}};
   auto it = m.find(c); return it == m.end() ? c : it->second;
 }
@@ -334,8 +339,9 @@ std::string bpPinAr(const std::string& id) {
 }
 
 /* ------------------------------------------------------------------ graph */
-BpNode* Blueprint::node(int id) { for (auto& n : nodes) if (n.id == id) return &n; return nullptr; }
-const BpNode* Blueprint::node(int id) const { for (auto& n : nodes) if (n.id == id) return &n; return nullptr; }
+BpNode* Blueprint::node(int id) { for (auto& n : nodes) if (n.id == id) return &n; for (auto& f : funcs) for (auto& n : f.nodes) if (n.id == id) return &n; return nullptr; }
+const BpNode* Blueprint::node(int id) const { for (auto& n : nodes) if (n.id == id) return &n; for (auto& f : funcs) for (auto& n : f.nodes) if (n.id == id) return &n; return nullptr; }
+const BpFunction* Blueprint::func(const std::string& name) const { for (auto& f : funcs) if (f.name == name) return &f; return nullptr; }
 const BpVar* Blueprint::var(const std::string& name) const { for (auto& v : vars) if (v.name == name) return &v; return nullptr; }
 
 std::vector<BpPinDef> bpPins(const Blueprint& bp, const BpNode& n) {
@@ -344,6 +350,20 @@ std::vector<BpPinDef> bpPins(const Blueprint& bp, const BpNode& n) {
   if (n.type == "Var.Get" || n.type == "Var.Set") {
     const BpVar* v = bp.var(n.values.value("Var", std::string())); PinType t = v ? v->type : PinType::Any;
     for (auto& p : pins) if (p.type == PinType::Any) { p.type = t; if (v) p.def = v->def; }
+  }
+  if (n.type == "Function.Entry" || n.type == "Function.Return" || n.type == "Function.Call") {   // the function's own inputs and outputs
+    const BpFunction* f = bp.func(n.values.value("Function", std::string())); pins.clear(); if (!f) return pins;
+    auto pin = [](const std::string& id, PinType t, bool out) { BpPinDef p; p.id = id; p.type = t; p.out = out;
+      p.def = t == PinType::Bool ? json(false) : t == PinType::Number ? json(0) : t == PinType::String ? json("") : t == PinType::Vector ? json::array({0, 0, 0}) : json(); return p; };
+    if (n.type == "Function.Entry") { pins.push_back(pin("then", PinType::Exec, true)); for (auto& a : f->inputs) pins.push_back(pin(a.name, a.type, true)); }
+    else if (n.type == "Function.Return") { pins.push_back(pin("exec", PinType::Exec, false)); for (auto& a : f->outputs) pins.push_back(pin(a.name, a.type, false)); }
+    else {
+      if (!f->pure) pins.push_back(pin("exec", PinType::Exec, false));
+      for (auto& a : f->inputs) pins.push_back(pin(a.name, a.type, false));
+      if (!f->pure) pins.push_back(pin("then", PinType::Exec, true));
+      for (size_t k = 0; k < f->outputs.size(); k++) { BpPinDef p = pin(f->outputs[k].name, f->outputs[k].type, true);
+        if (f->pure) { std::string args; for (auto& a : f->inputs) args += (args.empty() ? "" : ", ") + std::string("$in(") + a.name + ")"; p.code = "__fn_" + bpSanitize(f->name) + "(" + args + ")[" + std::to_string(k) + "]"; }
+        pins.push_back(p); } }
   }
   return pins;
 }
@@ -356,7 +376,13 @@ json bpToJson(const Blueprint& bp) {
   for (auto& n : bp.nodes) { json o = {{"id", n.id}, {"type", n.type}, {"x", std::round(n.x)}, {"y", std::round(n.y)}}; if (!n.values.empty()) o["values"] = n.values; if (n.type == "Comment") { o["w"] = n.w; o["h"] = n.h; } nodes.push_back(o); }
   for (auto& l : bp.links) links.push_back({l.from, l.fromPin, l.to, l.toPin});
   for (auto& v : bp.vars) vars.push_back({{"name", v.name}, {"type", pinTypeId(v.type)}, {"default", v.def}});
-  return {{"version", 1}, {"nodes", nodes}, {"links", links}, {"vars", vars}, {"nextId", bp.nextId}};
+  json r = {{"version", 1}, {"nodes", nodes}, {"links", links}, {"vars", vars}, {"nextId", bp.nextId}};
+  if (!bp.funcs.empty()) { json fs = json::array();
+    for (auto& f : bp.funcs) { Blueprint g; g.nodes = f.nodes; g.links = f.links; json gj = bpToJson(g); json ins = json::array(), outs = json::array();
+      for (auto& a : f.inputs) ins.push_back({{"name", a.name}, {"type", pinTypeId(a.type)}}); for (auto& a : f.outputs) outs.push_back({{"name", a.name}, {"type", pinTypeId(a.type)}});
+      fs.push_back({{"name", f.name}, {"pure", f.pure}, {"inputs", ins}, {"outputs", outs}, {"nodes", gj["nodes"]}, {"links", gj["links"]}}); }
+    r["functions"] = fs; }
+  return r;
 }
 Blueprint bpFromJson(const json& j) {
   Blueprint bp; if (!j.is_object()) return bp;
@@ -368,7 +394,12 @@ Blueprint bpFromJson(const json& j) {
     try { BpLink l{o[0].get<int>(), o[1].get<std::string>(), o[2].get<int>(), o[3].get<std::string>()}; bp.links.push_back(l); } catch (...) {} }
   if (j.contains("vars") && j["vars"].is_array()) for (auto& o : j["vars"]) if (o.is_object()) {
     BpVar v; v.name = o.value("name", std::string()); v.type = pinTypeFrom(o.value("type", std::string("number"))); v.def = o.contains("default") ? o["default"] : json(); if (!v.name.empty()) bp.vars.push_back(v); }
-  int mx = 0; for (auto& n : bp.nodes) mx = std::max(mx, n.id); bp.nextId = std::max(j.value("nextId", 1), mx + 1);
+  if (j.contains("functions") && j["functions"].is_array()) for (auto& o : j["functions"]) if (o.is_object()) {
+    Blueprint g = bpFromJson(json{{"nodes", o.value("nodes", json::array())}, {"links", o.value("links", json::array())}});
+    BpFunction f; f.nodes = g.nodes; f.links = g.links; f.name = o.value("name", std::string("NewFunction")); f.pure = o.value("pure", false);
+    auto params = [](const json& a, std::vector<BpParam>& out) { if (a.is_array()) for (auto& x : a) if (x.is_object() && x.contains("name")) out.push_back({x.value("name", std::string()), pinTypeFrom(x.value("type", std::string("number")))}); };
+    params(o.value("inputs", json()), f.inputs); params(o.value("outputs", json()), f.outputs); bp.funcs.push_back(f); }
+  int mx = 0; for (auto& n : bp.nodes) mx = std::max(mx, n.id); for (auto& f : bp.funcs) for (auto& n : f.nodes) mx = std::max(mx, n.id); bp.nextId = std::max(j.value("nextId", 1), mx + 1);
   return bp;
 }
 Blueprint bpStarter() {
@@ -528,6 +559,11 @@ struct Gen {
     const BpNodeDef* d = bpDef(n.type); if (!d) return "";
     std::vector<BpPinDef> st; const BpPinDef* p = pinOf(n, pin, st); if (!p || p->type != PinType::Exec || p->out) { err(n.id, "A wire goes into a pin that is gone", "فيه سلك داخل لمنفذ مو موجود"); return ""; }
     std::string t = p->code.empty() ? d->code : p->code;
+    if (n.type == "Function.Call" || n.type == "Function.Return") {   // made from the function's inputs and outputs
+      const BpFunction* f = bp.func(n.values.value("Function", std::string())); if (!f) return "";
+      std::string args; for (auto& a : f->inputs) args += (args.empty() ? "" : ", ") + std::string("$in(") + a.name + ")";
+      if (n.type == "Function.Return") { std::string outs; for (auto& a : f->outputs) outs += (outs.empty() ? "" : ", ") + std::string("$in(") + a.name + ")"; t = "return [" + outs + "];"; }
+      else { t = "{ const __r = __fn_" + bpSanitize(f->name) + "(" + args + ");"; for (size_t k = 0; k < f->outputs.size(); k++) t += " $out(" + f->outputs[k].name + ") = __r[" + std::to_string(k) + "];"; t += " }\n$exec(then)"; } }
     reached.insert(n.id); stack.push_back({n.id, pin});
     std::string body = expand(n, t, lv);
     stack.pop_back();
@@ -552,11 +588,14 @@ std::string pretty(const std::string& code, int base) {
 
 std::string bpCompile(const Blueprint& bp, const std::string& name, std::vector<BpMessage>& msgs) {
   msgs.clear(); Gen g(bp, msgs);
-  for (auto& n : bp.nodes) {
+  std::vector<const BpNode*> all; std::vector<const BpLink*> allLinks;   // the Event Graph and every function's graph
+  for (auto& n : bp.nodes) all.push_back(&n); for (auto& l : bp.links) allLinks.push_back(&l);
+  for (auto& f : bp.funcs) { for (auto& n : f.nodes) all.push_back(&n); for (auto& l : f.links) allLinks.push_back(&l); }
+  for (const BpNode* np : all) { const BpNode& n = *np;
     g.byId[n.id] = &n;
     if (!bpDef(n.type)) g.err(n.id, "Unknown node \"" + n.type + "\" (made by a newer engine?)", "عقدة غير معروفة \"" + n.type + "\" (يمكن من نسخة أحدث من المحرك؟)");
   }
-  for (auto& l : bp.links) {
+  for (const BpLink* lp : allLinks) { const BpLink& l = *lp;
     const BpNode* a = g.N(l.from); const BpNode* b = g.N(l.to); if (!a || !b) continue;
     std::vector<BpPinDef> s1, s2; const BpPinDef* pa = g.pinOf(*a, l.fromPin, s1); const BpPinDef* pb = g.pinOf(*b, l.toPin, s2);
     if (!pa || !pb || !pa->out || pb->out) { g.err(b->id, "A wire is connected to a pin that is gone", "فيه سلك موصّل بمنفذ مو موجود"); continue; }
@@ -566,12 +605,16 @@ std::string bpCompile(const Blueprint& bp, const std::string& name, std::vector<
     g.outLinks[{l.from, l.fromPin}].push_back({l.to, l.toPin});
   }
   for (auto& [k, v] : g.outLinks) { std::sort(v.begin(), v.end(), [&](auto& a, auto& b) { const BpNode* x = g.N(a.first); const BpNode* y = g.N(b.first); return x && y ? x->y < y->y : a < b; }); }
-  for (auto& n : bp.nodes) if (n.type == "Var.Get" || n.type == "Var.Set") {
-    std::string v = n.values.value("Var", std::string()); if (!bp.var(v)) g.err(n.id, "The variable \"" + v + "\" doesn't exist", "المتغير \"" + v + "\" مو موجود");
-  }
+  for (const BpNode* np : all) { const BpNode& n = *np; if (n.type == "Var.Get" || n.type == "Var.Set") {
+    std::string v = n.values.value("Var", std::string()); if (!bp.var(v)) g.err(n.id, "The variable \"" + v + "\" doesn't exist", "المتغير \"" + v + "\" مو موجود"); }
+    if ((n.type == "Function.Call" || n.type == "Function.Entry" || n.type == "Function.Return") && !bp.func(n.values.value("Function", std::string())))
+      g.err(n.id, "There is no function called " + n.values.value("Function", std::string()), "ما فيه دالة اسمها " + n.values.value("Function", std::string())); }
+  { std::set<std::string> fnames; for (auto& f : bp.funcs) { std::string nm = bpSanitize(f.name);
+      if (fnames.count(nm)) g.err(0, "Two functions are called " + nm, "فيه دالتين بنفس الاسم " + nm); fnames.insert(nm);
+      std::set<std::string> pn; for (auto* list : {&f.inputs, &f.outputs}) for (auto& a : *list) { if (a.name.empty() || pn.count(a.name)) g.err(0, "Function " + nm + ": two of its inputs / outputs have the same name (" + a.name + ")", "الدالة " + nm + ": فيه مدخلين أو مخرجين بنفس الاسم (" + a.name + ")"); pn.insert(a.name); } } }
   for (auto& n : bp.nodes) if (n.type == "Event.Custom") {
     std::string nm = bpSanitize(g.field(n, "Name")); if (g.customEvents.count(nm)) g.err(n.id, "Two custom events are called " + nm, "فيه حدثين مخصصين بنفس الاسم " + nm); g.customEvents.insert(nm); }
-  for (auto& n : bp.nodes) if (n.type == "Flow.CallEvent" || n.type == "Flow.SetTimer" || n.type == "Flow.ClearTimer") {
+  for (const BpNode* np : all) if (const BpNode& n = *np; n.type == "Flow.CallEvent" || n.type == "Flow.SetTimer" || n.type == "Flow.ClearTimer") {
     std::string nm = bpSanitize(g.field(n, "Event")); if (!g.customEvents.count(nm)) g.err(n.id, "There is no custom event called " + nm, "ما فيه حدث مخصص اسمه " + nm); }
 
   // the events → the engine's functions
@@ -597,6 +640,15 @@ std::string bpCompile(const Blueprint& bp, const std::string& name, std::vector<
   if (!ev["Event.MoveFinished"].empty()) { std::string b, pre; for (auto* n : ev["Event.MoveFinished"]) { pre += setOut(n, "Success", "ok"); b += body(n); } fn("function onMoveFinished(ok)", pre, b); }
   if (!ev["Event.AnimationEnd"].empty()) { std::string b, pre; for (auto* n : ev["Event.AnimationEnd"]) { pre += setOut(n, "Animation", "name"); b += body(n); } fn("function onAnimationEnd(name)", pre, b); }
   for (auto* n : ev["Event.Custom"]) fn("function __ce_" + bpSanitize(g.field(*n, "Name")) + "()", "", body(n));
+  // the functions: __fn_Name(inputs) → [outputs]
+  for (auto& f : bp.funcs) {
+    const BpNode* entry = nullptr; int entries = 0; for (auto& n : f.nodes) if (n.type == "Function.Entry") { entries++; if (!entry) entry = &n; }
+    if (!entry) { g.err(0, "Function " + f.name + " has no Function Entry node", "الدالة " + f.name + " ما فيها عقدة بداية"); continue; }
+    if (entries > 1) g.err(entry->id, "A function has only one Function Entry", "الدالة لها بداية وحدة بس");
+    std::string params, pre, defaults; for (size_t k = 0; k < f.inputs.size(); k++) { params += (k ? ", " : "") + std::string("__a") + std::to_string(k); pre += setOut(entry, f.inputs[k].name, "__a" + std::to_string(k)); }
+    for (auto& o : f.outputs) { BpPinDef p; p.type = o.type; p.def = o.type == PinType::Bool ? json(false) : o.type == PinType::Number ? json(0) : o.type == PinType::String ? json("") : o.type == PinType::Vector ? json::array({0, 0, 0}) : json(); defaults += (defaults.empty() ? "" : ", ") + g.literal(p, p.def); }
+    g.reached.insert(entry->id); fn("function __fn_" + bpSanitize(f.name) + "(" + params + ")", pre, g.execOut(*entry, "then", 1) + "\nreturn [" + defaults + "];");
+  }
   std::string uiBinds;
   for (auto* n : ev["Event.WidgetClicked"]) uiBinds += "__bp.uiOn(" + json(g.field(*n, "Widget")).dump() + ", 'click', () => {\n" + body(n) + "\n});\n";
   // exec entries reached from several places (or loops), as functions
@@ -608,11 +660,13 @@ std::string bpCompile(const Blueprint& bp, const std::string& name, std::vector<
     fn("function " + next + "()", "", b);
   }
   // warnings: nodes that never run, events with nothing on them
-  for (auto& n : bp.nodes) {
+  for (const BpNode* np : all) { const BpNode& n = *np;
     const BpNodeDef* d = bpDef(n.type); if (!d || d->kind == BpNodeDef::Comment) continue;
+    bool pureCall = n.type == "Function.Call" && bp.func(n.values.value("Function", std::string())) && bp.func(n.values.value("Function", std::string()))->pure;
+    if (pureCall) { bool used = false; for (const BpLink* l : allLinks) if (l->from == n.id) used = true; if (!used && !g.reached.count(n.id)) g.err(n.id, "This node's result isn't used", "نتيجة هذي العقدة ما تستخدمت", false); continue; }
     if (d->kind == BpNodeDef::Exec && !g.reached.count(n.id)) g.err(n.id, "This node never runs: wire its white input (exec) from an event", "هذي العقدة ما راح تشتغل: وصّل مدخلها الأبيض (التنفيذ) من حدث", false);
     if (d->kind == BpNodeDef::Pure && !g.reached.count(n.id)) {
-      bool used = false; for (auto& l : bp.links) if (l.from == n.id) used = true;
+      bool used = false; for (const BpLink* l : allLinks) if (l->from == n.id) used = true;
       if (!used) g.err(n.id, "This node's result isn't used", "نتيجة هذي العقدة ما تستخدمت", false);
     }
   }

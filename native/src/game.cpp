@@ -101,6 +101,13 @@ void addActorVisual(Frame& f, const Project& P, const Actor& a, const glm::mat4&
     l.range = a.light.range; l.cosOuter = std::cos(glm::radians(glm::clamp(a.light.angle, 1.f, 89.f))); l.shadows = a.light.shadows; f.lights.push_back(l);
     if (editor) { icon("Sphere", a.type == "DirectionalLight" ? glm::vec3(1, 0.91f, 0.66f) : a.light.color, 0.3f);
       if (r && a.type != "PointLight") line(r->arrow(), rotOnly, glm::vec3(1, 0.85f, 0.4f), true); }
+  } else if (a.type == "Landscape" && a.land) {
+    DrawItem d; d.mesh = &landscapeGpu(*a.land); d.model = W; d.id = id; d.splat = true; d.rough = 0.9f;
+    for (int k = 0; k < 4; k++) { auto it = P.materials.find(a.land->layer[k]);
+      if (it == P.materials.end()) { static const glm::vec3 DEF[4] = {{0.32f, 0.5f, 0.22f}, {0.48f, 0.47f, 0.45f}, {0.45f, 0.34f, 0.24f}, {0.82f, 0.74f, 0.55f}}; d.layerCol[k] = DEF[k]; continue; }   // grass, rock, dirt, sand
+      const Material& m = it->second; d.layerCol[k] = m.color; d.layerRough[k] = m.roughness; d.layerTile[k] = std::max(0.05f, a.land->tiling[k]);
+      if (!m.baseMap.empty()) { const Texture* t = texture(m.baseMap, true); d.layerTex[k] = t ? t->id : 0; } }
+    f.draws.push_back(d);
   } else if (a.type == "ReflectionCapture") {
     ProbeItem pr; pr.pos = pos; pr.radius = std::max(0.5f, a.probe.radius); pr.intensity = a.probe.intensity; pr.id = id; f.probes.push_back(pr);
     if (editor) { icon("Sphere", glm::vec3(0.75f, 0.85f, 1.f), 0.35f); }
@@ -145,11 +152,16 @@ bool Game::start() {
   level_ = *L; time_ = 0; restartRequested_ = false; tune_ = Tune(); sunSet_ = false; mouseSens_ = 1; grounded_ = running_ = sneaking_ = tapRun_ = false;
   for (auto& a : level_.actors) { auto o = std::make_unique<Obj>(); o->a = a; o->p = a.p; o->r = glm::radians(a.r); o->s = a.s; o->visible = a.visible; byId_[a.id] = o.get(); objs_.push_back(std::move(o)); }
   phys_.reset(new Physics()); phys_->init(level_.world.gravity); gravity_ = level_.world.gravity; swimming_ = false; nav_.clear(); navBuilt_ = false;
-  for (size_t i = 0; i < objs_.size(); i++) { Obj& o = *objs_[i]; if (o.a.type == "StaticMesh" && (o.a.physics.collision || o.a.physics.simulate)) addBody(o); }
+  for (size_t i = 0; i < objs_.size(); i++) { Obj& o = *objs_[i]; if (o.a.type == "StaticMesh" && (o.a.physics.collision || o.a.physics.simulate)) addBody(o);
+    if (o.a.type == "Landscape" && o.a.land) {   // its triangles where it is in the world
+      std::vector<float> pos; std::vector<uint32_t> idx; landscapeMesh(*o.a.land, pos, idx); glm::mat4 W = world(o); std::vector<glm::vec3> v(pos.size() / 3);
+      for (size_t k = 0; k < v.size(); k++) v[k] = glm::vec3(W * glm::vec4(pos[k * 3], pos[k * 3 + 1], pos[k * 3 + 2], 1));
+      if (ShapePtr sh = buildTriangleShape(v, idx)) { o.body = phys_->addStatic(sh, glm::vec3(0), i + 1); o.motion = Motion::Static; o.lastWorld = W; } } }
   // player
   mode_ = level_.world.gameMode; if (mode_ != "ThirdPerson" && mode_ != "Spectator") mode_ = "FirstPerson";
   float yawDeg = 0; glm::vec3 ps = playerStart(&yawDeg); yaw_ = glm::radians(yawDeg); pitch_ = 0;
   if (mode_ == "Spectator") specPos_ = ps + glm::vec3(0, 1.6f, 0); else player_ = phys_->addPlayer(ps);
+  { const std::string& pm = level_.world.playerModel; pModel_ = mode_ != "ThirdPerson" || pm == "Capsule" ? "" : pm.empty() ? "Characters/Mannequin.glb" : pm; pAnim_ = AnimPlay(); pAnimName_.clear(); charYaw_ = yaw_ + 3.14159265f; }
   // scripts
   if (!models_) models_.reset(new Models()); models_->clear(); models_->setBlocks(vox_.get());
   if (!ui_) ui_.reset(new Ui()); ui_->setConsole(console_); ui_->reset(); ui_->setAssets([this](const std::string& p) { return assetPath(p); });
@@ -344,7 +356,7 @@ void Game::update(float dt) {
     if (glm::any(glm::greaterThan(glm::abs(sc - o.bodyScale), glm::vec3(1e-4f)))) { phys_->setShape(o.body, o.a.mesh, sc); o.bodyScale = sc; }
     if (o.motion == Motion::Kinematic) phys_->moveKinematic(o.body, pos, q); else phys_->teleport(o.body, pos, q);
     o.lastWorld = W; }
-  walkFrame(dt);
+  walkFrame(dt); playerAnimFrame(dt);
   // models' animations move on; a script hears when one that doesn't loop reaches its end
   for (size_t i = 0; i < objs_.size(); i++) { Obj& o = *objs_[i]; if (!o.alive || o.anim.anim < 0) continue; ModelRef m = model(o.a.mesh); if (!m) continue;
     if (o.anim.advance(*m, dt) && o.anim.anim >= 0 && o.anim.anim < (int)m->anims.size()) scripts_->call(o.beh, EV_AnimEnd, 0, m->anims[o.anim.anim].name); }
@@ -368,11 +380,16 @@ void Game::buildFrame(Frame& f, Camera& cam, float aspect) const {
   if (mode_ == "Spectator") eye = specPos_; else eye = phys_->position(player_) + glm::vec3(0, 0.7f, 0);
   glm::mat4 camW;
   if (mode_ == "ThirdPerson") {
-    glm::vec3 c = phys_->position(player_);
-    DrawItem d; d.mesh = &primitive("Capsule"); float face = glm::dot(moveDir_, moveDir_) > 0 ? std::atan2(-moveDir_.x, -moveDir_.z) : yaw_;
-    d.model = glm::rotate(glm::translate(glm::mat4(1), c), face, AY); d.color = glm::vec3(0.227f, 0.482f, 1.f); d.rough = 0.5f; f.draws.push_back(d);
+    glm::vec3 c = phys_->position(player_); ModelRef pm = pModel_.empty() ? nullptr : model(pModel_);
+    if (pm && pm->ok()) {   // the character: its feet on the capsule's bottom, a model far from 1.8 m tall is fitted to it
+      Actor ch = newActor("StaticMesh", "Player"); ch.id = "@player"; ch.mesh = pModel_; ch.material.clear(); float hgt = pm->shape.bmax.y - pm->shape.bmin.y, k = hgt > 1.0f && hgt < 2.6f ? 1.f : 1.8f / std::max(hgt, 1e-3f);
+      glm::mat4 W = glm::scale(glm::rotate(glm::translate(glm::mat4(1), c - glm::vec3(0, 0.9f, 0)), charYaw_, AY), glm::vec3(k)) * glm::translate(glm::mat4(1), glm::vec3(0, -pm->shape.bmin.y, 0));
+      addActorVisual(f, project_, ch, W, false, 0, nullptr, nullptr, nullptr, pAnim_.anim >= 0 ? &pAnim_ : nullptr); }
+    else { DrawItem d; d.mesh = &primitive("Capsule"); float face = glm::dot(moveDir_, moveDir_) > 0 ? std::atan2(-moveDir_.x, -moveDir_.z) : yaw_;
+      d.model = glm::rotate(glm::translate(glm::mat4(1), c), face, AY); d.color = glm::vec3(0.227f, 0.482f, 1.f); d.rough = 0.5f; f.draws.push_back(d); }
     glm::vec3 back = glm::vec3(std::sin(yaw_) * std::cos(pitch_), -std::sin(pitch_), std::cos(yaw_) * std::cos(pitch_)) * 4.5f;
     glm::vec3 cp = eye + back + glm::vec3(0, 0.3f, 0);
+    { Physics::Hit h; if (phys_->rayCast(eye, cp, h, true)) cp = eye + (cp - eye) * std::max(0.f, h.fraction - 0.06f); }   // like a spring arm: the camera comes in front of walls
     cam.view = glm::lookAt(cp, eye, AY); cam.pos = cp;
   } else { camW = glm::translate(glm::mat4(1), eye) * glm::mat4_cast(quatYXZ({pitch_, yaw_, 0})); cam.view = glm::inverse(camW); cam.pos = eye; }
   cam.proj = glm::perspective(glm::radians(glm::clamp(level_.world.fov, 20.f, 150.f)), std::max(aspect, 0.01f), 0.05f, 2000.f);
@@ -480,13 +497,26 @@ void Game::ensureNav() {
   if (navBuilt_ || !phys_) return; navBuilt_ = true;
   glm::vec3 mn(1e9f), mx(-1e9f); int n = 0;
   for (auto& op : objs_) { const Obj& o = *op; if (!o.alive || o.body == NO_BODY || o.motion != Motion::Static) continue;
-    const MeshData& md = meshShape(o.a.mesh); glm::mat4 W = world(o);
-    for (int k = 0; k < 8; k++) { glm::vec3 c((k & 1) ? md.bmax.x : md.bmin.x, (k & 2) ? md.bmax.y : md.bmin.y, (k & 4) ? md.bmax.z : md.bmin.z), w = glm::vec3(W * glm::vec4(c, 1)); mn = glm::min(mn, w); mx = glm::max(mx, w); } n++; }
+    glm::vec3 bmn, bmx; if (o.a.type == "Landscape" && o.a.land) { float hs = o.a.land->size * 0.5f; auto mm = std::minmax_element(o.a.land->h.begin(), o.a.land->h.end()); bmn = {-hs, *mm.first, -hs}; bmx = {hs, *mm.second, hs}; }
+    else { const MeshData& md = meshShape(o.a.mesh); bmn = md.bmin; bmx = md.bmax; } glm::mat4 W = world(o);
+    for (int k = 0; k < 8; k++) { glm::vec3 c((k & 1) ? bmx.x : bmn.x, (k & 2) ? bmx.y : bmn.y, (k & 4) ? bmx.z : bmn.z), w = glm::vec3(W * glm::vec4(c, 1)); mn = glm::min(mn, w); mx = glm::max(mx, w); } n++; }
   if (vox_) { glm::vec3 p = playerPos(); mn = glm::min(mn, p - glm::vec3(48, 40, 48)); mx = glm::max(mx, p + glm::vec3(48, 40, 48)); n++; }   // a block world: around the player
   if (!n) { logMsg("warning: navigation: the level has no still meshes with collision to walk on", LogKind::Warn); return; }
   mn = glm::max(mn, glm::vec3(-2000)); mx = glm::min(mx, glm::vec3(2000)); phys_->optimize();
   nav_.build(*phys_, mn, mx, level_.world.nav);
   char b[160]; std::snprintf(b, sizeof b, "Navigation: %d walkable cells of %.2f m (%.0f ms)", nav_.walkable(), nav_.cell(), nav_.buildMs()); logMsg(b);
+}
+void Game::playerAnimFrame(float dt) {
+  if (pModel_.empty() || player_ == NO_BODY) return; ModelRef m = model(pModel_); if (!m || !m->ok() || m->anims.empty()) return;
+  glm::vec3 v = phys_->velocity(player_); float hs = glm::length(glm::vec2(v.x, v.z));
+  auto find = [&](std::initializer_list<const char*> keys) { for (const char* k : keys) for (size_t i = 0; i < m->anims.size(); i++) { std::string n = m->anims[i].name; for (char& c : n) c = (char)std::tolower((unsigned char)c); if (n.find(k) != std::string::npos) return (int)i; } return -1; };
+  std::string want; bool air = !grounded_ && !tune_.fly && !swimming_;
+  if (air) want = v.y > 0.5f ? "jump" : "fall"; else if (hs > 0.25f) want = hs > (tune_.walk + tune_.run) * 0.5f ? "run" : "walk"; else want = "idle";
+  int a = want == "run" ? find({"run", "sprint", "jog", "walk"}) : want == "walk" ? find({"walk", "jog", "run"}) : want == "jump" ? find({"jump", "air", "fall"}) : want == "fall" ? find({"fall", "air", "jump"}) : find({"idle", "stand", "breath"});
+  if (a < 0) a = want == "idle" ? 0 : find({"idle"}); if (a < 0) a = 0;
+  float speed = want == "walk" ? glm::clamp(hs / 1.6f, 0.5f, 2.5f) : want == "run" ? glm::clamp(hs / 5.5f, 0.6f, 2.f) : 1.f;
+  pAnim_.play(a, want != "jump", speed, 0.15f); pAnim_.speed = speed; pAnim_.advance(*m, dt); pAnimName_ = m->anims[a].name;
+  if (hs > 0.2f) { float tgt = std::atan2(v.x, v.z), d = std::remainder(tgt - charYaw_, 6.2831853f), mx = 12.f * dt; charYaw_ += glm::clamp(d, -mx, mx); }
 }
 static float footOf(const Actor& a, const glm::vec3& scale) { if (a.type != "StaticMesh") return 0; return -meshShape(a.mesh).bmin.y * std::abs(scale.y); }   // the actor's origin above its feet
 bool Game::walkPath(Obj& o, const glm::vec3& goal) {
@@ -581,6 +611,7 @@ void Game::playerSet(const std::string& js) { json o = json::parse(js, nullptr, 
   auto s = [&](const char* k, std::string& d) { if (o.contains(k) && o[k].is_string()) d = o[k].get<std::string>(); };
   b("fly", t.fly); b("doubleTapRun", t.doubleTapRun); f("walkSpeed", t.walk); f("runSpeed", t.run); f("sneakSpeed", t.sneak); f("jumpSpeed", t.jump); f("flySpeed", t.flySpeed);
   f("flyRun", t.flyRun); f("flyClimb", t.flyClimb); f("gravity", t.gravity); f("accel", t.accel); s("runKey", t.runKey); s("sneakKey", t.sneakKey);
+  if (o.contains("model") && o["model"].is_string()) { std::string m = o["model"]; pModel_ = m == "Capsule" ? "" : m.empty() ? "Characters/Mannequin.glb" : m; pAnim_ = AnimPlay(); }   // Third Person: another character
   if (o.contains("yaw") && o["yaw"].is_number()) yaw_ = o["yaw"].get<float>(); if (o.contains("pitch") && o["pitch"].is_number()) pitch_ = glm::clamp(o["pitch"].get<float>(), -1.45f, 1.45f); }
 // the game's own saved values: one file per name in Documents/PremiumEngine/Saves/<game>/store
 std::string Game::storage(const std::string& op, const std::string& key, const std::string& val) {

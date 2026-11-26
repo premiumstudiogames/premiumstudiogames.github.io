@@ -6,6 +6,8 @@
 #include <map>
 #include <glm/glm.hpp>
 #include <nlohmann/json.hpp>
+#include <memory>
+#include "landscape.h"
 
 namespace pge {
 
@@ -31,6 +33,7 @@ struct Actor {
   std::string mesh = "Cube", material = "M_Default", script;   // mesh: a shape (Cube, Sphere, ...) or a model file of the project (Models/Robot.glb); material "" = the model's own
   std::string anim; bool animLoop = true; float animSpeed = 1;   // a model's animation that plays from the start
   PhysicsProps physics; LightProps light; TextProps text; ProbeProps probe;
+  LandscapeRef land;   // a Landscape actor's heights and paint
   bool isLight() const { return type == "PointLight" || type == "SpotLight" || type == "DirectionalLight"; }
 };
 
@@ -47,6 +50,7 @@ struct WorldSettings {
   glm::vec3 sky{0.56f, 0.72f, 0.88f}, skyLight{0.87f, 0.92f, 1.0f}, groundLight{0.23f, 0.25f, 0.29f}, fogColor{0.56f, 0.72f, 0.88f};
   float ambient = 0.8f, exposure = 1, gravity = -9.81f, killZ = -30, fogDensity = 0.01f, fov = 75;
   bool fog = false; PostProcess post; NavSettings nav;
+  std::string playerModel;   // Third Person: the player's character ("" = the engine's mannequin, "Capsule", or a model of the project)
   // a sky drawn behind everything (scripts, world.setSky): colour at the top (sky is the horizon), the sun's disc and glow,
   // the moon, stars. Not saved with the level; skyTop.x < 0 = a flat sky of the sky colour (as before)
   glm::vec3 skyTop{-1, -1, -1}, sunDisc{0}, sunDiscDir{0, 1, 0}; float sunSize = 0.035f, moon = 0, stars = 0;

@@ -59,6 +59,7 @@ std::string BpTab::title(const BpNodeDef* d, const BpNode& n, int lang) const {
   if (n.type == "Var.Get" || n.type == "Var.Set") { std::string v = n.values.value("Var", std::string()); en = (n.type == "Var.Get" ? "Get " : "Set ") + v; a = (n.type == "Var.Get" ? "اقرأ " : "غيّر ") + v; }
   if (n.type == "Event.Custom") { en = n.values.value("Name", std::string("MyEvent")); a = "حدث: " + en; }
   if (n.type == "Flow.CallEvent") { en = "Call " + n.values.value("Event", std::string("MyEvent")); a = "شغّل " + n.values.value("Event", std::string("MyEvent")); }
+  if (n.type == "Function.Entry" || n.type == "Function.Call") { std::string fn = n.values.value("Function", std::string("NewFunction")); en = fn; a = (n.type == "Function.Call" ? "دالة: " : "بداية: ") + fn; }
   if (n.type == "Event.KeyPressed") { en = n.values.value("Key", std::string("KeyE")) + " Pressed"; a = "عند ضغط " + n.values.value("Key", std::string("KeyE")); }
   return lang == 1 ? ar(a) : en;
 }
@@ -163,7 +164,8 @@ void BpTab::drawSide(Editor& ed, int lang) {
     ImGui::SameLine(); ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.5f);
     std::string old = v.name; ImGui::InputText("##nm", &v.name, ImGuiInputTextFlags_CharsNoBlank);
     if (ImGui::IsItemDeactivatedAfterEdit()) { v.name = bpSanitize(v.name); bool dup = false; for (size_t k = 0; k < bp.vars.size(); k++) dup = dup || (k != i && bp.vars[k].name == v.name);
-      if (dup || v.name.empty()) v.name = renameFrom.empty() ? old : renameFrom; else { for (auto& n : bp.nodes) if ((n.type == "Var.Get" || n.type == "Var.Set") && n.values.value("Var", std::string()) == renameFrom) n.values["Var"] = v.name; ch = true; } renameFrom.clear(); }
+      if (dup || v.name.empty()) v.name = renameFrom.empty() ? old : renameFrom; else { auto ren = [&](BpGraph& gr) { for (auto& n : gr.nodes) if ((n.type == "Var.Get" || n.type == "Var.Set") && n.values.value("Var", std::string()) == renameFrom) n.values["Var"] = v.name; };
+        ren(bp); for (auto& f : bp.funcs) ren(f); ch = true; } renameFrom.clear(); }
     else if (ImGui::IsItemActivated()) renameFrom = old;
     ImGui::SameLine(); ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - ImGui::GetFrameHeight() - 4);
     const PinType types[] = {PinType::Bool, PinType::Number, PinType::String, PinType::Vector, PinType::Actor, PinType::Array};
@@ -180,9 +182,65 @@ void BpTab::drawSide(Editor& ed, int lang) {
   if (ImGui::Button(lang == 1 ? visualText("+ متغير").c_str() : "+ Variable")) { std::string n = "NewVar"; for (int k = 2; bp.var(n); k++) n = "NewVar" + std::to_string(k); bp.vars.push_back({n, PinType::Number, 0}); ch = true; }
   if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s", "A value this Blueprint keeps (score, health...). Drag it into the graph.", visualText("قيمة يحفظها البلوبرنت (النقاط، الصحة...). اسحبها للرسم.").c_str());
 
+  // ---- functions: their own graphs, inputs and outputs (like Unreal's)
+  H("FUNCTIONS", "الدوال");
+  auto everyGraph = [&](auto fn) { fn((BpGraph&)bp); for (auto& f : bp.funcs) fn((BpGraph&)f); };
+  if (ImGui::Selectable(lang == 1 ? visualText("مخطط الأحداث (Event Graph)").c_str() : "Event Graph", graph < 0)) { graph = -1; sel.clear(); frameNext = true; }
+  for (size_t i = 0; i < bp.funcs.size(); i++) { ImGui::PushID(5000 + (int)i);
+    std::string lb = std::string(bp.funcs[i].pure ? "(f)  " : "f  ") + bp.funcs[i].name; if (ImGui::Selectable(lb.c_str(), graph == (int)i)) { graph = (int)i; sel.clear(); frameNext = true; }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s", "Double-click to open; drag a call from the right-click menu (Functions).", visualText("اضغط عشان تفتحها، وتستدعيها من قائمة الزر اليمين (الدوال).").c_str());
+    ImGui::PopID(); }
+  if (ImGui::Button(lang == 1 ? visualText("+ دالة").c_str() : "+ Function")) {
+    std::string nm = "NewFunction"; for (int k = 2; bp.func(nm); k++) nm = "NewFunction" + std::to_string(k);
+    BpFunction f; f.name = nm; BpNode en; en.id = bp.nextId++; en.type = "Function.Entry"; en.x = 0; en.y = 0; en.values["Function"] = nm;
+    BpNode rt; rt.id = bp.nextId++; rt.type = "Function.Return"; rt.x = 480; rt.y = 0; rt.values["Function"] = nm; f.nodes = {en, rt}; f.links.push_back({en.id, "then", rt.id, "exec"});
+    bp.funcs.push_back(f); graph = (int)bp.funcs.size() - 1; sel.clear(); frameNext = true; ch = true; }
+  if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s", "A function: nodes you use again and again, with inputs and outputs.", visualText("دالة: عقد تستخدمها أكثر من مرة، لها مدخلات ومخرجات.").c_str());
+  if (graph >= 0 && graph < (int)bp.funcs.size()) { BpFunction& f = bp.funcs[graph]; std::string fname = f.name;
+    auto forNodes = [&](auto fn) { everyGraph([&](BpGraph& g) { for (auto& n : g.nodes) if (n.type.rfind("Function.", 0) == 0 && n.values.value("Function", std::string()) == fname) fn(g, n); }); };
+    ImGui::Indent(8); ImGui::SetNextItemWidth(-1); std::string nm = f.name;
+    if (ImGui::InputText("##fname", &nm, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CharsNoBlank)) { nm = bpSanitize(nm);
+      if (!nm.empty() && !bp.func(nm)) { forNodes([&](BpGraph&, BpNode& n) { n.values["Function"] = nm; }); f.name = nm; ch = true; } }
+    bool pure = f.pure; if (ImGui::Checkbox(lang == 1 ? visualText("نقية (بدون تنفيذ)").c_str() : "Pure", &pure)) { f.pure = pure;
+      forNodes([&](BpGraph& g, BpNode& n) { if (n.type == "Function.Call") g.links.erase(std::remove_if(g.links.begin(), g.links.end(), [&](const BpLink& l) { return (l.to == n.id && l.toPin == "exec") || (l.from == n.id && l.fromPin == "then"); }), g.links.end()); }); ch = true; }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s", "Pure: no exec pins where it is called, like a Get (for calculations).", visualText("نقية: ما لها أسلاك تنفيذ وين ما تستدعيها، مثل عقد الحساب.").c_str());
+    const PinType types[] = {PinType::Bool, PinType::Number, PinType::String, PinType::Vector, PinType::Actor, PinType::Array};
+    // a list of inputs or outputs: name, type, remove; wires follow a new name, and go when one is removed or changes type
+    auto params = [&](std::vector<BpParam>& list, bool inputs) {
+      int delP = -1;
+      for (size_t k = 0; k < list.size(); k++) { BpParam& a = list[k]; ImGui::PushID((inputs ? 7000 : 8000) + (int)k);
+        ImGui::PushStyleColor(ImGuiCol_Button, pinColor(a.type, 0.9f)); ImGui::Button("##c", {8, ImGui::GetFrameHeight()}); ImGui::PopStyleColor(); ImGui::SameLine();
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.48f); std::string pn = a.name;
+        if (ImGui::InputText("##pn", &pn, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CharsNoBlank)) { pn = bpSanitize(pn); bool dup = false; for (auto& b : list) dup = dup || b.name == pn;
+          if (!pn.empty() && !dup) { std::string old = a.name;
+            forNodes([&](BpGraph& g, BpNode& n) { bool src = inputs ? n.type == "Function.Entry" : n.type == "Function.Call"; bool dst = inputs ? n.type == "Function.Call" : n.type == "Function.Return";
+              for (auto& l : g.links) { if (src && l.from == n.id && l.fromPin == old) l.fromPin = pn; if (dst && l.to == n.id && l.toPin == old) l.toPin = pn; }
+              if (dst && n.values.contains(old)) { n.values[pn] = n.values[old]; n.values.erase(old); } });
+            a.name = pn; ch = true; } }
+        ImGui::SameLine(); ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - ImGui::GetFrameHeight() - 4);
+        if (ImGui::BeginCombo("##pt", lang == 1 ? visualText(pinTypeAr(a.type)).c_str() : pinTypeEn(a.type))) {
+          for (auto t : types) if (ImGui::Selectable(lang == 1 ? visualText(pinTypeAr(t)).c_str() : pinTypeEn(t), t == a.type)) { if (t != a.type) { std::string pnm = a.name;
+              forNodes([&](BpGraph& g, BpNode& n) { g.links.erase(std::remove_if(g.links.begin(), g.links.end(), [&](const BpLink& l) { return (l.from == n.id && l.fromPin == pnm) || (l.to == n.id && l.toPin == pnm); }), g.links.end()); n.values.erase(pnm); });
+              a.type = t; ch = true; } }
+          ImGui::EndCombo(); }
+        ImGui::SameLine(); if (ImGui::Button("x", {ImGui::GetFrameHeight(), 0})) delP = (int)k; ImGui::PopID(); }
+      if (delP >= 0) { std::string pnm = list[delP].name; forNodes([&](BpGraph& g, BpNode& n) { g.links.erase(std::remove_if(g.links.begin(), g.links.end(), [&](const BpLink& l) { return (l.from == n.id && l.fromPin == pnm) || (l.to == n.id && l.toPin == pnm); }), g.links.end()); n.values.erase(pnm); });
+        list.erase(list.begin() + delP); ch = true; }
+      if (ImGui::Button(inputs ? (lang == 1 ? visualText("+ مدخل").c_str() : "+ Input") : (lang == 1 ? visualText("+ مخرج").c_str() : "+ Output"))) {
+        std::string base = inputs ? "Input" : "Output", n = base; for (int k = 2; ; k++) { bool used = false; for (auto& b : list) used = used || b.name == n; if (!used) break; n = base + std::to_string(k); }
+        list.push_back({n, PinType::Number}); ch = true; } };
+    ImGui::TextDisabled("%s", lang == 1 ? visualText("المدخلات").c_str() : "Inputs"); params(f.inputs, true);
+    ImGui::TextDisabled("%s", lang == 1 ? visualText("المخرجات").c_str() : "Outputs"); params(f.outputs, false);
+    if (ImGui::Button(lang == 1 ? visualText("احذف الدالة").c_str() : "Delete Function")) {
+      std::set<int> gone; everyGraph([&](BpGraph& g) { for (auto& n : g.nodes) if (n.type == "Function.Call" && n.values.value("Function", std::string()) == fname) gone.insert(n.id); });
+      everyGraph([&](BpGraph& g) { g.links.erase(std::remove_if(g.links.begin(), g.links.end(), [&](const BpLink& l) { return gone.count(l.from) || gone.count(l.to); }), g.links.end());
+        g.nodes.erase(std::remove_if(g.nodes.begin(), g.nodes.end(), [&](const BpNode& n) { return gone.count(n.id) > 0; }), g.nodes.end()); });
+      bp.funcs.erase(bp.funcs.begin() + graph); graph = -1; sel.clear(); frameNext = true; ch = true; }
+    ImGui::Unindent(8); }
+
   H("EVENTS", "الأحداث");
   for (auto& n : bp.nodes) { const BpNodeDef* d = bpDef(n.type); if (!d || d->kind != BpNodeDef::Event) continue;
-    if (ImGui::Selectable((title(d, n, lang) + "##ev" + std::to_string(n.id)).c_str(), sel.count(n.id) > 0)) { sel = {n.id}; centerOn = n.id; } }
+    if (ImGui::Selectable((title(d, n, lang) + "##ev" + std::to_string(n.id)).c_str(), graph < 0 && sel.count(n.id) > 0)) { graph = -1; sel = {n.id}; centerOn = n.id; } }
   H("COMPILER RESULTS", "نتائج الترجمة");
   if (msgs.empty()) ImGui::TextColored(ImVec4(0.4f, 0.85f, 0.5f, 1), "%s", lang == 1 ? visualText("كل شي سليم").c_str() : "Good - no errors");
   for (size_t i = 0; i < msgs.size(); i++) { auto& m = msgs[i];
@@ -229,7 +287,7 @@ void BpTab::drawCanvas(Editor& ed, int lang) {
   bool canvasHover = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenOverlappedByItem), canvasFocus = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
   // variables dropped in
   if (ImGui::BeginDragDropTarget()) { if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("BPVAR")) { std::string v((const char*)pl->Data);
-      ImVec2 w = toWorld(io.MousePos, O); BpNode n; n.id = bp.nextId++; n.type = io.KeyAlt ? "Var.Set" : "Var.Get"; n.x = w.x; n.y = w.y; n.values["Var"] = v; bp.nodes.push_back(n); sel = {n.id}; commit(ed); }
+      ImVec2 w = toWorld(io.MousePos, O); BpNode n; n.id = bp.nextId++; n.type = io.KeyAlt ? "Var.Set" : "Var.Get"; n.x = w.x; n.y = w.y; n.values["Var"] = v; G().nodes.push_back(n); sel = {n.id}; commit(ed); }
     ImGui::EndDragDropTarget(); }
   dl->PushClipRect(O, E, true);
   dl->AddRectFilled(O, E, IM_COL32(38, 38, 40, 255));
@@ -243,18 +301,18 @@ void BpTab::drawCanvas(Editor& ed, int lang) {
 
   // ---- layout
   std::map<int, std::vector<BpMessage*>> nodeMsgs; for (auto& m : msgs) if (m.node) nodeMsgs[m.node].push_back(&m);
-  std::set<std::pair<int, std::string>> linked; for (auto& l : bp.links) { linked.insert({l.from, l.fromPin}); linked.insert({l.to, l.toPin}); }
+  std::set<std::pair<int, std::string>> linked; for (auto& l : G().links) { linked.insert({l.from, l.fromPin}); linked.insert({l.to, l.toPin}); }
   struct Lay { ImVec2 a, b; float hh; std::vector<BpPinDef> pins; };
   std::map<int, Lay> lay; pins_.clear();
   const float rh = fs * 1.5f, pad = fs * 0.6f;
-  for (auto& n : bp.nodes) {
+  for (auto& n : G().nodes) {
     const BpNodeDef* d = bpDef(n.type); Lay L; L.pins = bpPins(bp, n);
     if (d && d->kind == BpNodeDef::Comment) { L.a = {n.x, n.y}; L.b = {n.x + n.w, n.y + n.h}; L.hh = fs * 1.6f; lay[n.id] = L; continue; }
     bool compact = n.type == "Var.Get";
     std::string tt = title(d, n, lang); float tw = font->CalcTextSizeA(fs, 1e9f, 0, tt.c_str()).x + fs * 2.2f;
     if (lang == 2 && d) tw = std::max(tw, font->CalcTextSizeA(fs * 0.85f, 1e9f, 0, ar(d->ar).c_str()).x + fs * 2.2f);
     float hh = compact ? 0 : fs * (lang == 2 ? 2.45f : 1.65f);
-    int nf = d ? (int)d->fields.size() : 0; if (n.type == "Event.Custom" || n.type == "Flow.CallEvent" || n.type == "Event.KeyPressed") nf = 1;
+    int nf = d ? (int)d->fields.size() : 0; if (n.type.rfind("Function.", 0) == 0) nf = 0; if (n.type == "Event.Custom" || n.type == "Flow.CallEvent" || n.type == "Event.KeyPressed") nf = 1;
     float fieldsH = nf * rh;
     float inW = 0, outW = 0; int nin = 0, nout = 0;
     for (auto& p : L.pins) { std::string lbl = lang == 1 ? ar(bpPinAr(p.id)) : bpPinEn(p.id); float w = font->CalcTextSizeA(fs, 1e9f, 0, lbl.c_str()).x + fs * 1.6f;
@@ -273,14 +331,14 @@ void BpTab::drawCanvas(Editor& ed, int lang) {
 
   // ---- comments (behind)
   float z = zoom; ImGui::SetWindowFontScale(std::max(0.3f, z));
-  for (auto& n : bp.nodes) if (n.type == "Comment") { Lay& L = lay[n.id]; ImVec2 a = S(L.a), b = S(L.b);
+  for (auto& n : G().nodes) if (n.type == "Comment") { Lay& L = lay[n.id]; ImVec2 a = S(L.a), b = S(L.b);
     bool s = sel.count(n.id) > 0; dl->AddRectFilled(a, b, IM_COL32(120, 120, 120, 40), 6 * z); dl->AddRectFilled(a, {b.x, a.y + L.hh * z}, IM_COL32(120, 120, 120, 90), 6 * z, ImDrawFlags_RoundCornersTop);
     dl->AddRect(a, b, s ? IM_COL32(245, 166, 35, 255) : IM_COL32(170, 170, 170, 120), 6 * z, 0, s ? 2.f : 1.f);
     std::string t = n.values.value("Text", std::string("Comment")); dl->AddText(font, fs * 1.1f * z, {a.x + 8 * z, a.y + 4 * z}, IM_COL32_WHITE, ar(t).c_str());
     dl->AddTriangleFilled({b.x - 12 * z, b.y}, {b.x, b.y - 12 * z}, b, IM_COL32(200, 200, 200, 160)); }
 
   // ---- wires
-  for (auto& l : bp.links) { const PinPos* a = pinAt(l.from, l.fromPin); const PinPos* b = pinAt(l.to, l.toPin); if (!a || !b) continue;
+  for (auto& l : G().links) { const PinPos* a = pinAt(l.from, l.fromPin); const PinPos* b = pinAt(l.to, l.toPin); if (!a || !b) continue;
     ImVec2 p1 = S(a->pos), p4 = S(b->pos); float dx = std::max(40.f * z, std::fabs(p4.x - p1.x) * 0.5f);
     dl->AddBezierCubic(p1, {p1.x + dx, p1.y}, {p4.x - dx, p4.y}, p4, pinColor(a->type == PinType::Any ? b->type : a->type), (a->type == PinType::Exec ? 3.2f : 2.4f) * std::max(0.5f, z)); }
   if (dragLink) { const PinPos* a = pinAt(linkNode, linkPin); if (a) { ImVec2 p1 = S(a->pos), p4 = io.MousePos; if (!a->out) std::swap(p1, p4);
@@ -288,7 +346,7 @@ void BpTab::drawCanvas(Editor& ed, int lang) {
 
   // ---- nodes
   bool widgetHover = false, widgetActive = false; std::vector<int> hoverOrder;
-  for (auto& n : bp.nodes) { if (n.type == "Comment") continue;
+  for (auto& n : G().nodes) { if (n.type == "Comment") continue;
     const BpNodeDef* d = bpDef(n.type); Lay& L = lay[n.id]; ImVec2 a = S(L.a), b = S(L.b); if (b.x < O.x || a.x > E.x || b.y < O.y || a.y > E.y) continue;
     bool compact = n.type == "Var.Get"; bool s = sel.count(n.id) > 0; bool bad = false, warn = false; for (auto* m : nodeMsgs[n.id]) (m->error ? bad : warn) = true;
     float r = 7 * z;
@@ -297,7 +355,8 @@ void BpTab::drawCanvas(Editor& ed, int lang) {
       dl->AddRectFilled(a, b, IM_COL32(28, 28, 30, 240), r * 1.8f); dl->AddRectFilled(a, {a.x + 5 * z, b.y}, pinColor(v ? v->type : PinType::Any), r, ImDrawFlags_RoundCornersLeft); }
     else {
       dl->AddRectFilled(a, b, IM_COL32(22, 22, 24, 238), r);
-      ImU32 hc = headerColor(d); dl->AddRectFilledMultiColor({a.x + 1, a.y + 1}, {b.x - 1, a.y + (L.hh - (d && !d->fields.empty() ? 0 : 0)) * z}, hc, IM_COL32(28, 28, 30, 230), IM_COL32(28, 28, 30, 230), hc);
+      ImU32 hc = headerColor(d); if (n.type == "Function.Entry" || n.type == "Function.Return") hc = IM_COL32(110, 50, 150, 255);
+      if (n.type == "Function.Call") { const BpFunction* cf = bp.func(n.values.value("Function", std::string())); hc = cf && cf->pure ? IM_COL32(52, 105, 42, 255) : IM_COL32(28, 72, 130, 255); } dl->AddRectFilledMultiColor({a.x + 1, a.y + 1}, {b.x - 1, a.y + (L.hh - (d && !d->fields.empty() ? 0 : 0)) * z}, hc, IM_COL32(28, 28, 30, 230), IM_COL32(28, 28, 30, 230), hc);
       float hy = a.y + fs * 0.25f * z;
       if (d && d->kind == BpNodeDef::Event) dl->AddCircleFilled({a.x + fs * 0.85f * z, hy + fs * 0.5f * z}, fs * 0.32f * z, IM_COL32(255, 255, 255, 220));
       else if (d && d->kind == BpNodeDef::Pure) dl->AddText(font, fs * z, {a.x + fs * 0.5f * z, hy}, IM_COL32(170, 255, 140, 255), "f");
@@ -309,7 +368,7 @@ void BpTab::drawCanvas(Editor& ed, int lang) {
     if (bad || warn) { ImVec2 c(b.x - fs * 0.4f * z, a.y - fs * 0.1f * z); dl->AddCircleFilled(c, fs * 0.55f * z, bad ? IM_COL32(220, 40, 30, 255) : IM_COL32(230, 170, 30, 255)); dl->AddText(font, fs * 0.9f * z, {c.x - fs * 0.13f * z, c.y - fs * 0.48f * z}, IM_COL32_WHITE, "!"); }
     // fields (an event's name, a key, a variable)
     float fy = (compact ? 0 : (lang == 2 ? 2.45f : 1.65f)) * fs;
-    if (d && !compact && z > 0.45f) for (auto& f : d->fields) { if (n.type == "Var.Set" && f.id == "Var") continue;
+    if (d && !compact && z > 0.45f) for (auto& f : d->fields) { if ((n.type == "Var.Set" && f.id == "Var") || f.id == "Function") continue;
       ImGui::SetCursorScreenPos(S({n.x + fs * 0.6f, n.y + fy + rh * 0.12f})); ImGui::PushID(n.id); ImGui::PushID(f.id.c_str());
       std::string v = n.values.value(f.id, f.def); ImGui::SetNextItemWidth((L.b.x - L.a.x - fs * 1.2f) * z);
       if (f.id == "Event" ) { if (ImGui::BeginCombo("##f", v.c_str())) { for (auto& m : bp.nodes) if (m.type == "Event.Custom") { std::string nm = m.values.value("Name", std::string("MyEvent")); if (ImGui::Selectable(nm.c_str(), nm == v)) { n.values[f.id] = nm; commit(ed); } } ImGui::EndCombo(); } }
@@ -345,9 +404,12 @@ void BpTab::drawCanvas(Editor& ed, int lang) {
   ImGui::SetWindowFontScale(1);
   if (boxSel) { ImVec2 a = boxA, b = io.MousePos; dl->AddRectFilled(ImMin(a, b), ImMax(a, b), IM_COL32(245, 166, 35, 30)); dl->AddRect(ImMin(a, b), ImMax(a, b), IM_COL32(245, 166, 35, 200)); }
   dl->PopClipRect();
+  // which graph, like Unreal's breadcrumb
+  { std::string gn = graph >= 0 ? "Function: " + bp.funcs[graph].name : std::string("Event Graph"); std::string ga = graph >= 0 ? "الدالة: " + bp.funcs[graph].name : std::string("مخطط الأحداث");
+    std::string t = lang == 1 ? visualText(ga) : lang == 2 ? gn + "   ·   " + visualText(ga) : gn; dl->AddText(font, fs * 1.35f, {O.x + 12, O.y + 8}, IM_COL32(220, 220, 220, 110), t.c_str()); }
   // zoom level, like Unreal
   { char zb[32]; std::snprintf(zb, sizeof zb, "Zoom 1:%.2g", 1 / zoom); dl->AddText({E.x - fs * 6, O.y + 6}, IM_COL32(200, 200, 200, 120), zb); }
-  if (bp.nodes.empty()) { const char* t1 = "Right-click to add a node (Event BeginPlay to start)"; std::string t2 = visualText("اضغط زر الماوس اليمين عشان تضيف عقدة (ابدأ بحدث بدء اللعب)");
+  if (G().nodes.empty()) { const char* t1 = "Right-click to add a node (Event BeginPlay to start)"; std::string t2 = visualText("اضغط زر الماوس اليمين عشان تضيف عقدة (ابدأ بحدث بدء اللعب)");
     dl->AddText({O.x + size.x / 2 - ImGui::CalcTextSize(t1).x / 2, O.y + size.y / 2 - fs}, IM_COL32(200, 200, 200, 150), t1);
     dl->AddText({O.x + size.x / 2 - ImGui::CalcTextSize(t2.c_str()).x / 2, O.y + size.y / 2 + fs * 0.4f}, IM_COL32(200, 200, 200, 150), t2.c_str()); }
 
@@ -357,7 +419,7 @@ void BpTab::drawCanvas(Editor& ed, int lang) {
   for (auto& p : pins_) { float dx = (p.pos.x - mw.x) * zoom, dy = (p.pos.y - mw.y) * zoom; float dd = std::sqrt(dx * dx + dy * dy); if (dd < best) { best = dd; hp = &p; } }
   int hn = hoverOrder.empty() ? 0 : hoverOrder.back();
   int hc = 0; bool hcResize = false;
-  if (!hn) for (auto it = bp.nodes.rbegin(); it != bp.nodes.rend(); ++it) if (it->type == "Comment") { Lay& L = lay[it->id];
+  if (!hn) for (auto it = G().nodes.rbegin(); it != G().nodes.rend(); ++it) if (it->type == "Comment") { Lay& L = lay[it->id];
     if (mw.x >= L.a.x && mw.x <= L.b.x && mw.y >= L.a.y && mw.y <= L.a.y + L.hh) { hc = it->id; break; }
     if (std::fabs(mw.x - L.b.x) * zoom < 12 && std::fabs(mw.y - L.b.y) * zoom < 12) { hc = it->id; hcResize = true; break; } }
   bool otherActive = ImGui::IsAnyItemActive() && ImGui::GetActiveID() != canvasId;   // clicking the canvas makes it the active item
@@ -381,7 +443,7 @@ void BpTab::drawCanvas(Editor& ed, int lang) {
     else if (hn || hc) { int id = hn ? hn : hc; if (io.KeyCtrl) { if (sel.count(id)) sel.erase(id); else sel.insert(id); } else if (!sel.count(id)) { if (!io.KeyShift) sel.clear(); sel.insert(id); }
       if (hcResize) { resizeComment = id; } else { dragNodes = true; dragMoved = false;
         // a comment carries the nodes inside it
-        std::set<int> carry = sel; for (int s : sel) if (const BpNode* c = bp.node(s)) if (c->type == "Comment") { Lay& L = lay[s]; for (auto& m : bp.nodes) if (m.id != s && m.x >= L.a.x && m.y >= L.a.y && lay[m.id].b.x <= L.b.x && lay[m.id].b.y <= L.b.y) carry.insert(m.id); }
+        std::set<int> carry = sel; for (int s : sel) if (const BpNode* c = bp.node(s)) if (c->type == "Comment") { Lay& L = lay[s]; for (auto& m : G().nodes) if (m.id != s && m.x >= L.a.x && m.y >= L.a.y && lay[m.id].b.x <= L.b.x && lay[m.id].b.y <= L.b.y) carry.insert(m.id); }
         carryIds = carry; } }
     else { boxSel = true; boxA = io.MousePos; if (!io.KeyCtrl && !io.KeyShift) sel.clear(); }
   }
@@ -390,7 +452,7 @@ void BpTab::drawCanvas(Editor& ed, int lang) {
   if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
     if (dragNodes || resizeComment) { if (dragMoved) { for (int id : carryIds) if (BpNode* n = bp.node(id)) { n->x = std::round(n->x / 16) * 16; n->y = std::round(n->y / 16) * 16; } commit(ed); } dragNodes = false; resizeComment = 0; carryIds.clear(); }
     if (boxSel) { ImVec2 a = toWorld(ImMin(boxA, io.MousePos), O), b = toWorld(ImMax(boxA, io.MousePos), O);
-      for (auto& n : bp.nodes) { Lay& L = lay[n.id]; if (L.b.x >= a.x && L.a.x <= b.x && L.b.y >= a.y && L.a.y <= b.y) sel.insert(n.id); } boxSel = false; }
+      for (auto& n : G().nodes) { Lay& L = lay[n.id]; if (L.b.x >= a.x && L.a.x <= b.x && L.b.y >= a.y && L.a.y <= b.y) sel.insert(n.id); } boxSel = false; }
     if (dragLink) { dragLink = false;
       if (hp && !(hp->node == linkNode && hp->pin == linkPin)) { if (connect(linkNode, linkPin, hp->node, hp->pin)) commit(ed); else ed.notify("These pins can't be wired together"); }
       else if (!hp && canvasHover) { menuFromNode = linkNode; menuFromPin = linkPin; menuAt = mw; menuOpen = true; } }
@@ -408,7 +470,7 @@ void BpTab::drawCanvas(Editor& ed, int lang) {
   if (canvasFocus && !otherActive) {
     bool ctrl = io.KeyCtrl;
     if (ImGui::IsKeyPressed(ImGuiKey_Delete) && !sel.empty()) { deleteSel(); commit(ed); }
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_A)) { sel.clear(); for (auto& n : bp.nodes) sel.insert(n.id); }
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_A)) { sel.clear(); for (auto& n : G().nodes) sel.insert(n.id); }
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_C) && !sel.empty()) copySel();
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_X) && !sel.empty()) { copySel(); deleteSel(); commit(ed); }
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_V)) { if (pasteAt(canvasHover ? mw : toWorld({O.x + size.x / 2, O.y + size.y / 2}, O))) commit(ed); }
@@ -417,7 +479,7 @@ void BpTab::drawCanvas(Editor& ed, int lang) {
     if (!ctrl && ImGui::IsKeyPressed(ImGuiKey_C) && canvasHover) { BpNode n; n.id = bp.nextId++; n.type = "Comment"; n.x = mw.x; n.y = mw.y; n.values["Text"] = "Comment";
       if (!sel.empty()) { float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f; for (int s : sel) { Lay& L = lay[s]; x0 = std::min(x0, L.a.x); y0 = std::min(y0, L.a.y); x1 = std::max(x1, L.b.x); y1 = std::max(y1, L.b.y); }
         n.x = x0 - 24; n.y = y0 - fs * 2.6f; n.w = x1 - x0 + 48; n.h = y1 - y0 + fs * 2.6f + 24; }
-      bp.nodes.insert(bp.nodes.begin(), n); sel = {n.id}; commit(ed); }
+      G().nodes.insert(G().nodes.begin(), n); sel = {n.id}; commit(ed); }
   }
 
   // ---- menus
@@ -427,7 +489,7 @@ void BpTab::drawCanvas(Editor& ed, int lang) {
     if (ImGui::MenuItem("Delete", "Del")) { deleteSel(); commit(ed); }
     if (ImGui::MenuItem("Duplicate", "Ctrl+D")) { copySel(); if (n) { if (pasteAt({n->x + 32, n->y + 32})) commit(ed); } else if (pasteAt(mw)) commit(ed); }
     if (ImGui::MenuItem("Copy", "Ctrl+C")) copySel();
-    if (ImGui::MenuItem("Break All Links")) { bp.links.erase(std::remove_if(bp.links.begin(), bp.links.end(), [&](const BpLink& l) { return sel.count(l.from) || sel.count(l.to); }), bp.links.end()); commit(ed); }
+    if (ImGui::MenuItem("Break All Links")) { G().links.erase(std::remove_if(G().links.begin(), G().links.end(), [&](const BpLink& l) { return sel.count(l.from) || sel.count(l.to); }), G().links.end()); commit(ed); }
     if (ImGui::MenuItem("Comment Selection", "C")) { ImGui::CloseCurrentPopup(); }
     ImGui::EndPopup(); }
   if (ImGui::BeginPopup("bpPinCtx")) { if (ImGui::MenuItem("Break Link(s)", "Alt+Click")) { breakPin(ctxPinNode, ctxPin); commit(ed); } ImGui::EndPopup(); }
@@ -439,13 +501,13 @@ float BpTab::inlineWidth(PinType t, float fs) const {
 }
 ImVec2 BpTab::toWorld(ImVec2 s, ImVec2 O) const { return ImVec2((s.x - O.x) / zoom - pan.x, (s.y - O.y) / zoom - pan.y); }
 void BpTab::frameAll(ImVec2 size) {
-  if (bp.nodes.empty()) { pan = {size.x / 2 / zoom, size.y / 2 / zoom}; return; }
-  float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f; for (auto& n : bp.nodes) { x0 = std::min(x0, n.x); y0 = std::min(y0, n.y); x1 = std::max(x1, n.x + 260); y1 = std::max(y1, n.y + 140); }
+  if (G().nodes.empty()) { pan = {size.x / 2 / zoom, size.y / 2 / zoom}; return; }
+  float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f; for (auto& n : G().nodes) { x0 = std::min(x0, n.x); y0 = std::min(y0, n.y); x1 = std::max(x1, n.x + 260); y1 = std::max(y1, n.y + 140); }
   zoom = std::clamp(std::min(size.x / (x1 - x0 + 120), size.y / (y1 - y0 + 120)), 0.7f, 1.0f);   // readable; pan for the rest
   pan = {size.x / 2 / zoom - (x0 + x1) / 2, size.y / 2 / zoom - (y0 + y1) / 2};
 }
 void BpTab::breakPin(int node, const std::string& pin) {
-  bp.links.erase(std::remove_if(bp.links.begin(), bp.links.end(), [&](const BpLink& l) { return (l.from == node && l.fromPin == pin) || (l.to == node && l.toPin == pin); }), bp.links.end());
+  G().links.erase(std::remove_if(G().links.begin(), G().links.end(), [&](const BpLink& l) { return (l.from == node && l.fromPin == pin) || (l.to == node && l.toPin == pin); }), G().links.end());
 }
 // a wire between two pins (either way round): an input takes one wire, an exec output one too
 bool BpTab::connect(int na, const std::string& pa, int nb, const std::string& pb) {
@@ -454,17 +516,18 @@ bool BpTab::connect(int na, const std::string& pa, int nb, const std::string& pb
   if (!a->out) { std::swap(na, nb); std::swap(a, b); }
   const std::string& fromPin = a->id; const std::string& toPin = b->id;
   if (!pinCanLink(a->type, b->type)) return false;
-  if (b->type != PinType::Exec) bp.links.erase(std::remove_if(bp.links.begin(), bp.links.end(), [&](const BpLink& l) { return l.to == nb && l.toPin == toPin; }), bp.links.end());
-  else bp.links.erase(std::remove_if(bp.links.begin(), bp.links.end(), [&](const BpLink& l) { return l.from == na && l.fromPin == fromPin; }), bp.links.end());
-  bp.links.push_back({na, fromPin, nb, toPin}); return true;
+  if (b->type != PinType::Exec) G().links.erase(std::remove_if(G().links.begin(), G().links.end(), [&](const BpLink& l) { return l.to == nb && l.toPin == toPin; }), G().links.end());
+  else G().links.erase(std::remove_if(G().links.begin(), G().links.end(), [&](const BpLink& l) { return l.from == na && l.fromPin == fromPin; }), G().links.end());
+  G().links.push_back({na, fromPin, nb, toPin}); return true;
 }
 void BpTab::deleteSel() {
-  bp.links.erase(std::remove_if(bp.links.begin(), bp.links.end(), [&](const BpLink& l) { return sel.count(l.from) || sel.count(l.to); }), bp.links.end());
-  bp.nodes.erase(std::remove_if(bp.nodes.begin(), bp.nodes.end(), [&](const BpNode& n) { return sel.count(n.id) > 0; }), bp.nodes.end()); sel.clear();
+  for (auto& n : G().nodes) if (n.type == "Function.Entry") sel.erase(n.id);   // a function keeps its entry
+  G().links.erase(std::remove_if(G().links.begin(), G().links.end(), [&](const BpLink& l) { return sel.count(l.from) || sel.count(l.to); }), G().links.end());
+  G().nodes.erase(std::remove_if(G().nodes.begin(), G().nodes.end(), [&](const BpNode& n) { return sel.count(n.id) > 0; }), G().nodes.end()); sel.clear();
 }
 void BpTab::copySel() {
-  Blueprint c; for (auto& n : bp.nodes) if (sel.count(n.id)) c.nodes.push_back(n);
-  for (auto& l : bp.links) if (sel.count(l.from) && sel.count(l.to)) c.links.push_back(l);
+  Blueprint c; for (auto& n : G().nodes) if (sel.count(n.id)) c.nodes.push_back(n);
+  for (auto& l : G().links) if (sel.count(l.from) && sel.count(l.to)) c.links.push_back(l);
   json j = {{"premiumBlueprintNodes", bpToJson(c)}}; SDL_SetClipboardText(j.dump().c_str());
 }
 bool BpTab::pasteAt(ImVec2 at) {
@@ -473,8 +536,8 @@ bool BpTab::pasteAt(ImVec2 at) {
   Blueprint c = bpFromJson(j["premiumBlueprintNodes"]); if (c.nodes.empty()) return false;
   float x0 = 1e9f, y0 = 1e9f; for (auto& n : c.nodes) { x0 = std::min(x0, n.x); y0 = std::min(y0, n.y); }
   std::map<int, int> ids; sel.clear();
-  for (auto& n : c.nodes) { BpNode m = n; m.id = bp.nextId++; ids[n.id] = m.id; m.x = std::round((at.x + n.x - x0) / 16) * 16; m.y = std::round((at.y + n.y - y0) / 16) * 16; bp.nodes.push_back(m); sel.insert(m.id); }
-  for (auto& l : c.links) bp.links.push_back({ids[l.from], l.fromPin, ids[l.to], l.toPin});
+  for (auto& n : c.nodes) { BpNode m = n; m.id = bp.nextId++; ids[n.id] = m.id; m.x = std::round((at.x + n.x - x0) / 16) * 16; m.y = std::round((at.y + n.y - y0) / 16) * 16; G().nodes.push_back(m); sel.insert(m.id); }
+  for (auto& l : c.links) G().links.push_back({ids[l.from], l.fromPin, ids[l.to], l.toPin});
   return true;
 }
 
@@ -497,7 +560,10 @@ void BpTab::drawAddMenu(Editor& ed, int lang) {
     if (fits("Var.Set", vals).size()) items.push_back({"Var.Set", label("Set " + v.name, "غيّر " + v.name), "Variables", "", "", vals}); }
   for (auto& n : bp.nodes) if (n.type == "Event.Custom") { std::string nm = n.values.value("Name", std::string("MyEvent")); json vals = {{"Event", nm}};
     if (fits("Flow.CallEvent", vals).size()) items.push_back({"Flow.CallEvent", label("Call " + nm, "شغّل " + nm), "Events", "", "", vals}); }
-  for (auto& d : bpLibrary()) { if (d.type == "Var.Get" || d.type == "Var.Set" || d.type == "Flow.CallEvent") continue; if (from && d.kind == BpNodeDef::Comment) continue;
+  for (auto& f : bp.funcs) { json vals = {{"Function", f.name}}; if (fits("Function.Call", vals).size()) items.push_back({"Function.Call", label(f.name, "دالة: " + f.name), "Functions", "One of this Blueprint's functions.", "دالة من دوال هذا البلوبرنت.", vals}); }
+  if (graph >= 0) { json vals = {{"Function", bp.funcs[graph].name}}; if (fits("Function.Return", vals).size()) items.push_back({"Function.Return", label("Return Node", "إرجاع"), "Functions", "Ends the function and gives back its outputs.", "ينهي الدالة ويرجّع مخارجها.", vals}); }
+  for (auto& d : bpLibrary()) { if (d.type == "Var.Get" || d.type == "Var.Set" || d.type == "Flow.CallEvent" || d.type.rfind("Function.", 0) == 0) continue; if (from && d.kind == BpNodeDef::Comment) continue;
+    if (graph >= 0 && d.kind == BpNodeDef::Event) continue;   // events belong to the Event Graph
     if (fits(d.type, json::object()).empty()) continue; items.push_back({d.type, label(d.en, d.ar), d.cat, d.descEn, d.descAr, json::object()}); }
   auto match = [&](const Item& it) { if (q.empty()) return true; const BpNodeDef* d = bpDef(it.type); std::string hay = it.label + " " + it.type + " " + it.cat + " " + (d ? d->ar + " " + d->descEn + " " + d->descAr + " " + bpCategoryAr(d->cat) : "");
     std::transform(hay.begin(), hay.end(), hay.begin(), [](unsigned char c) { return (char)std::tolower(c); });
@@ -520,9 +586,9 @@ void BpTab::drawAddMenu(Editor& ed, int lang) {
   if (enter && first) pick = first;
   if (pick) {
     BpNode n; n.id = bp.nextId++; n.type = pick->type; n.values = pick->values; n.x = std::round(menuAt.x / 16) * 16; n.y = std::round(menuAt.y / 16) * 16;
-    if (n.type == "Event.Custom") { std::string nm = "MyEvent"; for (int k = 2; ; k++) { bool used = false; for (auto& m : bp.nodes) used = used || (m.type == "Event.Custom" && m.values.value("Name", std::string("MyEvent")) == nm); if (!used) break; nm = "MyEvent" + std::to_string(k); } n.values["Name"] = nm; }
+    if (n.type == "Event.Custom") { std::string nm = "MyEvent"; for (int k = 2; ; k++) { bool used = false; for (auto& m : G().nodes) used = used || (m.type == "Event.Custom" && m.values.value("Name", std::string("MyEvent")) == nm); if (!used) break; nm = "MyEvent" + std::to_string(k); } n.values["Name"] = nm; }
     if (from && from->out == false) n.x -= 260;   // dragged out of an input: the new node goes to its left
-    bp.nodes.push_back(n); sel = {n.id};
+    G().nodes.push_back(n); sel = {n.id};
     if (from) { std::string p = fits(n.type, n.values); if (!p.empty() && p != "*") connect(menuFromNode, menuFromPin, n.id, p); }
     commit(ed); ImGui::CloseCurrentPopup();
   }

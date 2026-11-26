@@ -49,6 +49,7 @@ public:
   void setConsole(bool c) { console_ = c; if (ui_) ui_->setConsole(c); }   // the console version: text fields open the on-screen keyboard
   bool console() const { return console_; }
   const std::string& mode() const { return mode_; }
+  const std::string& playerAnimation() const { return pAnimName_; }   // tests
   double gameTime() const { return time_; }
   int actorCount() const;
   bool loading() const { return vox_ && !vox_->ready(const_cast<Game*>(this)->playerPos(), 1.5f); }   // the block world around the player is still being built
@@ -122,6 +123,8 @@ private:
     struct Walk { bool active = false; std::vector<glm::vec3> path; size_t i = 1; float speed = 3.5f, accept = 0.5f, foot = 0; bool turn = true, player = false; std::string goal, result; glm::vec3 goalAt{0}; double repath = 0; } walk;   // AI Move To
   };
   NavGrid nav_; bool navBuilt_ = false;
+  // Third Person: the player's character, its animations chosen by how it moves (idle, walk, run, jump, fall), turning where it goes
+  std::string pModel_, pAnimName_; AnimPlay pAnim_; float charYaw_ = 0; void playerAnimFrame(float dt);
   void ensureNav();
   bool walkPath(Obj& o, const glm::vec3& goalFeet);
   void walkFinish(Obj& o, bool ok);

@@ -118,6 +118,9 @@ Actor& Editor::addActor(const std::string& type, const std::string& mesh, const 
   if (isModel) { const MeshData& md = meshShape(a.mesh); a.p.y = std::max(a.p.y, -md.bmin.y * a.s.y); }   // stands on the ground
   else if (type == "StaticMesh" && a.mesh != "Plane") a.p.y = std::max(a.p.y, 0.5f * a.s.y);
   if (type == "DirectionalLight") a.r = {-50, 35, 0};
+  if (type == "Landscape") { a.p = glm::vec3(0); landTool = 0;   // ready to sculpt; its 4 layers get the project's grass, rock, dirt and sand (made if missing)
+    const char* names[4] = {"M_Grass", "M_Rock", "M_Dirt", "M_Sand"}; const glm::vec3 cols[4] = {{0.32f, 0.5f, 0.22f}, {0.48f, 0.47f, 0.45f}, {0.45f, 0.34f, 0.24f}, {0.82f, 0.74f, 0.55f}};
+    for (int k = 0; k < 4; k++) { if (!P.materials.count(names[k])) { Material m; m.name = names[k]; m.color = cols[k]; m.roughness = k == 1 ? 0.75f : 0.92f; P.materials[names[k]] = m; } a.land->layer[k] = names[k]; } }
   if (snapT) a.p = glm::round(a.p / snapTv) * snapTv;
   L().actors.push_back(a); sel = a.id; touch(); logMsg("Placed " + a.name);
   return L().actors.back();
@@ -179,6 +182,28 @@ void Editor::navShow(Frame& f) {
       ph.shutdown(); destroy(navLines); std::vector<glm::vec3> L2; navPreview.lines(L2); if (!L2.empty()) navLines = uploadLines(L2);
       logMsg("Navigation: " + std::to_string(navPreview.walkable()) + " walkable cells"); } }
   if (navLines.vao) { LineItem l; l.mesh = &navLines; l.color = glm::vec4(0.2f, 0.95f, 0.35f, 0.55f); f.lines.push_back(l); }
+}
+// the brush on the selected Landscape: a circle on its surface under the mouse; held left button sculpts or paints (one undo step a stroke)
+bool Editor::landscapeBrush(const Camera& C, ImVec2 pos, ImVec2 size, ImDrawList* dl) {
+  Actor* a = actor(sel); if (!a || a->type != "Landscape" || !a->land || landTool < 0) { landDown = false; return false; }
+  ImVec2 m = ImGui::GetMousePos(); bool in = m.x >= pos.x && m.y >= pos.y && m.x < pos.x + size.x && m.y < pos.y + size.y;
+  glm::mat4 W = worldOf(*a), IW = glm::inverse(W), VP = C.proj * C.view, IVP = glm::inverse(VP);
+  float nx = (m.x - pos.x) / size.x * 2 - 1, ny = 1 - (m.y - pos.y) / size.y * 2; glm::vec4 p0 = IVP * glm::vec4(nx, ny, -1, 1), p1 = IVP * glm::vec4(nx, ny, 1, 1);
+  glm::vec3 o = glm::vec3(p0) / p0.w, e = glm::vec3(p1) / p1.w; glm::vec3 lo = glm::vec3(IW * glm::vec4(o, 1)), le = glm::vec3(IW * glm::vec4(e, 1)), ld = glm::normalize(le - lo);
+  float t = 0; bool hit = in && a->land->raycast(lo, ld, std::min(glm::length(le - lo), 3000.f), t);
+  if (!hit) { if (ImGui::IsMouseReleased(ImGuiMouseButton_Left) && landDown) { landDown = false; touch(); } return landDown; }
+  glm::vec3 hp = lo + ld * t; Landscape& L = *a->land;
+  // the circle, on the ground
+  std::vector<ImVec2> pts; for (int k = 0; k <= 48; k++) { float ang = k / 48.f * 6.2831853f; float x = hp.x + std::cos(ang) * landRadius, z = hp.z + std::sin(ang) * landRadius;
+    glm::vec4 c = VP * W * glm::vec4(x, L.heightAt(x, z) + 0.05f, z, 1); if (c.w <= 0) continue; pts.push_back({pos.x + (c.x / c.w * 0.5f + 0.5f) * size.x, pos.y + (0.5f - c.y / c.w * 0.5f) * size.y}); }
+  ImU32 col = landTool == Landscape::Paint ? IM_COL32(120, 220, 255, 230) : landTool == Landscape::Lower ? IM_COL32(255, 140, 90, 230) : IM_COL32(255, 220, 90, 230);
+  if (pts.size() > 2) dl->AddPolyline(pts.data(), (int)pts.size(), col, 0, 2.f);
+  bool alt = ImGui::GetIO().KeyAlt; bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows);
+  if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !alt) { landDown = true; landFlat = L.heightAt(hp.x, hp.z); }
+  if (landDown && ImGui::IsMouseDown(ImGuiMouseButton_Left)) { Landscape::Tool tl = (Landscape::Tool)landTool; if (ImGui::GetIO().KeyShift && tl == Landscape::Raise) tl = Landscape::Lower;   // Shift: the other way, like Unreal
+    L.brush(tl, hp.x, hp.z, landRadius, landStrength, std::min(dt_, 0.05f), landLayer, landFlat); dirty = true; }
+  if (landDown && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) { landDown = false; touch(); }
+  return true;
 }
 void Editor::snapToFloor() {
   Actor* a = actor(sel); if (!a) return; glm::mat4 W = worldOf(*a);
