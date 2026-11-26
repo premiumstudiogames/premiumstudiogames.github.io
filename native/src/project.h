@@ -21,15 +21,16 @@ struct Script { std::string name, code; nlohmann::json graph; bool blueprint() c
 struct LightProps { glm::vec3 color{1}; float intensity = 1, range = 12, angle = 35; bool shadows = true; };
 struct TextProps { std::string value = "Text"; glm::vec3 color{1}; float size = 0.6f; };
 struct PhysicsProps { bool simulate = false, collision = true; float mass = 1; };
+struct ProbeProps { float radius = 10, intensity = 1; };   // Sphere Reflection Capture: what it reflects, within radius m
 
 struct Actor {
-  std::string id, name, type, parent;           // type: StaticMesh, Empty, PointLight, SpotLight, DirectionalLight, PlayerStart, CameraActor, TriggerBox, TextRender
+  std::string id, name, type, parent;           // type: StaticMesh, Empty, PointLight, SpotLight, DirectionalLight, PlayerStart, CameraActor, TriggerBox, TextRender, ReflectionCapture
   glm::vec3 p{0}, r{0}, s{1};                   // location (m), rotation (degrees, applied Y then X then Z), scale
   bool visible = true;
   std::vector<std::string> tags;
   std::string mesh = "Cube", material = "M_Default", script;   // mesh: a shape (Cube, Sphere, ...) or a model file of the project (Models/Robot.glb); material "" = the model's own
   std::string anim; bool animLoop = true; float animSpeed = 1;   // a model's animation that plays from the start
-  PhysicsProps physics; LightProps light; TextProps text;
+  PhysicsProps physics; LightProps light; TextProps text; ProbeProps probe;
   bool isLight() const { return type == "PointLight" || type == "SpotLight" || type == "DirectionalLight"; }
 };
 

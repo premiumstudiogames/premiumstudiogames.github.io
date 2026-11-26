@@ -529,6 +529,7 @@ void Editor::defaultLayout(unsigned dockId) {
 /* ------------------------------------------------------------------ viewport */
 void Editor::buildFrame(Frame& f, Camera& cam, float aspect) {
   f = Frame(); f.world = L().world; f.fog = L().world.fog; f.viewMode = viewMode; f.grid = showGrid; f.time = animClock;
+  { double t = SDL_GetTicks() / 1000.0; if (t - levelHashAt_ > 0.5) { levelHashAt_ = t; levelHash_ = std::hash<std::string>()(levelToJson(L())); } f.probeVersion = levelHash_ + probeBump_; }
   unsigned idx = 0;
   for (auto& a : L().actors) { idx++;
     bool vis = a.visible; for (Actor* p = actor(a.parent); p && vis; p = actor(p->parent)) vis = p->visible;

@@ -309,6 +309,8 @@ static const char* DOCS_TEXT = R"(PREMIUM ENGINE - QUICK START
    it from Content Browser > Models. Details > Animation picks the one that plays from the start; scripts and Blueprints play others.
    A model changed on disk (exported again) is loaded again by itself. Pictures go into Textures the same way.
    Export from Blender: File > Export > glTF 2.0 (.glb), +Y Up, with Animation; no Draco compression.
+5e. Reflections: place a Sphere Reflection Capture (Place Actors > Lights) in a room or a street: shiny floors, metal, glass and water
+   within its radius reflect what it sees from there (the editor makes it again when the level changes; Details > Recapture).
 5d. AI: characters walk on the level's floors with self.moveTo (scripts) or AI Move To / AI Move To Actor (Blueprints): round walls,
    up ramps and stairs, following the player. The floors come from the still meshes with collision; World Settings > Navigation sets
    the characters' size, step and slope. Show > Navigation (P) shows where they can walk.

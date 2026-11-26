@@ -40,6 +40,7 @@ public:
   // viewport
   enum class View { Perspective, Top, Front, Right } view = View::Perspective;
   int viewMode = VM_Lit; bool showGrid = true, showIcons = true, showStats = false, showNav = false;   // showNav (P): where AI can walk
+  size_t levelHash_ = 0, probeBump_ = 0; double levelHashAt_ = -1;   // reflection captures are made again when the level changes
   NavGrid navPreview; GpuMesh navLines; size_t navKey_ = 0; double navAt_ = -1; void navShow(Frame& f);
   glm::vec3 camPos{8, 6, 14}; float camYaw = 0.5f, camPitch = -0.3f, orthoZoom = 20; glm::vec3 orthoCenter{0};
   int gizmoOp = 0; bool gizmoLocal = false; bool snapT = true, snapR = true, snapS = false; float snapTv = 0.5f, snapRv = 15, snapSv = 0.25f;

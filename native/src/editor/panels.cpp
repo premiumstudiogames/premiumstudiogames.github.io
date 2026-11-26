@@ -118,7 +118,7 @@ void Editor::addMenuItems(const glm::vec3* at) {
   const char* basic[][2] = {{"Empty Actor", "Empty"}, {"Player Start", "PlayerStart"}, {"Trigger Box", "TriggerBox"}, {"Camera Actor", "CameraActor"}, {"Text Render", "TextRender"}};
   for (auto& b : basic) if (ImGui::MenuItem(b[0])) addActor(b[1], "", at);
   section("SHAPES"); for (int i = 0; i < MESH_COUNT; i++) if (ImGui::MenuItem(MESHES[i])) addActor("StaticMesh", MESHES[i], at);
-  section("LIGHTS"); for (const char* t : {"DirectionalLight", "PointLight", "SpotLight"}) if (ImGui::MenuItem(actorTypeLabel(t))) addActor(t, "", at);
+  section("LIGHTS"); for (const char* t : {"DirectionalLight", "PointLight", "SpotLight", "ReflectionCapture"}) if (ImGui::MenuItem(actorTypeLabel(t))) addActor(t, "", at);
 }
 
 /* ------------------------------------------------------------------ toolbar */
@@ -410,6 +410,11 @@ void Editor::drawDetails() {
     rowLabel("Cast Shadows"); ch |= ImGui::Checkbox("##ls", &a->light.shadows);
     if (a->type != "DirectionalLight" && a->light.shadows) { rowLabel(""); ImGui::TextDisabled("Shadows come from the Directional Light."); }
     ImGui::EndTable(); }
+  if (a->type == "ReflectionCapture" && ImGui::CollapsingHeader("Reflection Capture", ImGuiTreeNodeFlags_DefaultOpen) && beginProps("rc")) { propCols();
+    rowLabel("Influence Radius"); ch |= ImGui::DragFloat("##rcr", &a->probe.radius, 0.1f, 0.5f, 500, "%.1f m"); if (ImGui::IsItemHovered()) ImGui::SetTooltip("Shiny surfaces within this distance reflect what the capture sees from here (floors, metal, glass, water).");
+    rowLabel("Brightness"); ch |= ImGui::DragFloat("##rci", &a->probe.intensity, 0.01f, 0, 10, "%.2f");
+    rowLabel(""); if (ImGui::Button("Recapture")) probeBump_++; ImGui::SameLine(); ImGui::TextDisabled("%d ready", R.probesReady());
+    ImGui::EndTable(); }
   if (a->type == "TextRender" && ImGui::CollapsingHeader("Text", ImGuiTreeNodeFlags_DefaultOpen) && beginProps("tx")) { propCols();
     rowLabel("Text"); ch |= ImGui::InputTextMultiline("##tv", &a->text.value, {-1, ImGui::GetTextLineHeight() * 3});
     rowLabel("Text Color"); ch |= ImGui::ColorEdit3("##tc", &a->text.color.x);
@@ -507,7 +512,7 @@ void Editor::drawPlaceActors() {
     drawIcon(dl, {p.x + h / 2, p.y + h / 2}, h * 0.32f, icon, IM_COL32(190, 190, 190, 255)); dl->AddText({p.x + h + 8, p.y + (h - ImGui::GetFontSize()) / 2}, ImGui::GetColorU32(ImGuiCol_Text), label);
     ImGui::PopID(); };
   if (ImGui::CollapsingHeader("Basic", ImGuiTreeNodeFlags_DefaultOpen)) { entry("Empty Actor", "Empty", IC_Select); entry("Player Start", "PlayerStart", IC_Play); entry("Trigger Box", "TriggerBox", IC_Window); entry("Camera Actor", "CameraActor", IC_Window); entry("Text Render", "TextRender", IC_Script); }
-  if (ImGui::CollapsingHeader("Lights", ImGuiTreeNodeFlags_DefaultOpen)) for (const char* t : {"DirectionalLight", "PointLight", "SpotLight"}) entry(actorTypeLabel(t), t, IC_Gear);
+  if (ImGui::CollapsingHeader("Lights", ImGuiTreeNodeFlags_DefaultOpen)) for (const char* t : {"DirectionalLight", "PointLight", "SpotLight", "ReflectionCapture"}) entry(actorTypeLabel(t), t, IC_Gear);
   if (ImGui::CollapsingHeader("Shapes", ImGuiTreeNodeFlags_DefaultOpen)) for (int i = 0; i < MESH_COUNT; i++) entry(MESHES[i], std::string("StaticMesh|") + MESHES[i], IC_Cube);
   ImGui::End();
 }
