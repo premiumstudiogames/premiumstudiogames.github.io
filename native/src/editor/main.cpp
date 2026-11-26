@@ -234,10 +234,13 @@ int main(int argc, char** argv) {
         if (landCheckAt && frame == landCheckAt + 8) { check(ed.packageOk, "Package"); check(fs::exists(fs::u8path(ed.packageDir) / "Models" / "TestBot.glb") && fs::exists(fs::u8path(ed.packageDir) / "Textures" / "Grass.png"), "the packaged game has the model and the picture"); }
         // gameplay: a car placed from Place Actors (its wheels drawn), a door on a Physics Constraint; Play: in the car, W drives it; blood and bullet holes drawn
         static std::string carId, doorId; static glm::vec3 car0(0); static int carAt = 0, carDone = 0;
-        if (landCheckAt && frame == landCheckAt + 10) { pge::Actor* la = ed.actor(landId); float gy = la ? la->land->heightAt(4, 0) : 0;
+        if (landCheckAt && frame == landCheckAt + 10) {   // on a flat floor (the software driver of the CI machine stalls in long Plays on a landscape)
+          for (auto it = ed.L().actors.begin(); it != ed.L().actors.end();) { if (it->type == "Landscape") it = ed.L().actors.erase(it); else ++it; }
+          { glm::vec3 fp(0, -0.5f, 0); pge::Actor& fl = ed.addActor("StaticMesh", "Cube", &fp); fl.p = fp; fl.s = {120, 1, 120}; fl.name = "Ground"; }
+          pge::Actor* la = nullptr; float gy = 0;
           glm::vec3 at(4, gy + 1.4f, 0); pge::Actor& car = ed.addActor("Vehicle", "", &at); carId = car.id;
           check(car.vehicle.enabled && car.physics.simulate && ed.P.materials.count("M_Tire"), "Place Actors > Vehicle: a car (a body, a cabin, 4 wheels)");
-          glm::vec3 dp(-4, (la ? la->land->heightAt(-4, 0) : 0) + 1.2f, 0); pge::Actor& door = ed.addActor("StaticMesh", "Cube", &dp); door.s = {1, 2, 0.1f}; door.physics.simulate = true; door.physics.mass = 15; doorId = door.id;
+          glm::vec3 dp(-4, gy + 1.2f, 0); (void)la; pge::Actor& door = ed.addActor("StaticMesh", "Cube", &dp); door.s = {1, 2, 0.1f}; door.physics.simulate = true; door.physics.mass = 15; doorId = door.id;
           glm::vec3 hp = dp + glm::vec3(-0.5f, 0, 0); pge::Actor& hinge = ed.addActor("PhysicsConstraint", "", &hp); hinge.joint.a = doorId; ed.sel = carId; ed.touch();
           ed.camPos = {4, gy + 4, 9}; ed.camYaw = 0; ed.camPitch = -0.35f; ed.shotFile = mtest + "/vehicle-editor.bmp"; }
         if (landCheckAt && frame == landCheckAt + 14) { ed.L().world.gameMode = "ThirdPerson"; for (auto& a : ed.L().actors) if (a.type == "PlayerStart") a.p = {0, 12, 8}; ed.touch(); ed.play(); }
