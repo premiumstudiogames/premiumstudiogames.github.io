@@ -1,6 +1,13 @@
 {
   "versions": [
     {
+      "version": "00.16.00",
+      "url": "https://github.com/premiumstudiogames/premiumstudiogames.github.io/releases/download/engine-00.16.00/PremiumEngine-00.16.00-Windows.zip",
+      "sha256": "7bbb00f3aecc46d698d96027141825bd70aed16d5c9d83115412cfbfd98811d9",
+      "size": 6890687,
+      "at": "2026-11-26T13:19:22.483Z"
+    },
+    {
       "version": "00.15.00",
       "url": "https://github.com/premiumstudiogames/premiumstudiogames.github.io/releases/download/engine-00.15.00/PremiumEngine-00.15.00-Windows.zip",
       "sha256": "e60d5474c910f14ad12420a01d1dbd01903dfb789f0badaaea29b4038bb01307",
@@ -127,5 +134,5 @@
       "at": "2026-11-15T22:56:00Z"
     }
   ],
-  "latest": "00.15.00"
+  "latest": "00.16.00"
 }
