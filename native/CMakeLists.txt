@@ -112,7 +112,12 @@ add_executable(PremiumEnginePlayer WIN32 src/player/main.cpp)
 target_link_libraries(PremiumEnginePlayer PRIVATE pgcore SDL2::SDL2main)
 if(WIN32)
   target_sources(PremiumEngine PRIVATE src/res/editor.rc)
-  target_link_libraries(PremiumEngine PRIVATE comdlg32)
+  target_link_libraries(PremiumEngine PRIVATE comdlg32 dbghelp)
+  if(MSVC)   # symbols in a .pdb next to the program (not shipped): the self-tests can say where the editor was if it stops
+    target_compile_options(pgcore PRIVATE /Zi)
+    target_compile_options(PremiumEngine PRIVATE /Zi)
+    target_link_options(PremiumEngine PRIVATE /DEBUG /OPT:REF /OPT:ICF)
+  endif()
   target_sources(PremiumEnginePlayer PRIVATE src/res/player.rc)
 endif()
 

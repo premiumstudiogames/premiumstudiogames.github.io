@@ -16,9 +16,29 @@
 #include <glm/glm.hpp>
 #include <fstream>
 #include <filesystem>
+#include <atomic>
+#include <thread>
 #ifdef _WIN32
 #include <windows.h>
+#include <dbghelp.h>
 #include <cstdlib>
+// self-tests: if the editor stops moving for 60 s, where its main thread is (function, file, line) goes to stderr and the
+// progress file, and it ends - a test machine has no one to look
+static std::atomic<int> g_beat{0}; static std::string g_watchFile;
+static void watchdog(HANDLE mainThread) {
+  int last = -1; int still = 0;
+  while (true) { Sleep(1000); int b = g_beat.load(); if (b != last) { last = b; still = 0; continue; } if (++still < 60) continue;
+    SuspendThread(mainThread); CONTEXT c{}; c.ContextFlags = CONTEXT_FULL; GetThreadContext(mainThread, &c);
+    HANDLE proc = GetCurrentProcess(); SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME); SymInitialize(proc, nullptr, TRUE);
+    STACKFRAME64 f{}; f.AddrPC.Offset = c.Rip; f.AddrPC.Mode = AddrModeFlat; f.AddrFrame.Offset = c.Rbp; f.AddrFrame.Mode = AddrModeFlat; f.AddrStack.Offset = c.Rsp; f.AddrStack.Mode = AddrModeFlat;
+    std::string out = "THE EDITOR STOPPED (no frame for 60 s). Main thread:\n";
+    for (int i = 0; i < 48 && StackWalk64(IMAGE_FILE_MACHINE_AMD64, proc, mainThread, &f, &c, nullptr, SymFunctionTableAccess64, SymGetModuleBase64, nullptr); i++) {
+      char buf[sizeof(SYMBOL_INFO) + 256]; SYMBOL_INFO* sym = (SYMBOL_INFO*)buf; sym->SizeOfStruct = sizeof(SYMBOL_INFO); sym->MaxNameLen = 255; DWORD64 d = 0;
+      std::string name = SymFromAddr(proc, f.AddrPC.Offset, &d, sym) ? sym->Name : "?"; IMAGEHLP_LINE64 ln{}; ln.SizeOfStruct = sizeof ln; DWORD dl = 0;
+      out += "  " + name + (SymGetLineFromAddr64(proc, f.AddrPC.Offset, &dl, &ln) ? std::string("  ") + ln.FileName + ":" + std::to_string(ln.LineNumber) : std::string()) + "\n"; }
+    std::fprintf(stderr, "%s", out.c_str()); std::fflush(stderr); if (!g_watchFile.empty()) { std::ofstream o(std::filesystem::u8path(g_watchFile), std::ios::app); o << out; }
+    TerminateProcess(proc, 3); }
+}
 #endif
 
 int main(int argc, char** argv) {
@@ -27,7 +47,9 @@ int main(int argc, char** argv) {
   if (!bptest.empty() || !mtest.empty()) selftest.clear();
 #ifdef _WIN32
   if (!selftest.empty() || !bptest.empty() || !mtest.empty() || !ctest.empty()) {   // tests: a crash ends the program (no dialog waiting for a click on CI)
-    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX); _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT); }
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX); _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+    HANDLE me = nullptr; DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &me, 0, FALSE, DUPLICATE_SAME_ACCESS);
+    g_watchFile = (!mtest.empty() ? mtest : !bptest.empty() ? bptest : !ctest.empty() ? ctest : selftest) + "/stopped.txt"; std::thread(watchdog, me).detach(); }
 #endif
   if (!ctest.empty()) selftest.clear();
   // the console version (from Premium Games console mode): --console --home <the console's engine folder>
@@ -50,6 +72,9 @@ int main(int argc, char** argv) {
       while (SDL_PollEvent(&e)) ed.event(e);
       if (SDL_GetWindowFlags(W.win) & SDL_WINDOW_MINIMIZED) { SDL_Delay(30); continue; }
       ed.frame();
+#ifdef _WIN32
+      g_beat++;
+#endif
       if (!bptest.empty()) {   // CI: the Blueprint Editor used like a person would - a wire dragged with the mouse, a node found by searching, Play
         frame++; static std::string log; auto check = [&](bool c, const std::string& what) { log += (c ? "ok   " : "FAIL ") + what + "\n"; if (!c) code = 2; };
         Uint32 wid = SDL_GetWindowID(W.win); SDL_Window* sw = W.win; auto mouse = [wid, sw](float x, float y, int btn = 0, bool down = false, bool up = false) { SDL_WarpMouseInWindow(sw, (int)x, (int)y); SDL_Event e{}; e.type = SDL_MOUSEMOTION; e.motion.windowID = wid; e.motion.x = (int)x; e.motion.y = (int)y; SDL_PushEvent(&e);

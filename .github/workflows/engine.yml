@@ -65,7 +65,7 @@ jobs:
           cat selftest/blueprint/bp-result.txt
           # models and textures: a .glb dropped on the viewport, drawn with its picture, its animation bending it, a texture on a material, Play, Package
           mkdir -p selftest/model
-          timeout 420 ./run/PremiumEngine.exe --home "$PWD/selftest/model/home" --modeltest "$PWD/selftest/model" || { cat selftest/model/model-result.txt; tail -40 selftest/model/model-progress.txt; exit 1; }
+          timeout 420 ./run/PremiumEngine.exe --home "$PWD/selftest/model/home" --modeltest "$PWD/selftest/model" || { cat selftest/model/model-result.txt; cat selftest/model/stopped.txt; head -3 selftest/model/model-progress.txt; tail -40 selftest/model/model-progress.txt; exit 1; }
           head -20 selftest/model/model-result.txt
 
       - name: Packaged game self-test (walks forward)
