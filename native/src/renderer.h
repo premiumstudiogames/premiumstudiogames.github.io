@@ -3,6 +3,7 @@
 #include <string>
 #include <glm/glm.hpp>
 #include <memory>
+#include <map>
 #include "mesh.h"
 #include "project.h"
 #include "assets.h"
@@ -16,6 +17,7 @@ struct DrawItem { const GpuMesh* mesh = nullptr; glm::mat4 model{1}; glm::vec3 c
   const glm::mat4* bones = nullptr; int boneCount = 0; };   // a skinned model: its joints (model space), model = the actor
 struct LightItem { int type = 1; glm::vec3 pos{0}, dir{0, -1, 0}, color{1}; float intensity = 1, range = 10, cosOuter = 0.8f; bool shadows = false; };
 struct LineItem { const GpuMesh* mesh = nullptr; glm::mat4 model{1}; glm::vec4 color{1}; bool onTop = false, wire = false; unsigned id = 0; };   // wire: draw a triangle mesh as wireframe
+struct ProbeItem { glm::vec3 pos{0}; float radius = 10, intensity = 1; unsigned id = 0; };   // a Sphere Reflection Capture (id: for the editor's clicks)
 struct TextItem { std::string text; glm::mat4 model{1}; glm::vec3 color{1}; float size = 0.6f; unsigned id = 0; };   // camera-independent text in the XY plane, centred
 enum ViewMode { VM_Lit = 0, VM_Unlit, VM_Wire, VM_Normals };
 struct VoxelDraw { unsigned vao = 0; int count = 0; glm::vec3 offset{0}, mn{0}, mx{0}; bool visible = true, castShadow = true; glm::mat4 model{1}; glm::vec3 tint{1}; };   // one chunk of the block world, or a part of a model (model matrix, colour tint); world bounds; not visible = only casts shadows
@@ -24,6 +26,7 @@ struct Frame {
   float time = 0;   // seconds (moving water)
   std::vector<DrawItem> draws; std::vector<LightItem> lights; std::vector<LineItem> lines; std::vector<TextItem> texts;
   WorldSettings world; bool fog = false; int viewMode = VM_Lit; bool grid = false; glm::vec3 shadowCenter{0};
+  std::vector<ProbeItem> probes; size_t probeVersion = 0;   // reflection captures; a new version captures them again (the editor: the level changed)
   std::vector<ModelRef> keep; std::vector<std::shared_ptr<std::vector<glm::mat4>>> bones;   // models drawn this frame and their joints (DrawItem points into them)
 };
 struct RenderTarget { unsigned fbo = 0, color = 0, depth = 0, idFbo = 0, idTex = 0, idDepth = 0; int w = 0, h = 0; };
@@ -57,6 +60,13 @@ private:
   void ensurePost(int w, int h);
   void freePost();
   unsigned boneTex_ = 0; void bindBones(unsigned prog, const DrawItem& it);
+  // reflection captures: a cube picture of the scene around each one (mip levels = rougher), made once (one a frame)
+  struct Probe { unsigned tex = 0; bool ready = false; size_t version = 0; }; std::map<std::string, Probe> probes_; RenderTarget capRT_; unsigned capFbo_ = 0; bool capturing_ = false;
+  void captureProbes(const Frame& f);
+  static std::string probeKey(const ProbeItem& p);
+public:
+  int probesReady() const { int n = 0; for (auto& [k, p] : probes_) n += p.ready; return n; }
+private:
   unsigned lit_ = 0, vox_ = 0, wat_ = 0, flat_ = 0, depth_ = 0, vdepth_ = 0, idp_ = 0, text_ = 0, shadowFbo_ = 0, shadowTex_ = 0, textVao_ = 0, textVbo_ = 0;
   int buildText(const TextItem& t);   // fills textVbo_, returns vertex count
   GpuMesh wireBox_, wireCapsule_, arrow_, axes_, wireCam_, grid_, grid10_;

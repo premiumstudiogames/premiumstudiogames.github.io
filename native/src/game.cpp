@@ -101,6 +101,9 @@ void addActorVisual(Frame& f, const Project& P, const Actor& a, const glm::mat4&
     l.range = a.light.range; l.cosOuter = std::cos(glm::radians(glm::clamp(a.light.angle, 1.f, 89.f))); l.shadows = a.light.shadows; f.lights.push_back(l);
     if (editor) { icon("Sphere", a.type == "DirectionalLight" ? glm::vec3(1, 0.91f, 0.66f) : a.light.color, 0.3f);
       if (r && a.type != "PointLight") line(r->arrow(), rotOnly, glm::vec3(1, 0.85f, 0.4f), true); }
+  } else if (a.type == "ReflectionCapture") {
+    ProbeItem pr; pr.pos = pos; pr.radius = std::max(0.5f, a.probe.radius); pr.intensity = a.probe.intensity; pr.id = id; f.probes.push_back(pr);
+    if (editor) { icon("Sphere", glm::vec3(0.75f, 0.85f, 1.f), 0.35f); }
   } else if (a.type == "TextRender") {
     TextItem t; t.text = textOverride ? *textOverride : a.text.value; t.model = W; t.color = colorOverride ? *colorOverride : a.text.color; t.size = a.text.size; t.id = id; f.texts.push_back(t);
   } else if (editor && r) {
@@ -354,7 +357,7 @@ void Game::update(float dt) {
 void Game::respawnPlayer() { glm::vec3 p = playerStart(nullptr); if (player_ != NO_BODY) { phys_->teleport(player_, p, glm::quat(1, 0, 0, 0)); phys_->setVelocity(player_, glm::vec3(0)); } else specPos_ = p; }
 
 void Game::buildFrame(Frame& f, Camera& cam, float aspect) const {
-  f = Frame(); f.world = level_.world; f.fog = level_.world.fog;
+  f = Frame(); f.world = level_.world; f.fog = level_.world.fog; f.probeVersion = 1;
   for (auto& op : objs_) { const Obj& o = *op; if (!o.alive) continue;
     bool vis = o.visible; int guard = 0; for (Obj* p = get(o.a.parent); p && vis && guard < 64; p = get(p->a.parent), guard++) vis = p->visible;
     if (!vis) continue;

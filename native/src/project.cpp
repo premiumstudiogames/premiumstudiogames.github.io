@@ -20,17 +20,17 @@ namespace pge {
 
 const char* MESHES[] = {"Cube", "Sphere", "Cylinder", "Cone", "Plane", "Capsule", "Torus", "Wedge"};
 const int MESH_COUNT = 8;
-const char* ACTOR_TYPES[] = {"Empty", "PlayerStart", "TriggerBox", "CameraActor", "TextRender", "DirectionalLight", "PointLight", "SpotLight", "StaticMesh"};
-const int ACTOR_TYPE_COUNT = 9;
+const char* ACTOR_TYPES[] = {"Empty", "PlayerStart", "TriggerBox", "CameraActor", "TextRender", "DirectionalLight", "PointLight", "SpotLight", "StaticMesh", "ReflectionCapture"};
+const int ACTOR_TYPE_COUNT = 10;
 
 const char* actorTypeLabel(const std::string& t) {
   if (t == "StaticMesh") return "Static Mesh"; if (t == "Empty") return "Empty Actor"; if (t == "PointLight") return "Point Light"; if (t == "SpotLight") return "Spot Light";
   if (t == "DirectionalLight") return "Directional Light"; if (t == "PlayerStart") return "Player Start"; if (t == "CameraActor") return "Camera Actor"; if (t == "TriggerBox") return "Trigger Box";
-  if (t == "TextRender") return "Text Render"; return "Actor";
+  if (t == "TextRender") return "Text Render"; if (t == "ReflectionCapture") return "Sphere Reflection Capture"; return "Actor";
 }
 const char* actorTypeIcon(const std::string& t) {
   if (t == "StaticMesh") return "[M]"; if (t == "PointLight" || t == "SpotLight" || t == "DirectionalLight") return "[L]"; if (t == "PlayerStart") return "[P]";
-  if (t == "CameraActor") return "[C]"; if (t == "TriggerBox") return "[T]"; if (t == "TextRender") return "[A]"; return "[ ]";
+  if (t == "CameraActor") return "[C]"; if (t == "TriggerBox") return "[T]"; if (t == "TextRender") return "[A]"; if (t == "ReflectionCapture") return "[R]"; return "[ ]";
 }
 
 double nowMs() { return (double)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count(); }
@@ -233,6 +233,7 @@ static json actorJson(const Actor& a) {
   json j = {{"id", a.id}, {"name", a.name}, {"type", a.type}, {"parent", a.parent.empty() ? json() : json(a.parent)}, {"p", v3(a.p)}, {"r", v3(a.r)}, {"s", v3(a.s)}, {"visible", a.visible}, {"tags", a.tags}};
   if (a.type == "StaticMesh") { j["mesh"] = a.mesh; j["material"] = a.material; j["physics"] = {{"simulate", a.physics.simulate}, {"mass", a.physics.mass}, {"collision", a.physics.collision}};
     if (!a.anim.empty()) j["animation"] = {{"name", a.anim}, {"loop", a.animLoop}, {"speed", a.animSpeed}}; }
+  if (a.type == "ReflectionCapture") j["probe"] = {{"radius", a.probe.radius}, {"intensity", a.probe.intensity}};
   if (a.isLight()) j["light"] = {{"color", colorHex(a.light.color)}, {"intensity", a.light.intensity}, {"range", a.light.range}, {"angle", a.light.angle}, {"shadows", a.light.shadows}};
   if (a.type == "TextRender") j["text"] = {{"value", a.text.value}, {"color", colorHex(a.text.color)}, {"size", a.text.size}};
   if (!a.script.empty()) j["script"] = a.script;
@@ -246,6 +247,7 @@ static Actor actorFrom(const json& j) {
   a.mesh = get<std::string>(j, "mesh", "Cube"); a.material = get<std::string>(j, "material", "M_Default");
   if (j.contains("animation") && j["animation"].is_object()) { const json& an = j["animation"]; a.anim = get<std::string>(an, "name", ""); a.animLoop = get<bool>(an, "loop", true); a.animSpeed = get<float>(an, "speed", 1.f); } a.script = get<std::string>(j, "script", "");
   if (j.contains("physics")) { auto& p = j["physics"]; a.physics.simulate = get<bool>(p, "simulate", false); a.physics.mass = get<float>(p, "mass", 1); a.physics.collision = get<bool>(p, "collision", true); }
+  if (j.contains("probe") && j["probe"].is_object()) { auto& q = j["probe"]; a.probe.radius = get<float>(q, "radius", 10.f); a.probe.intensity = get<float>(q, "intensity", 1.f); }
   if (j.contains("light")) { auto& l = j["light"]; a.light.color = col(l, "color", a.light.color); a.light.intensity = get<float>(l, "intensity", a.light.intensity); a.light.range = get<float>(l, "range", a.light.range); a.light.angle = get<float>(l, "angle", a.light.angle); a.light.shadows = get<bool>(l, "shadows", true); }
   if (j.contains("text")) { auto& t = j["text"]; a.text.value = get<std::string>(t, "value", "Text"); a.text.color = col(t, "color", glm::vec3(1)); a.text.size = get<float>(t, "size", 0.6f); }
   return a;

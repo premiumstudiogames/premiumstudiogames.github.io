@@ -144,7 +144,13 @@ int main(int argc, char** argv) {
           check(diff > 6, "Post Process: VHS + grain + scanlines change the picture (" + std::to_string(diff) + " per pixel)"); ed.L().world.post = pge::PostProcess(); }
         if (frame == 111) ed.showNav = true;
         if (frame == 114) { check(ed.navPreview.walkable() > 1000, "Show > Navigation: the walkable floor (" + std::to_string(ed.navPreview.walkable()) + " cells)"); ed.shotFile = mtest + "/navigation.bmp"; }
-        if (frame == 118) { check(ed.packageOk, "Package"); check(fs::exists(fs::u8path(ed.packageDir) / "Models" / "TestBot.glb") && fs::exists(fs::u8path(ed.packageDir) / "Textures" / "Grass.png"), "the packaged game has the model and the picture");
+        // a reflection capture: a mirror cube shows what is around it (the red model, the green cube) instead of the sky colours
+        if (frame == 116) { ed.showNav = false; std::string mid = ed.newMaterial("M_Mirror"); ed.P.materials[mid].metalness = 1; ed.P.materials[mid].roughness = 0.05f; ed.P.materials[mid].color = glm::vec3(0.95f);
+          glm::vec3 at(0.6f, 0.45f, 1.6f); pge::Actor& m = ed.addActor("StaticMesh", "Sphere", &at); m.material = mid; m.s = glm::vec3(0.9f); m.p = at; ed.touch(); ed.sel.clear(); ed.shotFile = mtest + "/refl-off.bmp"; }
+        if (frame == 118) { glm::vec3 at(0.4f, 1.5f, 2.6f); pge::Actor& c = ed.addActor("ReflectionCapture", "", &at); c.probe.radius = 8; ed.touch(); ed.sel.clear(); }
+        if (frame == 126) { check(ed.R.probesReady() >= 1, "a Sphere Reflection Capture is made"); ed.shotFile = mtest + "/refl-on.bmp"; }
+        if (frame == 128) { double dd = 0; cornerLum(mtest + "/refl-on.bmp", &dd, mtest + "/refl-off.bmp"); check(dd > 0.3, "…and shiny surfaces reflect what it sees (" + std::to_string(dd) + " per pixel)"); }
+        if (frame == 132) { check(ed.packageOk, "Package"); check(fs::exists(fs::u8path(ed.packageDir) / "Models" / "TestBot.glb") && fs::exists(fs::u8path(ed.packageDir) / "Textures" / "Grass.png"), "the packaged game has the model and the picture");
           check(glGetError() == GL_NO_ERROR, "no OpenGL errors");
           std::ofstream o(fs::u8path(mtest + "/model-result.txt")); o << (code == 0 ? "PASS\n" : "FAIL\n") << log; for (auto& l : pge::logLines()) o << "[" << l.time << "] " << l.text << "\n"; break; }
       }

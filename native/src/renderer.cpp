@@ -35,6 +35,7 @@ uniform vec3 uCam, uSky, uGround, uFogColor; uniform float uAmbient, uExposure, 
 uniform int uNumLights; uniform int uLType[8]; uniform vec3 uLPos[8], uLDir[8], uLColor[8]; uniform float uLInt[8], uLRange[8], uLCos[8];
 uniform int uHasSun; uniform vec3 uSunDir, uSunColor; uniform float uSunInt; uniform sampler2DShadow uShadow;
 uniform mat4 uCasc[4]; uniform vec4 uSplit; uniform vec4 uTexel; uniform vec3 uCamFwd, uFogLin; uniform int uCascades;
+uniform samplerCube uEnv; uniform int uHasEnv; uniform vec3 uEnvPos; uniform float uEnvRadius, uEnvInt, uEnvMips;   // a reflection capture around the surface
 const float PI = 3.14159265; float gAo = 1.0;   // ambient occlusion of the surface (maps), on the sky light only
 float D_GGX(float NoH, float a){ float a2=a*a; float d=NoH*NoH*(a2-1.0)+1.0; return a2/(PI*d*d); }
 float V_Smith(float NoV, float NoL, float a){ float k=a*0.5; return 0.25/((NoV*(1.0-k)+k)*(NoL*(1.0-k)+k)); }
@@ -83,7 +84,12 @@ vec3 lighting(vec3 N, vec3 P, vec3 base, float metal, float rough, float sh){
   // sky reflection, so metals and glossy surfaces are not black without an environment map
   vec3 Rv = reflect(-V, N); vec3 env = mix(uGround, uSky, smoothstep(-0.3, 0.3, Rv.y)) * uAmbient;
   vec3 f0 = mix(vec3(0.04), base, metal); float NoV = max(dot(N,V), 0.0);
-  col += env * (f0 + (max(vec3(1.0-rough), f0)-f0)*pow(1.0-NoV,5.0)) * (1.0 - rough*0.85) * 0.6 * gAo;
+  vec3 fr = f0 + (max(vec3(1.0-rough), f0)-f0)*pow(1.0-NoV,5.0); float k = (1.0 - rough*0.85) * 0.6;
+  if(uHasEnv == 1){   // what the capture saw in that direction (parallax corrected on its sphere), blurrier for rough surfaces
+    vec3 d = P - uEnvPos; float b = dot(d, Rv), c = dot(d, d) - uEnvRadius * uEnvRadius; float t = -b + sqrt(max(b * b - c, 0.0));
+    vec3 cap = textureLod(uEnv, d + Rv * t, rough * uEnvMips).rgb; cap = mix(cap / 12.92, pow((cap + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), cap)) / max(uExposure, 1e-3) * uEnvInt;
+    float w = 1.0 - smoothstep(uEnvRadius * 0.8, uEnvRadius, length(d)); env = mix(env, cap, w); k = mix(k, 1.0 - rough * 0.5, w); }
+  col += env * fr * k * gAo;
   return col; }
 // the scene is in linear HDR light: the post pass tonemaps (ACES) and adds bloom and ambient occlusion.
 // Fog fades to the fog colour as it will look on screen (uFogLin is its value before the tonemapper), so it meets the sky.
@@ -314,7 +320,7 @@ bool Renderer::init() {
   glGenTextures(1, &boneTex_); glBindTexture(GL_TEXTURE_2D, boneTex_); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
   { float id[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}; glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 4, 1, 0, GL_RGBA, GL_FLOAT, id); } glBindTexture(GL_TEXTURE_2D, 0); text_ = compile(TEXT_VS, TEXT_FS, "text");
   ssao_ = compile(POST_VS, SSAO_FS, "ssao"); aoBlur_ = compile(POST_VS, AOBLUR_FS, "ao blur"); bloomPre_ = compile(POST_VS, BLOOMPRE_FS, "bloom"); bloomDown_ = compile(POST_VS, BLOOMDOWN_FS, "bloom down"); bloomUp_ = compile(POST_VS, BLOOMUP_FS, "bloom up"); compose_ = compile(POST_VS, COMPOSE_FS, "compose"); sky_ = compile(POST_VS, SKY_FS, "sky");
-  glGenVertexArrays(1, &postVao_);
+  glGenVertexArrays(1, &postVao_); glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
   glGenVertexArrays(1, &textVao_); glBindVertexArray(textVao_); glGenBuffers(1, &textVbo_); glBindBuffer(GL_ARRAY_BUFFER, textVbo_);
   glEnableVertexAttribArray(0); glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 20, (void*)0); glEnableVertexAttribArray(1); glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 20, (void*)12); glBindVertexArray(0);
   // shadow map
@@ -343,7 +349,7 @@ bool Renderer::init() {
   { for (int i = -50; i <= 50; i++) { L.push_back({(float)i, 0, -50}); L.push_back({(float)i, 0, 50}); L.push_back({-50, 0, (float)i}); L.push_back({50, 0, (float)i}); } grid_ = uploadLines(L); L.clear(); }
   return true;
 }
-void Renderer::shutdown() { glDeleteProgram(vox_); glDeleteProgram(wat_); glDeleteProgram(text_); glDeleteVertexArrays(1, &textVao_); glDeleteBuffers(1, &textVbo_); glDeleteProgram(lit_); glDeleteProgram(flat_); glDeleteProgram(depth_); glDeleteProgram(vdepth_); glDeleteProgram(idp_); glDeleteTextures(1, &boneTex_); glDeleteFramebuffers(1, &shadowFbo_); glDeleteTextures(1, &shadowTex_);
+void Renderer::shutdown() { glDeleteProgram(vox_); glDeleteProgram(wat_); glDeleteProgram(text_); glDeleteVertexArrays(1, &textVao_); glDeleteBuffers(1, &textVbo_); glDeleteProgram(lit_); glDeleteProgram(flat_); glDeleteProgram(depth_); glDeleteProgram(vdepth_); glDeleteProgram(idp_); glDeleteTextures(1, &boneTex_); for (auto& [k, pb] : probes_) glDeleteTextures(1, &pb.tex); probes_.clear(); if (capFbo_) glDeleteFramebuffers(1, &capFbo_); freeTarget(capRT_); glDeleteFramebuffers(1, &shadowFbo_); glDeleteTextures(1, &shadowTex_);
   for (unsigned q : {ssao_, aoBlur_, bloomPre_, bloomDown_, bloomUp_, compose_, sky_}) glDeleteProgram(q); glDeleteVertexArrays(1, &postVao_); freePost();
   for (GpuMesh* m : {&wireBox_, &wireCapsule_, &arrow_, &axes_, &wireCam_, &grid_}) destroy(*m); releasePrimitives(); releaseAssets(); }
 
@@ -486,7 +492,34 @@ void Renderer::ensurePost(int w, int h) {
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
+std::string Renderer::probeKey(const ProbeItem& p) { char b[96]; std::snprintf(b, sizeof b, "%.2f,%.2f,%.2f,%.2f", p.pos.x, p.pos.y, p.pos.z, p.radius); return b; }
+// one capture a frame: the scene from the capture's place in 6 directions into a cube picture (the editor's helpers left out)
+void Renderer::captureProbes(const Frame& f) {
+  const ProbeItem* todo = nullptr; for (auto& pr : f.probes) { auto it = probes_.find(probeKey(pr)); if (it == probes_.end() || !it->second.ready || it->second.version != f.probeVersion) { todo = &pr; break; } }
+  if (!todo) return;
+  if (probes_.size() > 64) { for (auto& [k, pb] : probes_) glDeleteTextures(1, &pb.tex); probes_.clear(); }
+  const int S = 128; Probe& pb = probes_[probeKey(*todo)];
+  if (!pb.tex) { glGenTextures(1, &pb.tex); glBindTexture(GL_TEXTURE_CUBE_MAP, pb.tex);
+    for (int i = 0; i < 6; i++) glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGBA8, S, S, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR); glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    for (GLenum w : {GL_TEXTURE_WRAP_S, GL_TEXTURE_WRAP_T, GL_TEXTURE_WRAP_R}) glTexParameteri(GL_TEXTURE_CUBE_MAP, w, GL_CLAMP_TO_EDGE); }
+  if (!capFbo_) glGenFramebuffers(1, &capFbo_);
+  resizeTarget(capRT_, S, S);
+  Frame g = f; g.probes.clear(); g.lines.clear(); g.texts.clear(); g.grid = false; g.viewMode = VM_Lit;
+  g.draws.erase(std::remove_if(g.draws.begin(), g.draws.end(), [](const DrawItem& d) { return d.pickOnly || (d.unlit && !d.castShadow); }), g.draws.end());
+  static const glm::vec3 DIR[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}}, UP[6] = {{0, -1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, -1, 0}, {0, -1, 0}};
+  Quality keepQ = quality; quality.msaa = 0; quality.ssao = false; int keepDc = drawCalls, keepTr = triangles; capturing_ = true;
+  for (int i = 0; i < 6; i++) {
+    Camera c; c.pos = todo->pos; c.view = glm::lookAt(c.pos, c.pos + DIR[i], UP[i]); c.proj = glm::perspective(glm::radians(90.f), 1.f, 0.05f, 2000.f);
+    render(g, c, S, S, &capRT_);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, capRT_.fbo); glBindFramebuffer(GL_DRAW_FRAMEBUFFER, capFbo_);
+    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, pb.tex, 0);
+    glBlitFramebuffer(0, 0, S, S, 0, 0, S, S, GL_COLOR_BUFFER_BIT, GL_NEAREST); }
+  glBindFramebuffer(GL_FRAMEBUFFER, 0); glBindTexture(GL_TEXTURE_CUBE_MAP, pb.tex); glGenerateMipmap(GL_TEXTURE_CUBE_MAP); glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+  capturing_ = false; quality = keepQ; drawCalls = keepDc; triangles = keepTr; pb.ready = true; pb.version = f.probeVersion;
+}
 void Renderer::render(const Frame& f, const Camera& cam, int w, int h, const RenderTarget* rt) {
+  if (!capturing_ && !f.probes.empty() && f.viewMode == VM_Lit) captureProbes(f);
   drawCalls = triangles = 0; w = std::max(w, 1); h = std::max(h, 1);
   unsigned target = rt ? rt->fbo : 0;
   bool scene = f.viewMode != VM_Wire;
@@ -516,7 +549,7 @@ void Renderer::render(const Frame& f, const Camera& cam, int w, int h, const Ren
       glUniform1f(U(p, "uAmbient"), f.viewMode == VM_Unlit ? 1.f : f.world.ambient); glUniform1f(U(p, "uExposure"), expo);
       glUniform1i(U(p, "uFog"), f.fog ? 1 : 0); V3(p, "uFogColor", f.world.fogColor); V3(p, "uFogLin", fogLin); glUniform1f(U(p, "uFogDensity"), f.world.fogDensity);
       glUniform1i(U(p, "uMode"), f.viewMode); glUniform1i(U(p, "uHasShadow"), hasShadow ? 1 : 0);
-      glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, shadowTex_); glUniform1i(U(p, "uShadow"), 0);
+      glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, shadowTex_); glUniform1i(U(p, "uShadow"), 0); glUniform1i(U(p, "uEnv"), 8); glUniform1i(U(p, "uHasEnv"), 0);
       glUniform1i(U(p, "uCascades"), cascN_); if (cascN_) { glUniformMatrix4fv(U(p, "uCasc"), cascN_, GL_FALSE, glm::value_ptr(casc_[0]));
         glUniform4f(U(p, "uSplit"), split_[0], split_[1], split_[2], split_[3]); glUniform4f(U(p, "uTexel"), texel_[0], texel_[1], texel_[2], texel_[3]); }
       int n = 0, sun = 0; int types[8] = {0}; glm::vec3 pos[8], dir[8], col[8]; float in[8], rg[8], cs[8];
@@ -548,6 +581,12 @@ void Renderer::render(const Frame& f, const Camera& cam, int w, int h, const Ren
         int maps = 0; for (int k = 0; k < 6; k++) if (it.tex[k]) { maps |= 1 << k; glActiveTexture(GL_TEXTURE1 + k); glBindTexture(GL_TEXTURE_2D, it.tex[k]); } glActiveTexture(GL_TEXTURE0);
         glUniform1i(U(p, "uMaps"), maps); glUniform1i(U(p, "uVColor"), it.vcolor ? 1 : 0); glUniform1i(U(p, "uWorldUV"), it.worldUV ? 1 : 0); glUniform1i(U(p, "uFlipG"), it.flipGreen ? 1 : 0);
         glUniform2f(U(p, "uTiling"), it.tiling.x, it.tiling.y); glUniform1f(U(p, "uNormalScale"), it.normalScale); glUniform1f(U(p, "uAoStr"), it.aoStrength); glUniform1f(U(p, "uCutoff"), it.cutoff);
+        { const ProbeItem* best = nullptr; const Probe* bp = nullptr; glm::vec3 c(it.model[3]);   // the smallest capture around it (like Unreal)
+          if (!capturing_) for (auto& pr : f.probes) { auto q = probes_.find(probeKey(pr)); if (q == probes_.end() || !q->second.ready) continue;
+            if (glm::length(c - pr.pos) < pr.radius && (!best || pr.radius < best->radius)) { best = &pr; bp = &q->second; } }
+          glUniform1i(U(p, "uHasEnv"), best ? 1 : 0);
+          if (best) { glActiveTexture(GL_TEXTURE8); glBindTexture(GL_TEXTURE_CUBE_MAP, bp->tex); glActiveTexture(GL_TEXTURE0); V3(p, "uEnvPos", best->pos); glUniform1f(U(p, "uEnvRadius"), best->radius);
+            glUniform1f(U(p, "uEnvInt"), best->intensity); glUniform1f(U(p, "uEnvMips"), 7.f); } }
         if (pass == 1) glDepthMask(GL_FALSE);
         glBindVertexArray(it.mesh->vao); glDrawElements(GL_TRIANGLES, it.mesh->count, GL_UNSIGNED_INT, nullptr); drawCalls++; triangles += it.mesh->count / 3;
         glDepthMask(GL_TRUE);
