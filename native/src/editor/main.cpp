@@ -16,11 +16,19 @@
 #include <glm/glm.hpp>
 #include <fstream>
 #include <filesystem>
+#ifdef _WIN32
+#include <windows.h>
+#include <cstdlib>
+#endif
 
 int main(int argc, char** argv) {
   std::string selftest, ctest, bptest, mtest; bool console = false;
   for (int i = 1; i + 1 < argc; i++) { if (!std::strcmp(argv[i], "--selftest")) selftest = argv[i + 1]; if (!std::strcmp(argv[i], "--consoletest")) ctest = argv[i + 1]; if (!std::strcmp(argv[i], "--bptest")) bptest = argv[i + 1]; if (!std::strcmp(argv[i], "--modeltest")) mtest = argv[i + 1]; }
   if (!bptest.empty() || !mtest.empty()) selftest.clear();
+#ifdef _WIN32
+  if (!selftest.empty() || !bptest.empty() || !mtest.empty() || !ctest.empty()) {   // tests: a crash ends the program (no dialog waiting for a click on CI)
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX); _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT); }
+#endif
   if (!ctest.empty()) selftest.clear();
   // the console version (from Premium Games console mode): --console --home <the console's engine folder>
   for (int i = 1; i < argc; i++) { if (!std::strcmp(argv[i], "--console")) console = true; if (!std::strcmp(argv[i], "--home") && i + 1 < argc) pge::setDocumentsDir(argv[i + 1]); }
@@ -90,7 +98,9 @@ int main(int argc, char** argv) {
         if (frame == 176) { std::ofstream o(std::filesystem::u8path(bptest + "/bp-result.txt")); o << (code == 0 ? "PASS\n" : "FAIL\n") << log; break; }
       }
       if (!mtest.empty()) {   // CI: models and textures used like a person would - a .glb dropped on the viewport, its animation, a picture on a material, Play, Package
-        frame++; static std::string log; auto check = [&](bool c, const std::string& what) { log += (c ? "ok   " : "FAIL ") + what + "\n"; if (!c) code = 2; };
+        frame++; static std::string log;
+        { std::ofstream pr(std::filesystem::u8path(mtest + "/model-progress.txt"), std::ios::trunc); pr << "frame " << frame << " at " << SDL_GetTicks() << " ms\n" << log; for (auto& l : pge::logLines()) pr << "[" << l.time << "] " << l.text << "\n"; }   // CI: where it was if it stops
+        auto check = [&](bool c, const std::string& what) { log += (c ? "ok   " : "FAIL ") + what + "\n"; if (!c) code = 2; };
         namespace fs = std::filesystem; static fs::path src; static std::string botId, cubeId;
         // what a screenshot shows: how many pixels are mostly red / green, and how wide the red ones spread
         struct Px { int red = 0, green = 0, rx0 = 1 << 30, rx1 = -1; };

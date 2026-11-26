@@ -46,7 +46,7 @@ jobs:
           cp "$(dirname "$GL")"/*.dll run/
 
       - name: Editor self-test (new project, play, package)
-        timeout-minutes: 10
+        timeout-minutes: 15
         shell: bash
         env:
           GALLIUM_DRIVER: llvmpipe
@@ -65,7 +65,7 @@ jobs:
           cat selftest/blueprint/bp-result.txt
           # models and textures: a .glb dropped on the viewport, drawn with its picture, its animation bending it, a texture on a material, Play, Package
           mkdir -p selftest/model
-          ./run/PremiumEngine.exe --home "$PWD/selftest/model/home" --modeltest "$PWD/selftest/model" || { cat selftest/model/model-result.txt; exit 1; }
+          timeout 420 ./run/PremiumEngine.exe --home "$PWD/selftest/model/home" --modeltest "$PWD/selftest/model" || { cat selftest/model/model-result.txt; tail -40 selftest/model/model-progress.txt; exit 1; }
           head -20 selftest/model/model-result.txt
 
       - name: Packaged game self-test (walks forward)
