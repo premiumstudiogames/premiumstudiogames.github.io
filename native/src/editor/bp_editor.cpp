@@ -336,8 +336,9 @@ void BpTab::drawCanvas(Editor& ed, int lang) {
         if (!(n.values.contains(p.id) && n.values[p.id] == v) && !(v == p.def && !n.values.contains(p.id))) n.values[p.id] = v;
         widgetHover |= ImGui::IsItemHovered(); widgetActive |= ImGui::IsItemActive(); if (done) commit(ed);
         ImGui::PopID(); }
-      else if (!p.out && !on && p.type == PinType::Actor && p.def.is_string() && p.def.get<std::string>() == "self")
-        dl->AddText(font, fs * 0.9f * z, {lx + ts.x + fs * 0.35f * z, c.y - ts.y * 0.45f}, IM_COL32(150, 150, 150, 255), lang == 1 ? visualText("نفسي").c_str() : "self");
+      else if (!p.out && !on && p.type == PinType::Actor && p.def.is_string() && (p.def.get<std::string>() == "self" || p.def.get<std::string>() == "player")) {
+        bool pl = p.def.get<std::string>() == "player";
+        dl->AddText(font, fs * 0.9f * z, {lx + ts.x + fs * 0.35f * z, c.y - ts.y * 0.45f}, IM_COL32(150, 150, 150, 255), lang == 1 ? visualText(pl ? "اللاعب" : "نفسي").c_str() : (pl ? "player" : "self")); }
     }
     if (ImGui::IsMouseHoveringRect(a, b)) hoverOrder.push_back(n.id);
   }

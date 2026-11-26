@@ -127,6 +127,12 @@ function __api(id) {
     set animationSpeed(v) { __n.anim(id, 'speed', String(+v)); },
     bone(name) { const r = __n.anim(id, 'bone', String(name)); if (!r) return null; const b = JSON.parse(r);
       return { position: new Vec3(b.p[0], b.p[1], b.p[2]), rotation: new Vec3(b.r[0], b.r[1], b.r[2]) }; },
+    // walking on the level's floors (AI Move To): moveTo(place | actor | world.player, { speed: 3.5, acceptance: 0.5, turn: true }) → false if there's no way
+    moveTo(t, o) { let g; if (t && t.isPlayer) g = { player: true }; else if (t && t.id) g = { actor: t.id }; else { const v = Array.isArray(t) ? t : __xyz(t); g = { x: +v[0] || 0, y: +v[1] || 0, z: +v[2] || 0 }; }
+      return __n.nav(id, 'move', JSON.stringify(Object.assign(g, o || {}))) === '1'; },
+    stopMoving() { __n.nav(id, 'stop', ''); },
+    get isMoving() { const r = __n.nav(id, 'state', ''); return r ? JSON.parse(r).moving : false; },
+    get moveResult() { const r = __n.nav(id, 'state', ''); return r ? JSON.parse(r).result : ''; },
     destroy() { __n.destroy(id); } };
   __apis.set(id, a); return a;
 }
@@ -144,6 +150,10 @@ const world = { vars: {}, get voxels() { return voxels; },
   restart() { __n.restart(); },
   setGravity(y) { __n.setGravity(+y); },
   setSky(o) { __n.setSky(JSON.stringify(o || {})); },
+  // the way between two places on the level's floors: [Vec3, ...] or null; navigation.rebuild() after the level changed
+  findPath(a, b) { const P = x => x && x.isPlayer ? x.position : (x && x.worldPosition) ? x.worldPosition : x; const v = x => Array.isArray(x) ? x : __xyz(P(x));
+    const r = __n.nav('', 'path', JSON.stringify({ from: v(a), to: v(b), fromPlayer: !!(a && a.isPlayer), toPlayer: !!(b && b.isPlayer) })); return r ? JSON.parse(r).map(p => new Vec3(p[0], p[1], p[2])) : null; },
+  navigation: { rebuild() { __n.nav('', 'rebuild', ''); }, get info() { return JSON.parse(__n.nav('', 'info', '')); } },
   // camera effects: { vignette, grain, chromatic, scanlines, vhs (0..1), saturation, contrast, bloom (1 = as is), temperature (-1 cold .. 1 warm), tint: '#rrggbb' }; null = all off
   setPostProcess(o) { __n.setSky(JSON.stringify({ post: o === null ? 'reset' : (o || {}) })); },
   get postProcess() { return JSON.parse(__n.postGet()); },
@@ -312,7 +322,7 @@ globalThis.__uiDispatch = function (json) {
 };
 )JS";
 
-static const char* EVENTS[EV_COUNT] = {"onStart", "onUpdate", "onOverlap", "onHit", "onKey", "onStop", "onAnimationEnd"};
+static const char* EVENTS[EV_COUNT] = {"onStart", "onUpdate", "onOverlap", "onHit", "onKey", "onStop", "onAnimationEnd", "onMoveFinished"};
 
 struct Behaviour { std::string actor, actorName, script; JSValue obj; bool ev[EV_COUNT]; bool alive = true; };
 struct ScriptHost::Impl {
@@ -350,6 +360,7 @@ static void bindNatives(JSContext* c) {
   FN("addForce", 4, W(c)->addForce(S(c, a[0]), {(float)D(c, a[1]), (float)D(c, a[2]), (float)D(c, a[3])}); return JS_UNDEFINED;);
   FN("lookAt", 4, W(c)->lookAt(S(c, a[0]), {(float)D(c, a[1]), (float)D(c, a[2]), (float)D(c, a[3])}); return JS_UNDEFINED;);
   FN("destroy", 1, W(c)->destroyActor(S(c, a[0])); return JS_UNDEFINED;);
+  FN("nav", 3, { std::string s = W(c)->nav(S(c, a[0]), S(c, a[1]), S(c, a[2])); return JS_NewStringLen(c, s.data(), s.size()); });
   FN("anim", 3, { std::string s = W(c)->animation(S(c, a[0]), S(c, a[1]), S(c, a[2])); return JS_NewStringLen(c, s.data(), s.size()); });
   FN("info", 1, { std::string s = W(c)->actorInfo(S(c, a[0])); return JS_NewStringLen(c, s.data(), s.size()); });
   FN("find", 1, { std::string s = W(c)->find(S(c, a[0])); return s.empty() ? JS_NULL : JS_NewStringLen(c, s.data(), s.size()); });
@@ -580,7 +591,7 @@ static std::string wrap(const std::string& code) {
   return "(function (self, world, input, log, THREE, math) { \"use strict\"; " + code +
          "\n;return { onStart: typeof onStart === 'function' ? onStart : null, onUpdate: typeof onUpdate === 'function' ? onUpdate : null,"
          " onOverlap: typeof onOverlap === 'function' ? onOverlap : null, onHit: typeof onHit === 'function' ? onHit : null, onKey: typeof onKey === 'function' ? onKey : null, onStop: typeof onStop === 'function' ? onStop : null,"
-         " onAnimationEnd: typeof onAnimationEnd === 'function' ? onAnimationEnd : null }; })";
+         " onAnimationEnd: typeof onAnimationEnd === 'function' ? onAnimationEnd : null, onMoveFinished: typeof onMoveFinished === 'function' ? onMoveFinished : null }; })";
 }
 
 int ScriptHost::attach(const std::string& actorId, const std::string& actorName, const std::string& scriptName, const std::string& code) {
@@ -607,6 +618,7 @@ void ScriptHost::call(int i, ScriptEvent e, double num, const std::string& arg) 
     if (arg.empty()) av[0] = JS_NULL; else { JSValue s = JS_NewStringLen(c, arg.data(), arg.size()); av[0] = JS_Call(c, d->api, JS_UNDEFINED, 1, &s); JS_FreeValue(c, s); if (JS_IsException(av[0])) { JS_FreeValue(c, JS_GetException(c)); av[0] = JS_NULL; } }
     n = 1;
   } else if (e == EV_Key || e == EV_AnimEnd) { av[0] = JS_NewStringLen(c, arg.data(), arg.size()); n = 1; }
+  else if (e == EV_MoveDone) { av[0] = JS_NewBool(c, num != 0); n = 1; }
   d->deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
   JSValue r = JS_Call(c, fn, b.obj, n, av);
   for (int k = 0; k < n; k++) JS_FreeValue(c, av[k]);

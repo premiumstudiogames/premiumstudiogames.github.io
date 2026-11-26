@@ -193,6 +193,20 @@ static std::vector<BpNodeDef> buildLibrary() {
       "يغيّر تأثير من تأثيرات الكاميرا: Vignette تعتيم الأطراف، Film Grain تشويش الفيلم، Chromatic Aberration انفصال الألوان، VHS شكل شريط الفيديو القديم، Scanlines خطوط الشاشة القديمة (من 0 إلى 1)، Saturation تشبع الألوان، Contrast التباين، Bloom توهج الضوء (1 = عادي)، Temperature حرارة الألوان (‎-1 بارد إلى 1 دافي).",
       {">exec", ">Effect:string=\"Vignette\"", ">Amount:number=0.5", "<then"}, "__bp.fx($in(Effect), $in(Amount));\n$exec(then)");
   add("World.ResetCameraEffects", "World", X, "Reset Camera Effects", "إلغاء تأثيرات الكاميرا", "Turns every camera effect off (as in World Settings: back to none).", "يلغي كل تأثيرات الكاميرا.", {">exec", "<then"}, "world.setPostProcess(null);\n$exec(then)");
+  // ---- AI: walking on the level's floors (the navigation is made from the still meshes with collision)
+  add("AI.MoveToLocation", "AI", X, "AI Move To", "امشِ إلى مكان", "The actor (Pawn) walks to Destination on the floors, around walls and up ramps and stairs. Then: On Success, or On Fail if there's no way.",
+      "الممثل يمشي لين يوصل المكان (Destination) على الأرضيات، يلف حول الجدران ويطلع المنحدرات والدرج. بعدها يشغّل On Success، أو On Fail إذا ما فيه طريق.",
+      {">exec", ">Pawn:actor=\"self\"", ">Destination:vector", ">Speed:number=3.5", ">AcceptanceRadius:number=0.5", "<then", "<OnSuccess", "<OnFail"},
+      "__bp.moveTo($in(Pawn), $in(Destination), +$in(Speed), +$in(AcceptanceRadius), () => {\n$exec(OnSuccess)\n}, () => {\n$exec(OnFail)\n});\n$exec(then)");
+  add("AI.MoveToActor", "AI", X, "AI Move To Actor", "امشِ إلى ممثل", "The actor (Pawn) walks to another actor and follows it while it moves (Goal = the player when nothing is wired). On Success when it gets within Acceptance Radius.",
+      "الممثل يمشي لممثل ثاني ويلحقه لو تحرك (Goal = اللاعب إذا ما وصلت شيء). On Success لما يقرب منه بمسافة Acceptance Radius.",
+      {">exec", ">Pawn:actor=\"self\"", ">Goal:actor=\"player\"", ">Speed:number=3.5", ">AcceptanceRadius:number=1", "<then", "<OnSuccess", "<OnFail"},
+      "__bp.moveTo($in(Pawn), $in(Goal), +$in(Speed), +$in(AcceptanceRadius), () => {\n$exec(OnSuccess)\n}, () => {\n$exec(OnFail)\n});\n$exec(then)");
+  add("AI.StopMovement", "AI", X, "Stop Movement", "وقف المشي", "The actor stops walking (On Fail of its Move To runs).", "الممثل يوقف مشي (يشتغل On Fail حق عقدة المشي).",
+      {">exec", T, "<then"}, "{ const __t = $in(Target); if (__t && __t.stopMoving) __t.stopMoving(); }\n$exec(then)");
+  add("AI.IsMoving", "AI", U, "Is Moving", "هل يمشي؟", "True while the actor walks somewhere (AI Move To).", "صح طول ما الممثل يمشي لمكان.", {T, "<ReturnValue:bool@!!($in(Target) && $in(Target).isMoving)"});
+  add("Event.MoveFinished", "Events", E, "On Move Finished", "عند انتهاء المشي", "This actor's walk (AI Move To) ended: Success = it got there.", "مشي هذا الممثل انتهى: Success = وصل.", {"<then", "<Success:bool"});
+
   // ---- animation (models with animations: .glb / .gltf)
   add("Event.AnimationEnd", "Events", E, "On Animation End", "عند انتهاء الحركة", "A model's animation that doesn't loop reached its end. Animation = its name.",
       "حركة المجسم (اللي ما تتكرر) وصلت لنهايتها. Animation = اسم الحركة.", {"<then", "<Animation:string"});
@@ -292,7 +306,7 @@ const BpNodeDef* bpDef(const std::string& type) {
 }
 std::string bpCategoryAr(const std::string& c) {
   static const std::map<std::string, std::string> m = {{"Events", "الأحداث"}, {"Flow Control", "التحكم بالتنفيذ"}, {"Utilities", "أدوات"}, {"Actor", "الممثل"}, {"World", "العالم"},
-    {"Player", "اللاعب والكاميرا"}, {"Input", "الإدخال"}, {"Audio", "الصوت"}, {"Animation", "الحركات (الأنيميشن)"}, {"Save Game", "حفظ اللعبة"}, {"Math", "رياضيات ومنطق"}, {"Vector", "المتجهات"}, {"String", "النصوص"},
+    {"Player", "اللاعب والكاميرا"}, {"Input", "الإدخال"}, {"Audio", "الصوت"}, {"Animation", "الحركات (الأنيميشن)"}, {"AI", "الذكاء الاصطناعي (المشي)"}, {"Save Game", "حفظ اللعبة"}, {"Math", "رياضيات ومنطق"}, {"Vector", "المتجهات"}, {"String", "النصوص"},
     {"Array", "القوائم"}, {"Variables", "المتغيرات"}};
   auto it = m.find(c); return it == m.end() ? c : it->second;
 }
@@ -314,7 +328,8 @@ std::string bpPinAr(const std::string& id) {
     {"Player", "اللاعب"}, {"Fly", "يطير"}, {"WalkSpeed", "سرعة المشي"}, {"RunSpeed", "سرعة الركض"}, {"X", "X"}, {"Y", "Y"}, {"Z", "Z"}, {"Axis", "المحور"},
     {"Strength", "القوة"}, {"Sound", "الصوت"}, {"Volume", "الارتفاع"}, {"Min", "الأقل"}, {"Max", "الأكثر"}, {"Alpha", "النسبة"}, {"PickA", "اختر A"}, {"InVec", "المتجه"},
     {"Scale", "المضاعف"}, {"V1", "النقطة 1"}, {"V2", "النقطة 2"}, {"In", "المدخل"}, {"Sub", "الجزء"}, {"Output", "القيمة"},
-    {"Animation", "الحركة"}, {"Effect", "التأثير"}, {"Amount", "المقدار"}, {"Loop", "تتكرر"}, {"PlayRate", "السرعة"}, {"BlendTime", "زمن الانتقال"}, {"Bone", "العظمة"}};
+    {"Animation", "الحركة"}, {"Effect", "التأثير"}, {"Pawn", "الممثل"}, {"Destination", "المكان"}, {"Goal", "الهدف"}, {"Speed", "السرعة"}, {"AcceptanceRadius", "مسافة الوصول"},
+    {"OnSuccess", "عند النجاح"}, {"OnFail", "عند الفشل"}, {"Success", "نجح"}, {"Amount", "المقدار"}, {"Loop", "تتكرر"}, {"PlayRate", "السرعة"}, {"BlendTime", "زمن الانتقال"}, {"Bone", "العظمة"}};
   if (id == "exec" || id == "then") return ""; auto it = m.find(id); return it == m.end() ? bpPinEn(id) : it->second;
 }
 
@@ -378,6 +393,12 @@ static const char* BP_RUNTIME = R"JS(const __bp = (() => {
   vnorm(a) { a = B.vec(a); const l = Math.hypot(a.x, a.y, a.z) || 1; return B.v(a.x / l, a.y / l, a.z / l); },
   dist(a, b) { a = B.vec(a); b = B.vec(b); return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z); },
   valid(a) { return !!a && (a.isPlayer || a.alive !== false); },
+  moves: [],
+  moveTo(a, goal, speed, acc, ok, fail) { if (!a || !a.moveTo) { B.timers.push({ t: 0, f: fail }); return; }
+    B.moves = B.moves.filter(m => m.a !== a);   // a new walk replaces the one before
+    const g = goal && (goal.isPlayer || goal.id) ? goal : B.vec(goal);
+    if (!a.moveTo(g, { speed, acceptance: acc })) { B.timers.push({ t: 0, f: fail }); return; }
+    B.moves.push({ a, ok, fail }); },
   fx(name, v) { const k = { 'vignette': 'vignette', 'film grain': 'grain', 'grain': 'grain', 'chromatic aberration': 'chromatic', 'chromatic': 'chromatic', 'vhs': 'vhs', 'scanlines': 'scanlines',
       'saturation': 'saturation', 'contrast': 'contrast', 'bloom': 'bloom', 'temperature': 'temperature' }[String(name).trim().toLowerCase()];
     if (!k) { log('Set Camera Effect: no effect called "' + name + '" (Vignette, Film Grain, Chromatic Aberration, VHS, Scanlines, Saturation, Contrast, Bloom, Temperature)'); return; }
@@ -408,7 +429,8 @@ static const char* BP_RUNTIME = R"JS(const __bp = (() => {
   clear(name) { B.timers = B.timers.filter(t => t.name !== name); },
   print(t, s) { t = B.str(t); log(t); const id = '__bp' + (B.pn++ % 6); world.hud(id, t); B.timers.push({ t: Math.max(0.1, +s || 2), f: () => world.hud(id, '') }); },
   uiOn(id, ev, f) { B.uis.push({ id, ev, f, done: false }); },
-  tick(dt) { const due = []; for (const t of B.timers) { t.t -= dt; if (t.t <= 0) due.push(t); }
+  tick(dt) { if (B.moves.length) { const done = B.moves.filter(m => !m.a.isMoving); B.moves = B.moves.filter(m => m.a.isMoving); for (const m of done) (m.a.moveResult === 'success' ? m.ok : m.fail)(); }
+    const due = []; for (const t of B.timers) { t.t -= dt; if (t.t <= 0) due.push(t); }
     for (const t of due) { if (t.every) t.t += t.every; else { const i = B.timers.indexOf(t); if (i >= 0) B.timers.splice(i, 1); } t.f(); }
     if (B.uis.length && typeof ui !== 'undefined') for (const u of B.uis) if (!u.done) { const w = ui.get(u.id); if (w) { w.on(u.ev, u.f); u.done = true; } } } };
   return B; })();
@@ -441,7 +463,7 @@ struct Gen {
       case PinType::String: return json(v.is_string() ? v.get<std::string>() : v.is_null() ? std::string() : v.dump()).dump();
       case PinType::Vector: { double a[3] = {0, 0, 0}; if (v.is_array()) for (size_t i = 0; i < 3 && i < v.size(); i++) if (v[i].is_number()) a[i] = v[i].get<double>();
         std::ostringstream o; o.precision(10); o << "__bp.v(" << a[0] << ", " << a[1] << ", " << a[2] << ")"; return o.str(); }
-      case PinType::Actor: return v.is_string() && v.get<std::string>() == "self" ? "self" : "null";
+      case PinType::Actor: return v.is_string() && v.get<std::string>() == "self" ? "self" : v.is_string() && v.get<std::string>() == "player" ? "world.player" : "null";
       case PinType::Array: return "[]";
       default: if (v.is_null()) return "null"; if (v.is_number() || v.is_boolean()) return v.dump(); if (v.is_string()) return json(v.get<std::string>()).dump(); return v.dump();
     }
@@ -555,7 +577,7 @@ std::string bpCompile(const Blueprint& bp, const std::string& name, std::vector<
   // the events → the engine's functions
   std::map<std::string, std::vector<const BpNode*>> ev;
   for (auto& n : bp.nodes) if (const BpNodeDef* d = bpDef(n.type)) if (d->kind == BpNodeDef::Event) ev[n.type].push_back(&n);
-  for (const char* one : {"Event.BeginPlay", "Event.Tick", "Event.ActorBeginOverlap", "Event.Hit", "Event.EndPlay", "Event.AnyKey", "Event.AnimationEnd"})
+  for (const char* one : {"Event.BeginPlay", "Event.Tick", "Event.ActorBeginOverlap", "Event.Hit", "Event.EndPlay", "Event.AnyKey", "Event.AnimationEnd", "Event.MoveFinished"})
     if (ev[one].size() > 1) for (size_t i = 1; i < ev[one].size(); i++) g.err(ev[one][i]->id, std::string("Only one ") + bpDef(one)->en + " can be in a Blueprint", std::string("ما يصير أكثر من ") + bpDef(one)->ar + " في البلوبرنت");
   auto body = [&](const BpNode* n) { return g.execOut(*n, "then", 1); };
   auto setOut = [&](const BpNode* n, const std::string& pin, const std::string& value) { return g.outVar(n->id, pin) + " = " + value + ";\n"; };
@@ -572,6 +594,7 @@ std::string bpCompile(const Blueprint& bp, const std::string& name, std::vector<
     fn("function onKey(code)", pre, b);
   }
   if (!ev["Event.EndPlay"].empty()) { std::string b; for (auto* n : ev["Event.EndPlay"]) b += body(n); fn("function onStop()", "", b); }
+  if (!ev["Event.MoveFinished"].empty()) { std::string b, pre; for (auto* n : ev["Event.MoveFinished"]) { pre += setOut(n, "Success", "ok"); b += body(n); } fn("function onMoveFinished(ok)", pre, b); }
   if (!ev["Event.AnimationEnd"].empty()) { std::string b, pre; for (auto* n : ev["Event.AnimationEnd"]) { pre += setOut(n, "Animation", "name"); b += body(n); } fn("function onAnimationEnd(name)", pre, b); }
   for (auto* n : ev["Event.Custom"]) fn("function __ce_" + bpSanitize(g.field(*n, "Name")) + "()", "", body(n));
   std::string uiBinds;

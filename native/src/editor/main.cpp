@@ -142,7 +142,9 @@ int main(int argc, char** argv) {
         if (frame == 110) { corner0 = cornerLum(mtest + "/post-off.bmp"); corner1 = cornerLum(mtest + "/post-vignette.bmp"); cornerLum(mtest + "/post-vhs.bmp", &diff, mtest + "/post-off.bmp");
           check(corner1 < corner0 * 0.75f, "Post Process: the vignette darkens the corners (" + std::to_string((int)corner0) + " → " + std::to_string((int)corner1) + ")");
           check(diff > 6, "Post Process: VHS + grain + scanlines change the picture (" + std::to_string(diff) + " per pixel)"); ed.L().world.post = pge::PostProcess(); }
-        if (frame == 114) { check(ed.packageOk, "Package"); check(fs::exists(fs::u8path(ed.packageDir) / "Models" / "TestBot.glb") && fs::exists(fs::u8path(ed.packageDir) / "Textures" / "Grass.png"), "the packaged game has the model and the picture");
+        if (frame == 111) ed.showNav = true;
+        if (frame == 114) { check(ed.navPreview.walkable() > 1000, "Show > Navigation: the walkable floor (" + std::to_string(ed.navPreview.walkable()) + " cells)"); ed.shotFile = mtest + "/navigation.bmp"; }
+        if (frame == 118) { check(ed.packageOk, "Package"); check(fs::exists(fs::u8path(ed.packageDir) / "Models" / "TestBot.glb") && fs::exists(fs::u8path(ed.packageDir) / "Textures" / "Grass.png"), "the packaged game has the model and the picture");
           check(glGetError() == GL_NO_ERROR, "no OpenGL errors");
           std::ofstream o(fs::u8path(mtest + "/model-result.txt")); o << (code == 0 ? "PASS\n" : "FAIL\n") << log; for (auto& l : pge::logLines()) o << "[" << l.time << "] " << l.text << "\n"; break; }
       }
