@@ -22,7 +22,10 @@
 #include <filesystem>
 
 #define STB_IMAGE_IMPLEMENTATION
-#define STBI_ONLY_PNG
+#define STBI_ONLY_PNG    // block atlases, game pictures; models' and materials' textures are also JPEG, TGA, BMP
+#define STBI_ONLY_JPEG
+#define STBI_ONLY_TGA
+#define STBI_ONLY_BMP
 #include <stb_image.h>
 
 using json = nlohmann::json;

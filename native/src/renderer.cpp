@@ -18,17 +18,24 @@ glm::mat4 actorLocal(const Actor& a) {
   return glm::scale(m, glm::max(glm::abs(a.s), glm::vec3(1e-4f)) * glm::sign(a.s + glm::vec3(1e-9f)));
 }
 
-static const char* LIT_VS = R"(#version 330 core
-layout(location=0) in vec3 aPos; layout(location=1) in vec3 aNor;
-uniform mat4 uModel, uVP, uLightVP; out vec3 vPos; out vec3 vNor; out vec4 vLight;
-void main(){ vec4 w = uModel * vec4(aPos,1.0); vPos = w.xyz; vNor = mat3(transpose(inverse(uModel))) * aNor; vLight = uLightVP * w; gl_Position = uVP * w; })";
+// meshes: primitives (position, normal, uv) and models (also vertex colour, joints and weights). Skinned models read their
+// joints' matrices from a float texture (4 texels per joint), so a character can have any number of bones
+static const char* SKIN_LIB = R"(#version 330 core
+layout(location=0) in vec3 aPos; layout(location=1) in vec3 aNor; layout(location=2) in vec2 aUv; layout(location=3) in vec4 aCol; layout(location=4) in uvec4 aJoint; layout(location=5) in vec4 aWeight;
+uniform mat4 uModel, uVP; uniform int uSkin; uniform sampler2D uBones;
+mat4 bone(uint i){ int y = int(i); return mat4(texelFetch(uBones, ivec2(0, y), 0), texelFetch(uBones, ivec2(1, y), 0), texelFetch(uBones, ivec2(2, y), 0), texelFetch(uBones, ivec2(3, y), 0)); }
+mat4 skinMatrix(){ if(uSkin == 0) return uModel; return uModel * (bone(aJoint.x) * aWeight.x + bone(aJoint.y) * aWeight.y + bone(aJoint.z) * aWeight.z + bone(aJoint.w) * aWeight.w); }
+)";
+static const char* LIT_VS_MAIN = R"(
+uniform mat4 uLightVP; out vec3 vPos; out vec3 vNor; out vec4 vLight; out vec2 vUv; out vec4 vCol;
+void main(){ mat4 M = skinMatrix(); vec4 w = M * vec4(aPos,1.0); vPos = w.xyz; vNor = mat3(transpose(inverse(M))) * aNor; vLight = uLightVP * w; vUv = aUv; vCol = aCol; gl_Position = uVP * w; })";
 // lighting shared by meshes and the block world (sun with shadow, point / spot lights, sky light, reflections, ACES + sRGB, fog)
 static const char* LIGHT_LIB = R"(
 uniform vec3 uCam, uSky, uGround, uFogColor; uniform float uAmbient, uExposure, uFogDensity; uniform int uFog, uMode, uHasShadow;
 uniform int uNumLights; uniform int uLType[8]; uniform vec3 uLPos[8], uLDir[8], uLColor[8]; uniform float uLInt[8], uLRange[8], uLCos[8];
 uniform int uHasSun; uniform vec3 uSunDir, uSunColor; uniform float uSunInt; uniform sampler2DShadow uShadow;
 uniform mat4 uCasc[4]; uniform vec4 uSplit; uniform vec4 uTexel; uniform vec3 uCamFwd, uFogLin; uniform int uCascades;
-const float PI = 3.14159265;
+const float PI = 3.14159265; float gAo = 1.0;   // ambient occlusion of the surface (maps), on the sky light only
 float D_GGX(float NoH, float a){ float a2=a*a; float d=NoH*NoH*(a2-1.0)+1.0; return a2/(PI*d*d); }
 float V_Smith(float NoV, float NoL, float a){ float k=a*0.5; return 0.25/((NoV*(1.0-k)+k)*(NoL*(1.0-k)+k)); }
 vec3 F_Schlick(vec3 f0, float VoH){ return f0 + (1.0-f0)*pow(1.0-VoH,5.0); }
@@ -71,12 +78,12 @@ vec3 lighting(vec3 N, vec3 P, vec3 base, float metal, float rough, float sh){
     float att = 1.0/max(d*d,0.01); if(uLRange[i]>0.0){ float r = clamp(1.0-pow(d/uLRange[i],4.0),0.0,1.0); att *= r*r; }
     if(uLType[i]==2){ float c = dot(-L, normalize(uLDir[i])); att *= smoothstep(uLCos[i], mix(uLCos[i],1.0,0.3), c); }
     col += brdf(N,V,L,base,metal,rough) * uLColor[i] * uLInt[i] * att; }
-  vec3 hemi = mix(uGround, uSky, 0.5*N.y+0.5) * uAmbient;
+  vec3 hemi = mix(uGround, uSky, 0.5*N.y+0.5) * uAmbient * gAo;
   col += hemi * base * (1.0-metal) / PI;
   // sky reflection, so metals and glossy surfaces are not black without an environment map
   vec3 Rv = reflect(-V, N); vec3 env = mix(uGround, uSky, smoothstep(-0.3, 0.3, Rv.y)) * uAmbient;
   vec3 f0 = mix(vec3(0.04), base, metal); float NoV = max(dot(N,V), 0.0);
-  col += env * (f0 + (max(vec3(1.0-rough), f0)-f0)*pow(1.0-NoV,5.0)) * (1.0 - rough*0.85) * 0.6;
+  col += env * (f0 + (max(vec3(1.0-rough), f0)-f0)*pow(1.0-NoV,5.0)) * (1.0 - rough*0.85) * 0.6 * gAo;
   return col; }
 // the scene is in linear HDR light: the post pass tonemaps (ACES) and adds bloom and ambient occlusion.
 // Fog fades to the fog colour as it will look on screen (uFogLin is its value before the tonemapper), so it meets the sky.
@@ -85,17 +92,36 @@ vec3 finish(vec3 col, vec3 P){
   return col; }
 )";
 static const char* LIT_FS_HEAD = R"(#version 330 core
-in vec3 vPos; in vec3 vNor; in vec4 vLight; out vec4 frag;
+in vec3 vPos; in vec3 vNor; in vec4 vLight; in vec2 vUv; in vec4 vCol; out vec4 frag;
 uniform vec3 uColor, uEmissive; uniform float uMetal, uRough, uOpacity; uniform int uUnlit;
+uniform sampler2D uBaseTex, uRoughTex, uMetalTex, uNormTex, uAoTex, uEmisTex; uniform int uMaps, uVColor, uWorldUV, uFlipG;
+uniform vec2 uTiling; uniform float uNormalScale, uAoStr, uCutoff;
 )";
 static const char* LIT_FS_MAIN = R"(
+// normal maps without stored tangents: the surface's frame from how position and uv change across the pixel
+vec3 perturb(vec3 N, vec3 p, vec2 uv, vec3 m){
+  vec3 q0 = dFdx(p), q1 = dFdy(p); vec2 s0 = dFdx(uv), s1 = dFdy(uv); vec3 q1p = cross(q1, N), q0p = cross(N, q0);
+  vec3 T = q1p * s0.x + q0p * s1.x, B = q1p * s0.y + q0p * s1.y; float det = max(dot(T, T), dot(B, B)); if(det <= 0.0) return N;
+  float k = inversesqrt(det); return normalize(T * (m.x * k) + B * (m.y * k) + N * m.z); }
 void main(){
-  vec3 N = normalize(vNor); if(!gl_FrontFacing) N = -N;
+  vec3 Ng = normalize(vNor); if(!gl_FrontFacing) Ng = -Ng; vec3 N = Ng;
+  vec2 uv = vUv * uTiling;
+  if(uWorldUV == 1){ vec3 a = abs(Ng); uv = (a.x >= a.y && a.x >= a.z ? vec2(vPos.z * sign(Ng.x), -vPos.y) : a.y >= a.z ? vec2(vPos.x, vPos.z) : vec2(vPos.x * -sign(Ng.z), -vPos.y)) * uTiling; }
+  vec4 base = vec4(uColor, uOpacity);
+  if((uMaps & 1) != 0) base *= texture(uBaseTex, uv);
+  if(uVColor == 1) base *= vCol;
+  if(uCutoff >= 0.0 && base.a < uCutoff) discard;
+  float rough = uRough, metal = uMetal;
+  if((uMaps & 2) != 0) rough *= texture(uRoughTex, uv).g;
+  if((uMaps & 4) != 0) metal *= texture(uMetalTex, uv).b;
+  if((uMaps & 8) != 0){ vec3 m = texture(uNormTex, uv).xyz * 2.0 - 1.0; if(uFlipG == 1) m.y = -m.y; m.xy *= uNormalScale; N = perturb(Ng, vPos, uv, normalize(m)); }
+  if((uMaps & 16) != 0) gAo = mix(1.0, texture(uAoTex, uv).r, uAoStr);
+  vec3 emis = uEmissive; if((uMaps & 32) != 0) emis *= texture(uEmisTex, uv).rgb;
   if(uMode==3){ frag = vec4(N*0.5+0.5,1.0); return; }
-  vec3 base = uColor; vec3 col;
-  if(uUnlit==1 || uMode==1){ col = base + uEmissive; if(uUnlit==1){ frag = vec4(col, uOpacity); return; } }
-  else col = lighting(N, vPos, base, uMetal, uRough, shadowAt(vPos, N)) + uEmissive;
-  frag = vec4(finish(col, vPos), uOpacity); })";
+  vec3 col; float alpha = uCutoff >= 0.0 ? 1.0 : base.a;
+  if(uUnlit==1 || uMode==1){ col = base.rgb + emis; if(uUnlit==1){ frag = vec4(col, alpha); return; } }
+  else col = lighting(N, vPos, base.rgb, clamp(metal, 0.0, 1.0), clamp(rough, 0.03, 1.0), shadowAt(vPos, Ng)) + emis;
+  frag = vec4(finish(col, vPos), alpha); })";
 // the block world: chunk meshes with per-vertex colour, corner shadow (AO) and an optional texture atlas
 static const char* VOX_VS = R"(#version 330 core
 layout(location=0) in vec3 aPos; layout(location=1) in vec2 aUv; layout(location=2) in vec4 aCol; layout(location=3) in vec4 aNrm; layout(location=4) in uvec2 aInfo;
@@ -148,10 +174,12 @@ void main(){ vec4 w = uModel*vec4(aPos,1.0); vDist = length(w.xyz - uCam); gl_Po
 static const char* FLAT_FS = R"(#version 330 core
 uniform vec4 uColor; uniform float uFade; in float vDist; out vec4 frag;
 void main(){ float a = uColor.a; if(uFade>0.0) a *= clamp(1.0 - vDist/uFade, 0.0, 1.0); frag = vec4(uColor.rgb, a); })";
-static const char* DEPTH_VS = R"(#version 330 core
-layout(location=0) in vec3 aPos; uniform mat4 uModel, uVP; void main(){ gl_Position = uVP*uModel*vec4(aPos,1.0); })";
+// shadows and clicking: skinned too; cut-out materials (leaves, fences) let the light through
+static const char* DEPTH_VS_MAIN = R"(
+out vec2 vUv; void main(){ vUv = aUv; gl_Position = uVP * skinMatrix() * vec4(aPos,1.0); })";
 static const char* DEPTH_FS = R"(#version 330 core
-void main(){} )";
+in vec2 vUv; uniform sampler2D uBaseTex; uniform float uCutoff; uniform vec2 uTiling;
+void main(){ if(uCutoff >= 0.0 && texture(uBaseTex, vUv * uTiling).a < uCutoff) discard; } )";
 // shadows of the block world: cut-out pixels (leaves) let the light through
 static const char* VDEPTH_VS = R"(#version 330 core
 layout(location=0) in vec3 aPos; layout(location=1) in vec2 aUv; layout(location=4) in uvec2 aInfo; uniform mat4 uModel, uVP;
@@ -164,7 +192,7 @@ void main(){ if((vFlags & 16) != 0 && uTiles > 0 && vTile != 65535){
     vec2 t = vec2(float(vTile % uTiles), float(vTile / uTiles)); vec2 f = fract(vUv); f.y = 1.0 - f.y;
     if(texture(uAtlas, (t + f) * cell).a < 0.5) discard; } })";
 static const char* ID_FS = R"(#version 330 core
-uniform vec4 uColor; out vec4 frag; void main(){ frag = uColor; })";
+in vec2 vUv; uniform vec4 uColor; out vec4 frag; void main(){ frag = uColor; })";
 
 
 // ---- post passes (a triangle that covers the screen)
@@ -262,7 +290,10 @@ static void V3(unsigned p, const char* n, const glm::vec3& v) { glUniform3f(U(p,
 
 bool Renderer::init() {
   std::string litFs = std::string(LIT_FS_HEAD) + LIGHT_LIB + LIT_FS_MAIN, voxFs = std::string(VOX_FS_HEAD) + LIGHT_LIB + VOX_FS_MAIN, watFs = std::string(VOX_FS_HEAD) + LIGHT_LIB + WAT_FS_MAIN;
-  lit_ = compile(LIT_VS, litFs.c_str(), "lit"); vox_ = compile(VOX_VS, voxFs.c_str(), "voxels"); wat_ = compile(VOX_VS, watFs.c_str(), "water"); flat_ = compile(FLAT_VS, FLAT_FS, "flat"); depth_ = compile(DEPTH_VS, DEPTH_FS, "depth"); vdepth_ = compile(VDEPTH_VS, VDEPTH_FS, "voxel depth"); idp_ = compile(DEPTH_VS, ID_FS, "id"); text_ = compile(TEXT_VS, TEXT_FS, "text");
+  std::string litVs = std::string(SKIN_LIB) + LIT_VS_MAIN, depthVs = std::string(SKIN_LIB) + DEPTH_VS_MAIN;
+  lit_ = compile(litVs.c_str(), litFs.c_str(), "lit"); vox_ = compile(VOX_VS, voxFs.c_str(), "voxels"); wat_ = compile(VOX_VS, watFs.c_str(), "water"); flat_ = compile(FLAT_VS, FLAT_FS, "flat"); depth_ = compile(depthVs.c_str(), DEPTH_FS, "depth"); vdepth_ = compile(VDEPTH_VS, VDEPTH_FS, "voxel depth"); idp_ = compile(depthVs.c_str(), ID_FS, "id");
+  glGenTextures(1, &boneTex_); glBindTexture(GL_TEXTURE_2D, boneTex_); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  { float id[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}; glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 4, 1, 0, GL_RGBA, GL_FLOAT, id); } glBindTexture(GL_TEXTURE_2D, 0); text_ = compile(TEXT_VS, TEXT_FS, "text");
   ssao_ = compile(POST_VS, SSAO_FS, "ssao"); aoBlur_ = compile(POST_VS, AOBLUR_FS, "ao blur"); bloomPre_ = compile(POST_VS, BLOOMPRE_FS, "bloom"); bloomDown_ = compile(POST_VS, BLOOMDOWN_FS, "bloom down"); bloomUp_ = compile(POST_VS, BLOOMUP_FS, "bloom up"); compose_ = compile(POST_VS, COMPOSE_FS, "compose"); sky_ = compile(POST_VS, SKY_FS, "sky");
   glGenVertexArrays(1, &postVao_);
   glGenVertexArrays(1, &textVao_); glBindVertexArray(textVao_); glGenBuffers(1, &textVbo_); glBindBuffer(GL_ARRAY_BUFFER, textVbo_);
@@ -293,9 +324,9 @@ bool Renderer::init() {
   { for (int i = -50; i <= 50; i++) { L.push_back({(float)i, 0, -50}); L.push_back({(float)i, 0, 50}); L.push_back({-50, 0, (float)i}); L.push_back({50, 0, (float)i}); } grid_ = uploadLines(L); L.clear(); }
   return true;
 }
-void Renderer::shutdown() { glDeleteProgram(vox_); glDeleteProgram(wat_); glDeleteProgram(text_); glDeleteVertexArrays(1, &textVao_); glDeleteBuffers(1, &textVbo_); glDeleteProgram(lit_); glDeleteProgram(flat_); glDeleteProgram(depth_); glDeleteProgram(vdepth_); glDeleteProgram(idp_); glDeleteFramebuffers(1, &shadowFbo_); glDeleteTextures(1, &shadowTex_);
+void Renderer::shutdown() { glDeleteProgram(vox_); glDeleteProgram(wat_); glDeleteProgram(text_); glDeleteVertexArrays(1, &textVao_); glDeleteBuffers(1, &textVbo_); glDeleteProgram(lit_); glDeleteProgram(flat_); glDeleteProgram(depth_); glDeleteProgram(vdepth_); glDeleteProgram(idp_); glDeleteTextures(1, &boneTex_); glDeleteFramebuffers(1, &shadowFbo_); glDeleteTextures(1, &shadowTex_);
   for (unsigned q : {ssao_, aoBlur_, bloomPre_, bloomDown_, bloomUp_, compose_, sky_}) glDeleteProgram(q); glDeleteVertexArrays(1, &postVao_); freePost();
-  for (GpuMesh* m : {&wireBox_, &wireCapsule_, &arrow_, &axes_, &wireCam_, &grid_}) destroy(*m); releasePrimitives(); }
+  for (GpuMesh* m : {&wireBox_, &wireCapsule_, &arrow_, &axes_, &wireCam_, &grid_}) destroy(*m); releasePrimitives(); releaseAssets(); }
 
 // quads for each glyph of the ImGui font atlas (the big font, index 1 when loaded), centred on the origin, 1 unit = text size
 int Renderer::buildText(const TextItem& t) {
@@ -388,8 +419,11 @@ void Renderer::shadowPass(const Frame& f, const Camera& cam, bool& has) {
     auto inBox = [&](const glm::vec3& mn, const glm::vec3& mx) { glm::vec3 lo(1e9f), hi(-1e9f);
       for (int k = 0; k < 8; k++) { glm::vec3 q = glm::vec3(view * glm::vec4((k & 1) ? mx.x : mn.x, (k & 2) ? mx.y : mn.y, (k & 4) ? mx.z : mn.z, 1)); lo = glm::min(lo, q); hi = glm::max(hi, q); }
       return !(hi.x < -r || lo.x > r || hi.y < -r || lo.y > r); };
-    glUseProgram(depth_); M4(depth_, "uVP", vp);
-    for (auto& it : f.draws) { if (!it.castShadow || !it.mesh || it.opacity < 0.5f || it.pickOnly || it.unlit) continue; M4(depth_, "uModel", it.model); glBindVertexArray(it.mesh->vao); glDrawElements(GL_TRIANGLES, it.mesh->count, GL_UNSIGNED_INT, nullptr); }
+    glUseProgram(depth_); M4(depth_, "uVP", vp); glUniform1i(U(depth_, "uBaseTex"), 1); glUniform1i(U(depth_, "uBones"), 7);
+    for (auto& it : f.draws) { if (!it.castShadow || !it.mesh || !it.mesh->vao || it.opacity < 0.5f || it.pickOnly || it.unlit) continue; M4(depth_, "uModel", it.model); bindBones(depth_, it);
+      bool cut = it.cutoff >= 0 && it.tex[0]; glUniform1f(U(depth_, "uCutoff"), cut ? it.cutoff : -1.f); glUniform2f(U(depth_, "uTiling"), it.tiling.x, it.tiling.y);
+      if (cut) { glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, it.tex[0]); glActiveTexture(GL_TEXTURE0); }
+      glBindVertexArray(it.mesh->vao); glDrawElements(GL_TRIANGLES, it.mesh->count, GL_UNSIGNED_INT, nullptr); }
     if (!f.voxels.empty()) { glUseProgram(vdepth_); M4(vdepth_, "uVP", vp);
       glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, f.voxelAtlas); glUniform1i(U(vdepth_, "uAtlas"), 1); glUniform1i(U(vdepth_, "uTiles"), f.voxelAtlas ? f.voxelTiles : 0); glActiveTexture(GL_TEXTURE0);
       for (auto& v : f.voxels) { if (!v.castShadow || !inBox(v.mn, v.mx)) continue; M4(vdepth_, "uModel", glm::translate(glm::mat4(1), v.offset) * v.model); glBindVertexArray(v.vao); glDrawElements(GL_TRIANGLES, v.count, GL_UNSIGNED_INT, nullptr); } }
@@ -486,10 +520,15 @@ void Renderer::render(const Frame& f, const Camera& cam, int w, int h, const Ren
     unsigned p = lit_;
     auto meshes = [&](int pass) {   // 0 opaque, 1 transparent
       common(p);
+      static const char* TN[6] = {"uBaseTex", "uRoughTex", "uMetalTex", "uNormTex", "uAoTex", "uEmisTex"};
+      for (int k = 0; k < 6; k++) glUniform1i(U(p, TN[k]), 1 + k); glUniform1i(U(p, "uBones"), 7);
       for (auto& it : f.draws) {
-        if (!it.mesh || it.pickOnly || (pass == 0) != (it.opacity >= 0.999f)) continue;
-        M4(p, "uModel", it.model); V3(p, "uColor", lin(it.color)); V3(p, "uEmissive", lin(it.emissive));
+        if (!it.mesh || !it.mesh->vao || it.pickOnly || (pass == 0) != (it.opacity >= 0.999f && !it.blend)) continue;
+        M4(p, "uModel", it.model); V3(p, "uColor", it.linear ? it.color : lin(it.color)); V3(p, "uEmissive", it.linear ? it.emissive : lin(it.emissive)); bindBones(p, it);
         glUniform1f(U(p, "uMetal"), it.metal); glUniform1f(U(p, "uRough"), it.rough); glUniform1f(U(p, "uOpacity"), it.opacity); glUniform1i(U(p, "uUnlit"), it.unlit ? 1 : 0);
+        int maps = 0; for (int k = 0; k < 6; k++) if (it.tex[k]) { maps |= 1 << k; glActiveTexture(GL_TEXTURE1 + k); glBindTexture(GL_TEXTURE_2D, it.tex[k]); } glActiveTexture(GL_TEXTURE0);
+        glUniform1i(U(p, "uMaps"), maps); glUniform1i(U(p, "uVColor"), it.vcolor ? 1 : 0); glUniform1i(U(p, "uWorldUV"), it.worldUV ? 1 : 0); glUniform1i(U(p, "uFlipG"), it.flipGreen ? 1 : 0);
+        glUniform2f(U(p, "uTiling"), it.tiling.x, it.tiling.y); glUniform1f(U(p, "uNormalScale"), it.normalScale); glUniform1f(U(p, "uAoStr"), it.aoStrength); glUniform1f(U(p, "uCutoff"), it.cutoff);
         if (pass == 1) glDepthMask(GL_FALSE);
         glBindVertexArray(it.mesh->vao); glDrawElements(GL_TRIANGLES, it.mesh->count, GL_UNSIGNED_INT, nullptr); drawCalls++; triangles += it.mesh->count / 3;
         glDepthMask(GL_TRUE);
@@ -559,7 +598,7 @@ void Renderer::render(const Frame& f, const Camera& cam, int w, int h, const Ren
   if (f.grid) { glDepthMask(GL_FALSE); M4(q, "uModel", glm::translate(glm::mat4(1), {0, 0.003f, 0})); glUniform4f(U(q, "uColor"), 0.25f, 0.25f, 0.28f, 0.55f); glUniform1f(U(q, "uFade"), 60.f);
     glBindVertexArray(grid_.vao); glDrawArrays(GL_LINES, 0, grid_.count); glDepthMask(GL_TRUE); }
   glUniform1f(U(q, "uFade"), 0.f);
-  if (f.viewMode == VM_Wire) for (auto& it : f.draws) { if (!it.mesh || it.pickOnly) continue; M4(q, "uModel", it.model); glUniform4f(U(q, "uColor"), 0.6f, 0.82f, 1.f, 1.f);
+  if (f.viewMode == VM_Wire) for (auto& it : f.draws) { if (!it.mesh || !it.mesh->vao || it.pickOnly || it.bones) continue; M4(q, "uModel", it.model); glUniform4f(U(q, "uColor"), 0.6f, 0.82f, 1.f, 1.f);
     glBindVertexArray(it.mesh->vao); glPolygonMode(GL_FRONT_AND_BACK, GL_LINE); glDrawElements(GL_TRIANGLES, it.mesh->count, GL_UNSIGNED_INT, nullptr); glPolygonMode(GL_FRONT_AND_BACK, GL_FILL); }
   for (int top = 0; top < 2; top++) { if (top) glDisable(GL_DEPTH_TEST);
     for (auto& l : f.lines) { if (l.onTop != (bool)top || !l.mesh) continue; M4(q, "uModel", l.model); glUniform4f(U(q, "uColor"), l.color.r, l.color.g, l.color.b, l.color.a);
@@ -570,13 +609,20 @@ void Renderer::render(const Frame& f, const Camera& cam, int w, int h, const Ren
   glBindVertexArray(0); glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
+// a skinned model's joints into the bone texture (unit 7), or none
+void Renderer::bindBones(unsigned prog, const DrawItem& it) {
+  bool on = it.bones && it.boneCount > 0; glUniform1i(U(prog, "uSkin"), on ? 1 : 0); if (!on) return;
+  glActiveTexture(GL_TEXTURE7); glBindTexture(GL_TEXTURE_2D, boneTex_); glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 4, it.boneCount, 0, GL_RGBA, GL_FLOAT, it.bones); glActiveTexture(GL_TEXTURE0);
+}
 unsigned Renderer::pick(const Frame& f, const Camera& cam, RenderTarget& rt, int x, int y) {
   if (!rt.idFbo || x < 0 || y < 0 || x >= rt.w || y >= rt.h) return 0;
   glBindFramebuffer(GL_FRAMEBUFFER, rt.idFbo); glViewport(0, 0, rt.w, rt.h); glClearColor(0, 0, 0, 0); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
   glEnable(GL_DEPTH_TEST); glDisable(GL_BLEND); glDisable(GL_CULL_FACE);
   glUseProgram(idp_); M4(idp_, "uVP", cam.proj * cam.view);
   auto idc = [&](unsigned id) { glUniform4f(U(idp_, "uColor"), (id & 255) / 255.f, ((id >> 8) & 255) / 255.f, ((id >> 16) & 255) / 255.f, 1); };
-  for (auto& it : f.draws) { if (!it.mesh || !it.id) continue; idc(it.id); M4(idp_, "uModel", it.model); glBindVertexArray(it.mesh->vao); glDrawElements(GL_TRIANGLES, it.mesh->count, GL_UNSIGNED_INT, nullptr); }
+  glUniform1i(U(idp_, "uBones"), 7);
+  for (auto& it : f.draws) { if (!it.mesh || !it.mesh->vao || !it.id) continue; idc(it.id); M4(idp_, "uModel", it.model); bindBones(idp_, it); glBindVertexArray(it.mesh->vao); glDrawElements(GL_TRIANGLES, it.mesh->count, GL_UNSIGNED_INT, nullptr); }
   glLineWidth(1); for (auto& l : f.lines) { if (!l.mesh || !l.id) continue; idc(l.id); M4(idp_, "uModel", l.model); glBindVertexArray(l.mesh->vao);
     if (l.mesh->lines) glDrawArrays(GL_LINES, 0, l.mesh->count); else glDrawElements(GL_TRIANGLES, l.mesh->count, GL_UNSIGNED_INT, nullptr); }
   if (!f.texts.empty()) { glUseProgram(text_); M4(text_, "uVP", cam.proj * cam.view); glUniform1i(U(text_, "uId"), 1); glActiveTexture(GL_TEXTURE0);

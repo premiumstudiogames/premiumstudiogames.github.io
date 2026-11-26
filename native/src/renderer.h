@@ -2,12 +2,18 @@
 #include <vector>
 #include <string>
 #include <glm/glm.hpp>
+#include <memory>
 #include "mesh.h"
 #include "project.h"
+#include "assets.h"
 
 namespace pge {
 struct Camera { glm::mat4 view{1}, proj{1}; glm::vec3 pos{0}; bool ortho = false; };
-struct DrawItem { const GpuMesh* mesh = nullptr; glm::mat4 model{1}; glm::vec3 color{1}, emissive{0}; float metal = 0, rough = 0.6f, opacity = 1; bool castShadow = true, unlit = false, pickOnly = false; unsigned id = 0; };   // pickOnly: invisible, only for clicking (editor icons)
+struct DrawItem { const GpuMesh* mesh = nullptr; glm::mat4 model{1}; glm::vec3 color{1}, emissive{0}; float metal = 0, rough = 0.6f, opacity = 1; bool castShadow = true, unlit = false, pickOnly = false; unsigned id = 0;   // pickOnly: invisible, only for clicking (editor icons)
+  // textures (GL names, 0 = none): base colour (sRGB, alpha), roughness (green), metal (blue), normal, ambient occlusion (red), emissive (sRGB)
+  unsigned tex[6] = {0, 0, 0, 0, 0, 0}; glm::vec2 tiling{1}; float normalScale = 1, aoStrength = 1, cutoff = -1;   // cutoff >= 0: cut out where alpha is below it
+  bool vcolor = false, worldUV = false, flipGreen = false, blend = false, linear = false;   // linear: color / emissive are linear light (glTF), not screen colours;   // vertex colours (models), textures laid on the world (no stretching), DirectX normal map, see-through
+  const glm::mat4* bones = nullptr; int boneCount = 0; };   // a skinned model: its joints (model space), model = the actor
 struct LightItem { int type = 1; glm::vec3 pos{0}, dir{0, -1, 0}, color{1}; float intensity = 1, range = 10, cosOuter = 0.8f; bool shadows = false; };
 struct LineItem { const GpuMesh* mesh = nullptr; glm::mat4 model{1}; glm::vec4 color{1}; bool onTop = false, wire = false; unsigned id = 0; };   // wire: draw a triangle mesh as wireframe
 struct TextItem { std::string text; glm::mat4 model{1}; glm::vec3 color{1}; float size = 0.6f; unsigned id = 0; };   // camera-independent text in the XY plane, centred
@@ -18,6 +24,7 @@ struct Frame {
   float time = 0;   // seconds (moving water)
   std::vector<DrawItem> draws; std::vector<LightItem> lights; std::vector<LineItem> lines; std::vector<TextItem> texts;
   WorldSettings world; bool fog = false; int viewMode = VM_Lit; bool grid = false; glm::vec3 shadowCenter{0};
+  std::vector<ModelRef> keep; std::vector<std::shared_ptr<std::vector<glm::mat4>>> bones;   // models drawn this frame and their joints (DrawItem points into them)
 };
 struct RenderTarget { unsigned fbo = 0, color = 0, depth = 0, idFbo = 0, idTex = 0, idDepth = 0; int w = 0, h = 0; };
 
@@ -49,6 +56,7 @@ private:
   glm::mat4 casc_[4]; float split_[4] = {0, 0, 0, 0}, texel_[4] = {0, 0, 0, 0}; int cascN_ = 0;
   void ensurePost(int w, int h);
   void freePost();
+  unsigned boneTex_ = 0; void bindBones(unsigned prog, const DrawItem& it);
   unsigned lit_ = 0, vox_ = 0, wat_ = 0, flat_ = 0, depth_ = 0, vdepth_ = 0, idp_ = 0, text_ = 0, shadowFbo_ = 0, shadowTex_ = 0, textVao_ = 0, textVbo_ = 0;
   int buildText(const TextItem& t);   // fills textVbo_, returns vertex count
   GpuMesh wireBox_, wireCapsule_, arrow_, axes_, wireCam_, grid_, grid10_;

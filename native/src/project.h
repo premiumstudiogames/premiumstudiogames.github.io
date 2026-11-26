@@ -9,7 +9,13 @@
 
 namespace pge {
 
-struct Material { std::string name = "M_Default"; glm::vec3 color{0.784f, 0.8f, 0.83f}; float metalness = 0, roughness = 0.6f; glm::vec3 emissive{0}; float emissiveIntensity = 1, opacity = 1; };
+// a material: colours and numbers, and pictures (files of the project, e.g. Textures/Bricks_Color.png) that it multiplies them by.
+// Roughness reads the green channel, metal the blue, ambient occlusion the red: one packed ORM picture can go in all three.
+struct Material { std::string name = "M_Default"; glm::vec3 color{0.784f, 0.8f, 0.83f}; float metalness = 0, roughness = 0.6f; glm::vec3 emissive{0}; float emissiveIntensity = 1, opacity = 1;
+  std::string baseMap, normalMap, roughnessMap, metalMap, aoMap, emissiveMap;
+  glm::vec2 tiling{1}; float normalStrength = 1, aoStrength = 1, cutoff = 0.5f;
+  bool worldAligned = false, directXNormal = false, masked = false;   // world aligned: the pictures are laid on the world (1 tile = 1 m / tiling), not stretched with the mesh
+  bool hasMaps() const { return !baseMap.empty() || !normalMap.empty() || !roughnessMap.empty() || !metalMap.empty() || !aoMap.empty() || !emissiveMap.empty(); } };
 // a script: code, or a Blueprint (its graph is kept; code = what the graph compiled to, so it runs like any script)
 struct Script { std::string name, code; nlohmann::json graph; bool blueprint() const { return graph.is_object(); } };
 struct LightProps { glm::vec3 color{1}; float intensity = 1, range = 12, angle = 35; bool shadows = true; };
@@ -21,7 +27,8 @@ struct Actor {
   glm::vec3 p{0}, r{0}, s{1};                   // location (m), rotation (degrees, applied Y then X then Z), scale
   bool visible = true;
   std::vector<std::string> tags;
-  std::string mesh = "Cube", material = "M_Default", script;
+  std::string mesh = "Cube", material = "M_Default", script;   // mesh: a shape (Cube, Sphere, ...) or a model file of the project (Models/Robot.glb); material "" = the model's own
+  std::string anim; bool animLoop = true; float animSpeed = 1;   // a model's animation that plays from the start
   PhysicsProps physics; LightProps light; TextProps text;
   bool isLight() const { return type == "PointLight" || type == "SpotLight" || type == "DirectionalLight"; }
 };

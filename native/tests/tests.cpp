@@ -10,6 +10,8 @@
 #include "audio.h"
 #include "models.h"
 #include "blueprint.h"
+#include "assets.h"
+#include "testmodel.h"
 #include <imgui.h>
 #include <chrono>
 #include <cstdio>
@@ -93,6 +95,69 @@ int main(int argc, char** argv) {
     loopy.links.push_back({4, "then", 3, "exec"}); loopy.links.push_back({1, "ReturnValue", 3, "InString"});
     bpCompile(loopy, "Loopy", m2); bool circ = false; for (auto& m : m2) circ = circ || m.error; CHECK(circ, "pure nodes feeding each other in a circle is an error, not a hang");
     int ar = 0; for (auto& d : bpLibrary()) ar += !d.ar.empty() && !d.descAr.empty() && !d.descEn.empty(); CHECK(ar == (int)bpLibrary().size() && ar > 90, ("every node has English and Arabic names and explanations (" + std::to_string(ar) + ")").c_str());
+  }
+  {   // models: a rigged .glb with a picture inside and two animations, loaded, posed, played in a game, collided with, saved
+    std::printf("models\n");
+    namespace fs = std::filesystem; fs::path dir = fs::temp_directory_path() / "pge-model-test"; std::error_code ec; fs::remove_all(dir, ec);
+    CHECK(writeTestModel((dir / "Models" / "TestBot.glb").u8string()), "a test model is written (.glb)"); fs::create_directories(dir / "Textures", ec);
+    setAssetRoot(dir.u8string()); logClear();
+    ModelRef m = model("Models/TestBot.glb");
+    CHECK(m && m->ok(), ("it loads: " + (m ? m->error : std::string("null"))).c_str());
+    CHECK(m && m->triangles == 24 && m->vertices == 48 && m->prims.size() == 1, "its triangles and vertices");
+    CHECK(m && m->skins.size() == 1 && m->joints == 2 && m->nodes.size() == 3, "its skin: 2 joints, 3 nodes");
+    CHECK(m && m->anims.size() == 2 && m->anim("Wave") == 0 && m->anim("Bob") == 1 && std::abs(m->anims[0].duration - 1) < 1e-4f, "its animations: Wave, Bob (1 s)");
+    CHECK(m && m->mats.size() == 1 && m->mats[0].baseTex && m->mats[0].baseTex->ok && m->mats[0].baseTex->w == 4 && std::abs(m->mats[0].rough - 0.8f) < 1e-4f, "its material and the picture inside the file");
+    CHECK(m && std::abs(m->shape.bmin.y) < 1e-4f && std::abs(m->shape.bmax.y - 2) < 1e-4f && std::abs(m->shape.bmax.x - 0.2f) < 1e-4f, "its bounds at rest (skinned): y 0..2");
+    CHECK(hasLog("Model Models/TestBot.glb: 24 triangles"), "the log says what it loaded");
+    if (m && m->ok()) {
+      AnimPlay a; a.play(0, false, 1, 0); a.advance(*m, 1.0f); ModelPose p; poseModel(*m, &a, p);
+      glm::vec3 top = glm::vec3(p.joints[p.skinAt[0] + 1] * glm::vec4(0.2f, 2, 0.2f, 1));
+      CHECK(glm::length(top - glm::vec3(-1, 1.2f, 0.2f)) < 1e-3f, ("Wave at 1 s: the arm's corner turned 90° about Z: " + std::to_string(top.x) + ", " + std::to_string(top.y)).c_str());
+      CHECK(!a.playing, "…and a Wave that doesn't loop stops at its end");
+      a.play(0, true, 1, 0); a.advance(*m, 0.5f); poseModel(*m, &a, p); top = glm::vec3(p.joints[1] * glm::vec4(0.2f, 2, 0.2f, 1));
+      CHECK(std::abs(top.x - (0.2f * std::cos(0.7854f) - std::sin(0.7854f))) < 2e-3f, "half way: 45° (slerp)");
+      a.advance(*m, 1.0f); CHECK(a.playing && std::abs(a.time - 0.5f) < 1e-4f, "looping: 1.5 s is 0.5 s into the second time");
+      a.play(1, true, 1, 0.5f); a.advance(*m, 0.25f); CHECK(a.from == 0 && std::abs(a.blend - 0.5f) < 1e-4f, "Bob blends in from Wave over 0.5 s");
+      a.advance(*m, 0.3f); CHECK(a.from < 0, "…and then plays alone");
+      AnimPlay b; b.play(1, true, 1, 0); b.advance(*m, 0.5f); poseModel(*m, &b, p); CHECK(std::abs(p.world[0][3].y - 0.5f) < 1e-4f, "Bob at 0.5 s: the root is 0.5 m up");
+      { unsigned char px[16 * 16 * 3]; for (int i = 0; i < 256; i++) { px[i * 3] = 40; px[i * 3 + 1] = 200; px[i * 3 + 2] = 90; }   // pictures as people have them: JPEG, TGA, BMP
+        stbi_write_jpg((dir / "Textures" / "a.jpg").u8string().c_str(), 16, 16, 3, px, 90); stbi_write_tga((dir / "Textures" / "a.tga").u8string().c_str(), 16, 16, 3, px); stbi_write_bmp((dir / "Textures" / "a.bmp").u8string().c_str(), 16, 16, 3, px);
+        for (const char* f : {"Textures/a.jpg", "Textures/a.tga", "Textures/a.bmp"}) { const Texture* t = texture(f, true); CHECK(t && t->ok && t->w == 16 && t->error.empty(), (std::string("a texture from ") + f + (t ? " " + t->error : "")).c_str()); } }
+      ModelRef again = model("Models/TestBot.glb"); CHECK(again.get() == m.get(), "the same file is loaded once");
+      ModelRef none = model("Models/Nope.glb"); CHECK(none && !none->ok() && none->error.find("not found") != std::string::npos, "a missing model says so (and draws as a pink box)");
+      { std::ofstream f(dir / "Models" / "Broken.glb", std::ios::binary); f << "glTF garbage"; } ModelRef broken = model("Models/Broken.glb"); CHECK(broken && !broken->ok(), ("a broken file says why: " + (broken ? broken->error : "")).c_str());
+    }
+    // in a game: a script plays and hears the end; a Blueprint too; the body collides with the model's triangles
+    Project q = makeTemplate("Blank", "ModelTest"); q.path = (dir / "ModelTest.pge.json").u8string();
+    Actor bot = newActor("StaticMesh", "Bot"); bot.mesh = "Models/TestBot.glb"; bot.material.clear(); bot.anim = "Wave"; bot.animLoop = false; bot.p = {0, 0, 0}; bot.s = {5, 1, 5};
+    bot.script = "SC_Bot"; q.scripts["SC_Bot"] = {"SC_Bot", "function onStart() { world.hud('list', self.animations.join(',')); }\n"
+      "function onAnimationEnd(name) { world.hud('end', name + ':' + self.animation.playing); const ok = self.playAnimation('Bob', { blend: 0 }); world.hud('bob', String(ok) + ':' + self.animation.name); world.hud('bad', String(self.playAnimation('Nope'))); }\n"
+      "function onUpdate(dt) { if (self.animation && self.animation.name === 'Bob') { const b = self.bone('Arm'); world.hud('arm', b ? b.position.y.toFixed(2) : 'none'); } }\n"};
+    q.levels[0].second.actors.push_back(bot);
+    { Blueprint bp; BpNode ev; ev.id = 1; ev.type = "Event.BeginPlay"; BpNode pl; pl.id = 2; pl.type = "Animation.Play"; pl.values = {{"Animation", "Bob"}, {"Loop", false}, {"BlendTime", 0}};
+      BpNode end; end.id = 3; end.type = "Event.AnimationEnd"; BpNode set; set.id = 4; set.type = "World.Hud"; set.values = {{"Id", "bp"}};
+      bp.nodes = {ev, pl, end, set}; bp.links = {{1, "then", 2, "exec"}, {3, "then", 4, "exec"}, {3, "Animation", 4, "Text"}};
+      std::vector<BpMessage> ms; std::string code = bpCompile(bp, "BP_Anim", ms); int errs = 0; for (auto& x : ms) errs += x.error; CHECK(errs == 0, "a Blueprint with Play Animation and On Animation End compiles");
+      q.scripts["BP_Anim"] = {"BP_Anim", code}; q.scripts["BP_Anim"].graph = bpToJson(bp); }
+    Actor bot2 = newActor("StaticMesh", "Bot2"); bot2.mesh = "Models/TestBot.glb"; bot2.material.clear(); bot2.p = {10, 0, 0}; bot2.script = "BP_Anim"; q.levels[0].second.actors.push_back(bot2);
+    Material mt; mt.name = "M_Bricks"; mt.baseMap = "Textures/bricks.png"; mt.normalMap = "Textures/bricks_n.png"; mt.tiling = {2, 3}; mt.worldAligned = true; mt.masked = true; mt.cutoff = 0.3f; q.materials["M_Bricks"] = mt;
+    { std::string e; CHECK(saveProjectFile(q, q.path, &e), "a project with a model saves"); Project r; CHECK(loadProjectFile(q.path, r, &e), "…and loads");
+      const Actor* ra = nullptr; for (auto& x : r.levels[0].second.actors) if (x.name == "Bot") ra = &x;
+      CHECK(ra && ra->mesh == "Models/TestBot.glb" && ra->material.empty() && ra->anim == "Wave" && !ra->animLoop, "the model actor keeps its file, own materials and animation");
+      const Material& rm = r.materials["M_Bricks"]; CHECK(rm.baseMap == mt.baseMap && rm.normalMap == mt.normalMap && rm.tiling == mt.tiling && rm.worldAligned && rm.masked && std::abs(rm.cutoff - 0.3f) < 1e-4f, "a material keeps its pictures, tiling, world aligned, masked"); }
+    Game g(q, "Main"); CHECK(g.start(), "the game starts");
+    auto hudOf = [&](const char* id) { for (auto& h : g.hudLines()) if (h.first == id) return h.second; return std::string(); };
+    CHECK(hudOf("list") == "Wave,Bob", ("self.animations: " + hudOf("list")).c_str());
+    run(g, 0.5f); CHECK(hudOf("end").empty(), "Wave is still playing at 0.5 s");
+    run(g, 0.7f); CHECK(hudOf("end") == "Wave:false", ("onAnimationEnd('Wave') when it ends: " + hudOf("end")).c_str());
+    CHECK(hudOf("bob") == "true:Bob", ("self.playAnimation('Bob'): " + hudOf("bob")).c_str());
+    CHECK(hudOf("bad") == "false" && hasLog("no animation \"Nope\""), "a name it doesn't have: false, and the log says which it has");
+    run(g, 0.3f); std::string arm = hudOf("arm"); CHECK(!arm.empty() && arm != "none" && std::atof(arm.c_str()) > 1.05f, ("self.bone('Arm') follows the animation: y = " + arm).c_str());
+    CHECK(hudOf("bp") == "Bob", ("Blueprint: Play Animation (Bob, no loop) → On Animation End: " + hudOf("bp")).c_str());
+    std::string box = g.spawn("Cube", "{\"position\":[0,5,0],\"physics\":true}"); run(g, 2.5f);
+    float y = g.worldPos(box).y; CHECK(y > 2.3f && y < 2.7f, ("a falling box lands on the model's top (y 2 + 0.5): " + std::to_string(y)).c_str());
+    std::string sp = g.spawn("Models/TestBot.glb", "{\"position\":[20,0,0],\"animation\":\"Bob\"}"); CHECK(!sp.empty() && g.animation(sp, "state", "").find("\"Bob\"") != std::string::npos, "world.spawn of a model with an animation");
+    setAssetRoot(""); fs::remove_all(dir, ec);
   }
   {   // playing together: a host and a player on this computer, messages both ways, the LAN beacon, leaving
     pge::Net h, c; double t = 0; CHECK(h.host(46655, "Test world", 4, "info"), "net: host a game");

@@ -4,7 +4,7 @@
 #include <glm/glm.hpp>
 
 namespace pge {
-struct Vertex { glm::vec3 p, n; };
+struct Vertex { glm::vec3 p, n; glm::vec2 uv{0}; };   // uv: texture coordinates (1 = the texture once across a face)
 struct MeshData { std::vector<Vertex> v; std::vector<unsigned> i; glm::vec3 bmin{-0.5f}, bmax{0.5f}; };
 struct GpuMesh { unsigned vao = 0, vbo = 0, ebo = 0; int count = 0; bool lines = false; glm::vec3 bmin{-0.5f}, bmax{0.5f}; };
 

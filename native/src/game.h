@@ -26,7 +26,9 @@ glm::vec3 eulerYXZ(const glm::quat& q);            // radians
 glm::quat quatYXZ(const glm::vec3& r);             // radians
 // adds what an actor looks like (mesh / light / text) to a frame; editor = also icons for lights, triggers, ...
 void addActorVisual(Frame& f, const Project& p, const Actor& a, const glm::mat4& world, bool editor, unsigned pickId,
-                    const glm::vec3* colorOverride = nullptr, const std::string* textOverride = nullptr, const Renderer* r = nullptr);
+                    const glm::vec3* colorOverride = nullptr, const std::string* textOverride = nullptr, const Renderer* r = nullptr, const AnimPlay* anim = nullptr);
+// a material's colours, numbers and pictures on a draw
+void applyMaterial(DrawItem& d, const Material& m);
 std::string keyCode(SDL_Scancode sc);              // SDL scancode → "KeyW", "Space", ...
 
 class Game : public ScriptWorld {
@@ -100,6 +102,7 @@ public:
   const std::vector<std::pair<std::string, std::string>>& hudLines() const { return hud_; }
   void playerSet(const std::string& json) override;
   std::string storage(const std::string& op, const std::string& key, const std::string& val) override;
+  std::string animation(const std::string& id, const std::string& op, const std::string& arg) override;
   void setSky(const std::string& json) override;
   void setQuality(const std::string& json) override { quality_ = json; qualityVer_++; }   // world.setQuality: the player applies it to the renderer
   const std::string& quality(int& ver) const { ver = qualityVer_; return quality_; }
@@ -111,6 +114,7 @@ private:
     Actor a; glm::vec3 p{0}, r{0}, s{1}; bool visible = true, alive = true, hasColor = false, inside = false;
     glm::vec3 color{1}; uint32_t body = NO_BODY; Motion motion = Motion::Static; int beh = -1;
     glm::mat4 lastWorld{1}; glm::vec3 bodyScale{1};
+    AnimPlay anim;   // a model's animation
   };
   Project project_; Level level_;
   std::vector<std::unique_ptr<Obj>> objs_; std::unordered_map<std::string, Obj*> byId_;

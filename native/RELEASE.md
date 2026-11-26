@@ -4,5 +4,8 @@ Premium Engine for Windows (experimental). Unzip and run PremiumEngine.exe.
 - Templates: Blank, First Person, Third Person
 - Physically based renderer (OpenGL 3.3), Jolt Physics, JavaScript scripts
 - Play in the editor, package games as Windows .exe
+- Models: glTF 2.0 (.glb / .gltf) with their materials, textures, skeletons and animations - drop them on the window
+- Materials with textures: base colour, normal, roughness, metallic, ambient occlusion, emissive; tiling, world aligned, masked
+- Blueprints (visual scripting) with English and Arabic names and explanations
 
 Every build is tested on Windows: engine tests, the editor makes a project, plays and packages it, and the packaged game starts and walks.

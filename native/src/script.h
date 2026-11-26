@@ -64,9 +64,11 @@ public:
   virtual std::string net(const std::string& op, const std::string& a, const std::string& b) { (void)op; (void)a; (void)b; return ""; }
   // the game's own small saved values (settings, world list, inventories): op = get / set / remove / keys; get gives "\x01" when missing
   virtual std::string storage(const std::string& op, const std::string& key, const std::string& val) { (void)op; (void)key; (void)val; return "\x01"; }
+  // a model's animations: op = play ({name, loop, speed, blend}) / stop / state / list / speed / bone (name → {position, rotation}); "" = no model
+  virtual std::string animation(const std::string& id, const std::string& op, const std::string& arg) { (void)id; (void)op; (void)arg; return ""; }
 };
 
-enum ScriptEvent { EV_Start = 0, EV_Update, EV_Overlap, EV_Hit, EV_Key, EV_Stop, EV_COUNT };
+enum ScriptEvent { EV_Start = 0, EV_Update, EV_Overlap, EV_Hit, EV_Key, EV_Stop, EV_AnimEnd, EV_COUNT };
 
 class ScriptHost {
 public:

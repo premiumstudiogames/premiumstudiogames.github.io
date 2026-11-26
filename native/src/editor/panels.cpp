@@ -58,7 +58,7 @@ void Editor::drawMenuBar() {
   if (ImGui::BeginMenu("File")) {
     section("OPEN"); if (item("New Level...", "Ctrl+N")) run("newLevel"); if (item("Open Level...", "Ctrl+O")) run("openLevel");
     section("SAVE"); if (item("Save Current Level", "Ctrl+S")) run("save"); if (item("Save All", "Ctrl+Shift+S")) run("saveAll");
-    if (!console) { section("IMPORT / EXPORT"); if (item("Import Into Level...")) run("importLevel"); if (item("Open Project Folder")) openInExplorer(fs::u8path(P.path).parent_path().u8string()); }
+    if (!console) { section("IMPORT / EXPORT"); if (item("Import Model or Picture...")) run("importAsset"); if (item("Import Into Level...")) run("importLevel"); if (item("Open Project Folder")) openInExplorer(fs::u8path(P.path).parent_path().u8string()); }
     section("PROJECT"); if (item("New Project...")) run("newProject"); if (item("Open Project...")) run("openProject"); if (item("Package Project")) run("package");
     if (ImGui::BeginMenu("Recent Projects")) { for (auto& r : recent) if (item(fs::u8path(r).stem().stem().u8string().c_str())) { if (dirty) save(); openProjectFile(r); break; } ImGui::EndMenu(); }
     ImGui::Separator(); if (item("Exit")) run("exit");
@@ -377,13 +377,24 @@ void Editor::drawDetails() {
     ImGui::EndTable(); }
   if (a->type == "StaticMesh") {
     if (ImGui::CollapsingHeader("Static Mesh", ImGuiTreeNodeFlags_DefaultOpen) && beginProps("sm")) { propCols();
-      rowLabel("Static Mesh"); if (ImGui::BeginCombo("##mesh", a->mesh.c_str())) { for (int i = 0; i < MESH_COUNT; i++) if (ImGui::Selectable(MESHES[i], a->mesh == MESHES[i])) { a->mesh = MESHES[i]; ch = true; } ImGui::EndCombo(); }
-      ImGui::EndTable(); }
+      rowLabel("Static Mesh"); if (ImGui::BeginCombo("##mesh", a->mesh.c_str(), ImGuiComboFlags_HeightLarge)) {
+        for (int i = 0; i < MESH_COUNT; i++) if (ImGui::Selectable(MESHES[i], a->mesh == MESHES[i])) { if (isModelFile(a->mesh) && a->material.empty()) a->material = "M_Default"; a->mesh = MESHES[i]; a->anim.clear(); ch = true; }
+        scanFiles(); if (!projModels.empty()) { ImGui::Separator(); ImGui::TextDisabled("Models"); }
+        for (auto& m : projModels) if (ImGui::Selectable(m.c_str(), a->mesh == m)) { if (!isModelFile(a->mesh) && a->material == "M_Default") a->material.clear(); a->mesh = m; a->anim.clear(); ch = true; }
+        if (hasFileDialogs()) { ImGui::Separator(); if (ImGui::Selectable("Import a model...")) { std::string f = openFileDialog("Import a model", "glTF models", "*.glb;*.gltf"); if (!f.empty()) { auto r = importFiles({f}); if (!r.empty()) { if (a->material == "M_Default") a->material.clear(); a->mesh = r[0]; a->anim.clear(); ch = true; } } } }
+        ImGui::EndCombo(); }
+      if (ImGui::BeginDragDropTarget()) { if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("PGE_ADD")) { std::string s((const char*)p->Data, p->DataSize); auto bar = s.find('|');
+          if (bar != std::string::npos && s.substr(0, bar) == "StaticMesh") { std::string m = s.substr(bar + 1); if (isModelFile(m) && a->material == "M_Default") a->material.clear(); if (!isModelFile(m) && a->material.empty()) a->material = "M_Default"; a->mesh = m; a->anim.clear(); ch = true; } } ImGui::EndDragDropTarget(); }
+      ImGui::EndTable();
+      if (isModelFile(a->mesh)) ch |= modelDetails(*a); }
     if (ImGui::CollapsingHeader("Materials", ImGuiTreeNodeFlags_DefaultOpen) && beginProps("mt")) { propCols();
       rowLabel("Element 0"); ImGui::SetNextItemWidth(-60);
-      if (ImGui::BeginCombo("##mat", a->material.c_str())) { for (auto& [id, m] : P.materials) if (ImGui::Selectable(id.c_str(), a->material == id)) { a->material = id; ch = true; } ImGui::EndCombo(); }
+      bool mdl = isModelFile(a->mesh); const char* shown = a->material.empty() ? (mdl ? "The model's own" : "M_Default") : a->material.c_str();
+      if (ImGui::BeginCombo("##mat", shown)) { if (mdl && ImGui::Selectable("The model's own", a->material.empty())) { a->material.clear(); ch = true; }
+        for (auto& [id, m] : P.materials) if (ImGui::Selectable(id.c_str(), a->material == id)) { a->material = id; ch = true; } ImGui::EndCombo(); }
+      if (mdl && ImGui::IsItemHovered()) ImGui::SetTooltip("A model draws with the materials in its file, or one material of the project on all of it.");
       if (ImGui::BeginDragDropTarget()) { if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("PGE_MAT")) { a->material.assign((const char*)p->Data, p->DataSize); ch = true; } ImGui::EndDragDropTarget(); }
-      ImGui::SameLine(); if (ImGui::Button("Edit")) { materialOpen = a->material; wMaterial = true; ImGui::SetWindowFocus("Material Editor"); }
+      ImGui::SameLine(); ImGui::BeginDisabled(a->material.empty()); if (ImGui::Button("Edit")) { materialOpen = a->material; wMaterial = true; ImGui::SetWindowFocus("Material Editor"); } ImGui::EndDisabled();
       ImGui::EndTable(); }
     if (ImGui::CollapsingHeader("Physics", ImGuiTreeNodeFlags_DefaultOpen) && beginProps("ph")) { propCols();
       rowLabel("Simulate Physics"); ch |= ImGui::Checkbox("##sim", &a->physics.simulate);
@@ -480,17 +491,20 @@ void Editor::drawPlaceActors() {
 /* ------------------------------------------------------------------ Content Browser */
 void Editor::drawContent() {
   if (!ImGui::Begin("Content Browser", &wContent)) { ImGui::End(); return; }
-  if (ImGui::Button("+ Add")) ImGui::OpenPopup("cbAdd"); ImGui::SameLine(); if (ImGui::Button("Save All")) save(); ImGui::SameLine();
+  if (ImGui::Button("+ Add")) ImGui::OpenPopup("cbAdd"); ImGui::SameLine();
+  if (!console) { if (ImGui::Button("Import")) importDialog(); if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bring a model (.glb, .gltf) or a picture (.png, .jpg, .tga) into the project.\nOr drop the files on this window."); ImGui::SameLine(); }
+  if (ImGui::Button("Save All")) save(); ImGui::SameLine();
   ImGui::SetNextItemWidth(220); ImGui::InputTextWithHint("##cbf", "Search Content", &cbFilter);
   ImGui::SameLine(); ImGui::TextDisabled("Content > %s", cbFolder.c_str());
   if (ImGui::BeginPopup("cbAdd")) { if (ImGui::MenuItem("Level")) run("newLevel"); if (ImGui::MenuItem("Material")) run("newMaterial"); if (ImGui::MenuItem("Blueprint")) run("newBlueprint"); if (ImGui::MenuItem("Script")) run("newScript"); ImGui::EndPopup(); }
   ImGui::Separator();
   ImGui::BeginChild("folders", {170, 0}, ImGuiChildFlags_ResizeX);
   if (ImGui::TreeNodeEx("Content", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth)) {
-    for (const char* f : {"Levels", "Materials", "Scripts", "Shapes"}) { if (ImGui::TreeNodeEx(f, ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth | (cbFolder == f ? ImGuiTreeNodeFlags_Selected : 0))) ImGui::TreePop(); if (ImGui::IsItemClicked()) cbFolder = f; }
+    for (const char* f : {"Levels", "Materials", "Scripts", "Models", "Textures", "Shapes"}) { if (ImGui::TreeNodeEx(f, ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth | (cbFolder == f ? ImGuiTreeNodeFlags_Selected : 0))) ImGui::TreePop(); if (ImGui::IsItemClicked()) cbFolder = f; }
     ImGui::TreePop(); }
   ImGui::EndChild(); ImGui::SameLine();
   ImGui::BeginChild("assets", {0, 0});
+  if (cbFolder == "Models" || cbFolder == "Textures") scanFiles();
   std::string flt = cbFilter; std::transform(flt.begin(), flt.end(), flt.begin(), ::tolower);
   float tile = 96 * ImGui::GetIO().FontGlobalScale * win.dpi, avail = ImGui::GetContentRegionAvail().x; int cols = std::max(1, (int)(avail / (tile + 10))); int n = 0;
   std::string delMat, delScript, delLevel, dupMat;
@@ -507,6 +521,7 @@ void Editor::drawContent() {
     dl->AddRectFilled({p.x + 4, p.y + tile - 11}, {p.x + tile - 4, p.y + tile - 8}, color);
     if (std::strcmp(kind, "Material") == 0) { auto it = P.materials.find(id); if (it != P.materials.end()) { glm::vec3 c = it->second.color; dl->AddCircleFilled({p.x + tile / 2, p.y + tile / 2 - 4}, tile * 0.3f, ImGui::ColorConvertFloat4ToU32({c.r, c.g, c.b, 1}), 32);
         dl->AddCircleFilled({p.x + tile / 2 - tile * 0.09f, p.y + tile / 2 - 4 - tile * 0.09f}, tile * 0.07f, IM_COL32(255, 255, 255, (int)(150 * (1 - it->second.roughness))), 16); } }
+    else if (std::strcmp(kind, "Texture") == 0) { const Texture* t = texture(id, true); if (t && t->id) dl->AddImage((ImTextureID)(intptr_t)t->id, {p.x + 10, p.y + 10}, {p.x + tile - 10, p.y + tile - 16}); else dl->AddText({p.x + tile / 2 - 4, p.y + tile / 2 - 10}, IM_COL32(255, 90, 90, 255), "?"); }
     else drawIcon(dl, {p.x + tile / 2, p.y + tile / 2 - 4}, tile * 0.26f, std::strcmp(kind, "Script") == 0 ? IC_Script : std::strcmp(kind, "Level") == 0 ? IC_Window : IC_Cube, IM_COL32(200, 200, 200, 255));
     ImGui::PushClipRect(p, {p.x + tile, p.y + tile + 40}, true);
     dl->AddText({p.x + 6, p.y + tile - 4}, ImGui::GetColorU32(ImGuiCol_Text), label.c_str()); dl->AddText({p.x + 6, p.y + tile + 12}, ImGui::GetColorU32(ImGuiCol_TextDisabled), kind);
@@ -521,7 +536,13 @@ void Editor::drawContent() {
     tileItem(id, s.name, s.blueprint() ? "Blueprint" : "Script", s.blueprint() ? IM_COL32(60, 120, 255, 255) : IM_COL32(60, 130, 230, 255), "PGE_SCRIPT", [&, sid] { openScript(sid); }, [&, sid] { if (ImGui::MenuItem("Delete")) delScript = sid; }); }
   if (cbFolder == "Shapes") for (int i = 0; i < MESH_COUNT; i++) { std::string m = MESHES[i];
     tileItem("StaticMesh|" + m, m, "Static Mesh", IM_COL32(40, 180, 220, 255), "PGE_ADD", [&, m] { addActor("StaticMesh", m); }, [] {}); }
-  if (!n) ImGui::TextDisabled(flt.empty() ? "This folder is empty. Use + Add." : "Nothing matches the search.");
+  if (cbFolder == "Models") for (auto& m : projModels) { std::string mm = m;
+    tileItem("StaticMesh|" + m, fs::u8path(m).stem().u8string(), "Model", IM_COL32(230, 90, 170, 255), "PGE_ADD", [&, mm] { addActor("StaticMesh", mm); },
+      [&, mm] { ImGui::TextDisabled("%s", mm.c_str()); if (ImGui::MenuItem("Place in Level")) addActor("StaticMesh", mm); if (!console && ImGui::MenuItem("Show in Folder")) openInExplorer((fs::u8path(P.path).parent_path() / fs::u8path(mm)).parent_path().u8string()); }); }
+  if (cbFolder == "Textures") for (auto& t : projTextures) { std::string tt = t;
+    tileItem(t, fs::u8path(t).filename().u8string(), "Texture", IM_COL32(200, 60, 60, 255), "PGE_TEX", [&, tt] { if (P.materials.count(materialOpen)) { P.materials[materialOpen].baseMap = tt; touch(); wMaterial = true; } else notify("Drag the picture into a slot of the Material Editor"); },
+      [&, tt] { ImGui::TextDisabled("%s", tt.c_str()); if (!console && ImGui::MenuItem("Show in Folder")) openInExplorer((fs::u8path(P.path).parent_path() / fs::u8path(tt)).parent_path().u8string()); }); }
+  if (!n) ImGui::TextDisabled(cbFolder == "Models" || cbFolder == "Textures" ? (console ? "Nothing here yet: put files in the project's Models / Textures folders." : "Nothing here yet: Import, or drop .glb / .gltf models and .png / .jpg pictures on the window.") : flt.empty() ? "This folder is empty. Use + Add." : "Nothing matches the search.");
   ImGui::EndChild();
   auto inUse = [&](auto pred) { int k = 0; for (auto& [ln, lv] : P.levels) for (auto& a : lv.actors) k += pred(a); return k; };
   if (!dupMat.empty()) { std::string id = newMaterial(dupMat + "_Copy"); Material m = P.materials[dupMat]; m.name = id; P.materials[id] = m; }
@@ -592,7 +613,7 @@ void Editor::drawMaterial() {
   // preview: a sphere lit like the level, rendered into its own target
   static RenderTarget prt; float ps = std::min(ImGui::GetContentRegionAvail().x * 0.45f, 320.f); int px = (int)(ps * ImGui::GetIO().DisplayFramebufferScale.x);
   R.resizeTarget(prt, px, px); Frame F; F.world = L().world; F.world.sky = glm::vec3(0.1f);
-  { DrawItem d; d.mesh = &primitive("Sphere"); d.model = glm::scale(glm::mat4(1), glm::vec3(1.6f)); d.color = m.color; d.emissive = m.emissive * m.emissiveIntensity; d.metal = m.metalness; d.rough = m.roughness; d.opacity = m.opacity; F.draws.push_back(d); }
+  { DrawItem d; d.mesh = &primitive(m.worldAligned ? "Cube" : "Sphere"); d.model = glm::scale(glm::mat4(1), glm::vec3(m.worldAligned ? 1.1f : 1.6f)); if (m.worldAligned) d.model = glm::rotate(d.model, 0.6f, glm::vec3(0.3f, 1, 0)); applyMaterial(d, m); F.draws.push_back(d); }
   { LightItem l; l.type = 0; l.dir = glm::normalize(glm::vec3(-0.5f, -0.7f, -0.6f)); l.color = glm::vec3(1); l.intensity = 2.5f; F.lights.push_back(l); }
   Camera C; C.pos = {0, 0, 3}; C.view = glm::lookAt(C.pos, glm::vec3(0), glm::vec3(0, 1, 0)); C.proj = glm::perspective(glm::radians(40.f), 1.f, 0.1f, 50.f);
   R.render(F, C, px, px, &prt);
@@ -607,7 +628,25 @@ void Editor::drawMaterial() {
     rowLabel("Emissive Strength"); ch |= ImGui::DragFloat("##ei", &m.emissiveIntensity, 0.05f, 0, 100);
     rowLabel("Opacity"); ch |= ImGui::SliderFloat("##op", &m.opacity, 0, 1);
     ImGui::EndTable(); }
-  ImGui::Spacing(); ImGui::TextDisabled("Drag the material from the Content Browser onto an actor in the viewport to apply it.");
+  ImGui::EndGroup();
+  // pictures: each one multiplies its value above (roughness reads green, metal blue, occlusion red: a packed ORM picture fits all three)
+  ImGui::SeparatorText("Textures"); ImGui::BeginGroup();
+  if (beginProps("maps")) { propCols(); auto slot = [&](const char* l, std::string& f, bool srgb, const char* tip) { rowLabel(l); if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip); bool c = textureSlot(l, f, srgb); ch |= c; return c; };
+    if (slot("Base Color", m.baseMap, true, "The surface's colours (and see-through parts in its alpha). Multiplies Base Color.") && !m.baseMap.empty() && glm::length(m.color - Material().color) < 1e-3f) m.color = glm::vec3(1);
+    slot("Normal", m.normalMap, false, "Bumps and grooves (a blue-purple picture).");
+    if (slot("Roughness", m.roughnessMap, false, "Rough (white) or shiny (black): the green channel. Multiplies Roughness.") && !m.roughnessMap.empty()) m.roughness = 1;
+    if (slot("Metallic", m.metalMap, false, "Metal (white) or not (black): the blue channel. Multiplies Metallic.") && !m.metalMap.empty()) m.metalness = 1;
+    slot("Ambient Occlusion", m.aoMap, false, "Dark creases: the red channel.");
+    if (slot("Emissive", m.emissiveMap, true, "Glowing parts. Multiplies Emissive Color.") && !m.emissiveMap.empty() && glm::length(m.emissive) < 1e-4f) m.emissive = glm::vec3(1);
+    if (m.hasMaps()) {
+      rowLabel("Tiling"); ch |= ImGui::DragFloat2("##til", &m.tiling.x, 0.01f, 0.001f, 1000, "%.2f");
+      rowLabel("World Aligned"); ch |= ImGui::Checkbox("##wa", &m.worldAligned); if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lay the pictures on the world (Tiling per metre): they don't stretch when an actor is scaled. For walls, floors, level blocks.");
+      if (!m.normalMap.empty()) { rowLabel("Normal Strength"); ch |= ImGui::SliderFloat("##ns", &m.normalStrength, 0, 4); rowLabel("DirectX Normal"); ch |= ImGui::Checkbox("##dx", &m.directXNormal); if (ImGui::IsItemHovered()) ImGui::SetTooltip("Normal maps made for DirectX / Unreal have green flipped: tick this if the bumps look upside down."); }
+      if (!m.aoMap.empty()) { rowLabel("AO Strength"); ch |= ImGui::SliderFloat("##aos", &m.aoStrength, 0, 1); }
+      if (!m.baseMap.empty()) { rowLabel("Masked"); ch |= ImGui::Checkbox("##msk", &m.masked); if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cut out where the picture's alpha is low: leaves, fences, grass. Shadows are cut too.");
+        if (m.masked) { rowLabel("Opacity Clip"); ch |= ImGui::SliderFloat("##cut", &m.cutoff, 0.01f, 0.99f); } } }
+    ImGui::EndTable(); }
+  ImGui::Spacing(); ImGui::TextDisabled("Drag pictures from the Content Browser (Textures) into the slots. Drag the material onto an actor in the viewport to apply it.");
   ImGui::EndGroup();
   if (ch) touch();
   ImGui::End();
