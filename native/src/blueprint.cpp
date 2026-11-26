@@ -189,6 +189,10 @@ static std::vector<BpNodeDef> buildLibrary() {
       "if (input.rumble) input.rumble($in(Strength), $in(Strength), $in(Duration));\n$exec(then)");
 
   // ---- sound
+  add("World.SetCameraEffect", "World", X, "Set Camera Effect", "تأثير الكاميرا", "Changes one camera effect: Vignette, Film Grain, Chromatic Aberration, VHS, Scanlines (0..1), Saturation, Contrast, Bloom (1 = as is), Temperature (-1 cold .. 1 warm).",
+      "يغيّر تأثير من تأثيرات الكاميرا: Vignette تعتيم الأطراف، Film Grain تشويش الفيلم، Chromatic Aberration انفصال الألوان، VHS شكل شريط الفيديو القديم، Scanlines خطوط الشاشة القديمة (من 0 إلى 1)، Saturation تشبع الألوان، Contrast التباين، Bloom توهج الضوء (1 = عادي)، Temperature حرارة الألوان (‎-1 بارد إلى 1 دافي).",
+      {">exec", ">Effect:string=\"Vignette\"", ">Amount:number=0.5", "<then"}, "__bp.fx($in(Effect), $in(Amount));\n$exec(then)");
+  add("World.ResetCameraEffects", "World", X, "Reset Camera Effects", "إلغاء تأثيرات الكاميرا", "Turns every camera effect off (as in World Settings: back to none).", "يلغي كل تأثيرات الكاميرا.", {">exec", "<then"}, "world.setPostProcess(null);\n$exec(then)");
   // ---- animation (models with animations: .glb / .gltf)
   add("Event.AnimationEnd", "Events", E, "On Animation End", "عند انتهاء الحركة", "A model's animation that doesn't loop reached its end. Animation = its name.",
       "حركة المجسم (اللي ما تتكرر) وصلت لنهايتها. Animation = اسم الحركة.", {"<then", "<Animation:string"});
@@ -310,7 +314,7 @@ std::string bpPinAr(const std::string& id) {
     {"Player", "اللاعب"}, {"Fly", "يطير"}, {"WalkSpeed", "سرعة المشي"}, {"RunSpeed", "سرعة الركض"}, {"X", "X"}, {"Y", "Y"}, {"Z", "Z"}, {"Axis", "المحور"},
     {"Strength", "القوة"}, {"Sound", "الصوت"}, {"Volume", "الارتفاع"}, {"Min", "الأقل"}, {"Max", "الأكثر"}, {"Alpha", "النسبة"}, {"PickA", "اختر A"}, {"InVec", "المتجه"},
     {"Scale", "المضاعف"}, {"V1", "النقطة 1"}, {"V2", "النقطة 2"}, {"In", "المدخل"}, {"Sub", "الجزء"}, {"Output", "القيمة"},
-    {"Animation", "الحركة"}, {"Loop", "تتكرر"}, {"PlayRate", "السرعة"}, {"BlendTime", "زمن الانتقال"}, {"Bone", "العظمة"}};
+    {"Animation", "الحركة"}, {"Effect", "التأثير"}, {"Amount", "المقدار"}, {"Loop", "تتكرر"}, {"PlayRate", "السرعة"}, {"BlendTime", "زمن الانتقال"}, {"Bone", "العظمة"}};
   if (id == "exec" || id == "then") return ""; auto it = m.find(id); return it == m.end() ? bpPinEn(id) : it->second;
 }
 
@@ -374,6 +378,10 @@ static const char* BP_RUNTIME = R"JS(const __bp = (() => {
   vnorm(a) { a = B.vec(a); const l = Math.hypot(a.x, a.y, a.z) || 1; return B.v(a.x / l, a.y / l, a.z / l); },
   dist(a, b) { a = B.vec(a); b = B.vec(b); return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z); },
   valid(a) { return !!a && (a.isPlayer || a.alive !== false); },
+  fx(name, v) { const k = { 'vignette': 'vignette', 'film grain': 'grain', 'grain': 'grain', 'chromatic aberration': 'chromatic', 'chromatic': 'chromatic', 'vhs': 'vhs', 'scanlines': 'scanlines',
+      'saturation': 'saturation', 'contrast': 'contrast', 'bloom': 'bloom', 'temperature': 'temperature' }[String(name).trim().toLowerCase()];
+    if (!k) { log('Set Camera Effect: no effect called "' + name + '" (Vignette, Film Grain, Chromatic Aberration, VHS, Scanlines, Saturation, Contrast, Bloom, Temperature)'); return; }
+    world.setPostProcess({ [k]: +v }); },
   bone(a, n) { const b = a && a.bone ? a.bone(String(n)) : null; return b ? B.v(b.position.x, b.position.y, b.position.z) : B.pos(a); },
   pos(a) { if (!a) return B.v(0, 0, 0); if (a.isPlayer) return a.position; return a.worldPosition ? a.worldPosition : B.vec(a); },
   setPos(a, v) { v = B.vec(v); if (a.isPlayer) a.teleport(v.x, v.y, v.z); else if (a.position) a.position.set(v.x, v.y, v.z); },

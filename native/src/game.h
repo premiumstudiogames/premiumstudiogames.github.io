@@ -104,6 +104,7 @@ public:
   std::string storage(const std::string& op, const std::string& key, const std::string& val) override;
   std::string animation(const std::string& id, const std::string& op, const std::string& arg) override;
   void setSky(const std::string& json) override;
+  std::string postGet() override;
   void setQuality(const std::string& json) override { quality_ = json; qualityVer_++; }   // world.setQuality: the player applies it to the renderer
   const std::string& quality(int& ver) const { ver = qualityVer_; return quality_; }
   std::string net(const std::string& op, const std::string& a, const std::string& b) override;   // net.*: playing together (net.h)

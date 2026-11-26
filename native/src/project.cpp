@@ -251,14 +251,20 @@ static Actor actorFrom(const json& j) {
   return a;
 }
 static json worldJson(const WorldSettings& w) {
-  return {{"gameMode", w.gameMode}, {"sky", colorHex(w.sky)}, {"skyLight", colorHex(w.skyLight)}, {"groundLight", colorHex(w.groundLight)}, {"ambient", w.ambient}, {"exposure", w.exposure},
+  json j = {{"gameMode", w.gameMode}, {"sky", colorHex(w.sky)}, {"skyLight", colorHex(w.skyLight)}, {"groundLight", colorHex(w.groundLight)}, {"ambient", w.ambient}, {"exposure", w.exposure},
           {"gravity", w.gravity}, {"killZ", w.killZ}, {"fog", w.fog}, {"fogColor", colorHex(w.fogColor)}, {"fogDensity", w.fogDensity}, {"fov", w.fov}};
+  if (!w.post.isDefault()) { const PostProcess& q = w.post; j["post"] = {{"vignette", q.vignette}, {"grain", q.grain}, {"chromatic", q.chromatic}, {"scanlines", q.scanlines}, {"vhs", q.vhs},
+      {"saturation", q.saturation}, {"contrast", q.contrast}, {"temperature", q.temperature}, {"bloom", q.bloom}, {"tint", colorHex(q.tint)}}; }
+  return j;
 }
 static WorldSettings worldFrom(const json& j) {
   WorldSettings w; if (!j.is_object()) return w;
   w.gameMode = get<std::string>(j, "gameMode", w.gameMode); w.sky = col(j, "sky", w.sky); w.skyLight = col(j, "skyLight", w.skyLight); w.groundLight = col(j, "groundLight", w.groundLight);
   w.ambient = get<float>(j, "ambient", w.ambient); w.exposure = get<float>(j, "exposure", w.exposure); w.gravity = get<float>(j, "gravity", w.gravity); w.killZ = get<float>(j, "killZ", w.killZ);
   w.fog = get<bool>(j, "fog", false); w.fogColor = col(j, "fogColor", w.sky); w.fogDensity = get<float>(j, "fogDensity", w.fogDensity); w.fov = get<float>(j, "fov", w.fov);
+  if (j.contains("post") && j["post"].is_object()) { const json& q = j["post"]; PostProcess& o = w.post; o.vignette = get<float>(q, "vignette", 0); o.grain = get<float>(q, "grain", 0); o.chromatic = get<float>(q, "chromatic", 0);
+    o.scanlines = get<float>(q, "scanlines", 0); o.vhs = get<float>(q, "vhs", 0); o.saturation = get<float>(q, "saturation", 1); o.contrast = get<float>(q, "contrast", 1); o.temperature = get<float>(q, "temperature", 0);
+    o.bloom = get<float>(q, "bloom", 1); o.tint = col(q, "tint", glm::vec3(1)); }
   return w;
 }
 static json levelJ(const Level& l) { json a = json::array(); for (auto& x : l.actors) a.push_back(actorJson(x)); return {{"actors", a}, {"world", worldJson(l.world)}}; }

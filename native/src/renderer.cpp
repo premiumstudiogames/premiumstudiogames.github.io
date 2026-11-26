@@ -254,18 +254,37 @@ void main(){ vec3 c = texture(uSrc, vUv).rgb * 4.0;
   c += texture(uSrc, vUv + uTexel * vec2(-1,-1)).rgb + texture(uSrc, vUv + uTexel * vec2(1,-1)).rgb + texture(uSrc, vUv + uTexel * vec2(-1,1)).rgb + texture(uSrc, vUv + uTexel * vec2(1,1)).rgb;
   frag = vec4(c / 16.0, 1.0); })";
 // to the screen: AO, bloom, exposure, the same ACES tonemapper as before (games look as they did, with more depth), sRGB
+// camera effects (World Settings > Post Process, world.setPostProcess): chromatic aberration, VHS tape wobble and colour bleed,
+// temperature, tint, saturation, contrast, scanlines, film grain, vignette
 static const char* COMPOSE_FS = R"(#version 330 core
-in vec2 vUv; out vec4 frag; uniform sampler2D uHdr, uDepth, uAo, uBloom; uniform int uOut, uHasAo, uHasBloom; uniform float uExposure, uAoAmount, uBloomAmount;
+in vec2 vUv; out vec4 frag; uniform sampler2D uHdr, uDepth, uAo, uBloom; uniform int uOut, uHasAo, uHasBloom, uPost; uniform float uExposure, uAoAmount, uBloomAmount;
+uniform float uTime, uVignette, uGrain, uChroma, uScan, uVhs, uSat, uContrast, uTemp; uniform vec3 uTint; uniform vec2 uRes;
+float hash(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
 vec3 rrt(vec3 v){ vec3 a = v*(v+0.0245786)-0.000090537; vec3 b = v*(0.983729*v+0.4329510)+0.238081; return a/b; }
 vec3 aces(vec3 c){ const mat3 I = mat3(vec3(0.59719,0.07600,0.02840), vec3(0.35458,0.90834,0.13383), vec3(0.04823,0.01566,0.83777));
   const mat3 O = mat3(vec3(1.60475,-0.10208,-0.00327), vec3(-0.53108,1.10813,-0.07276), vec3(-0.07367,-0.00605,1.07602));
   c /= 0.6; c = I*c; c = rrt(c); c = O*c; return clamp(c,0.0,1.0); }
 vec3 srgb(vec3 c){ return mix(c*12.92, 1.055*pow(c, vec3(1.0/2.4))-0.055, step(vec3(0.0031308), c)); }
-void main(){ float d = texture(uDepth, vUv).r; vec3 c = texture(uHdr, vUv).rgb;
+void main(){ float d = texture(uDepth, vUv).r; vec2 uv = vUv;
+  if(uPost == 1 && uVhs > 0.0){   // a worn tape: lines wobble, a few jump, a tracking band rolls down
+    float row = floor(uv.y * uRes.y / 2.0), fr = floor(uTime * 24.0), n = hash(vec2(row, fr));
+    uv.x += (sin(uv.y * 38.0 + uTime * 2.7) * 0.0012 + sin(uv.y * 410.0 + uTime * 31.0) * 0.0004 + (n > 0.992 ? (n - 0.992) * 3.0 : 0.0)) * uVhs;
+    float band = 1.0 - smoothstep(0.0, 0.035, abs(fract(uv.y + uTime * 0.06) - 0.5)); uv.x += band * 0.004 * uVhs * (hash(vec2(fr, 7.0)) - 0.5); }
+  vec3 c = texture(uHdr, uv).rgb;
+  if(uPost == 1 && (uChroma > 0.0 || uVhs > 0.0)){ vec2 off = (uv - 0.5) * uChroma * 0.012 + vec2(uVhs * 0.0028, 0.0);
+    c.r = texture(uHdr, uv + off).r; c.b = texture(uHdr, uv - off).b; }
   if(uOut == 0){
-    if(uHasAo == 1 && d < 1.0) c *= mix(1.0, texture(uAo, vUv).r, uAoAmount);
-    if(uHasBloom == 1) c += texture(uBloom, vUv).rgb * uBloomAmount / max(uExposure, 1e-3);
-    c = srgb(aces(c * uExposure)); }
+    if(uHasAo == 1 && d < 1.0) c *= mix(1.0, texture(uAo, uv).r, uAoAmount);
+    if(uHasBloom == 1) c += texture(uBloom, uv).rgb * uBloomAmount / max(uExposure, 1e-3);
+    c = srgb(aces(c * uExposure));
+    if(uPost == 1){
+      c *= vec3(1.0 + 0.12 * uTemp, 1.0 + 0.02 * uTemp, 1.0 - 0.14 * uTemp) * uTint;
+      float l = dot(c, vec3(0.2126, 0.7152, 0.0722)); c = mix(vec3(l), c, uSat); c = (c - 0.5) * uContrast + 0.5;
+      if(uVhs > 0.0){ c = mix(c, c * vec3(1.04, 0.96, 1.07) * 0.92 + 0.045, uVhs); c += (hash(vec2(floor(uv.y * uRes.y), floor(uTime * 30.0))) - 0.5) * 0.05 * uVhs; }
+      if(uScan > 0.0) c *= 1.0 - uScan * 0.32 * (0.5 + 0.5 * sin(gl_FragCoord.y * 3.14159));
+      if(uGrain > 0.0){ float g = hash(gl_FragCoord.xy + fract(uTime * 7.31) * 517.0) - 0.5; c += g * uGrain * 0.22 * (1.0 - 0.6 * clamp(l, 0.0, 1.0)); }
+      if(uVignette > 0.0){ vec2 q = (vUv - 0.5) * vec2(uRes.x / uRes.y, 1.0) / (0.5 * sqrt(uRes.x * uRes.x / (uRes.y * uRes.y) + 1.0)); c *= mix(1.0, smoothstep(1.15, 0.25, length(q)), uVignette); }
+      c = clamp(c, 0.0, 1.0); } }
   else if(uOut == 1) c = srgb(c);
   c += (fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) / 255.0;   // dither: no bands in the sky
   frag = vec4(c, 1.0); gl_FragDepth = d; })";
@@ -579,7 +598,11 @@ void Renderer::render(const Frame& f, const Camera& cam, int w, int h, const Ren
     glActiveTexture(GL_TEXTURE3); glBindTexture(GL_TEXTURE_2D, P.bloomN ? P.bloomTex[0] : 0); glUniform1i(U(compose_, "uBloom"), 3); glActiveTexture(GL_TEXTURE0);
     glUniform1i(U(compose_, "uOut"), f.viewMode == VM_Lit ? 0 : f.viewMode == VM_Unlit ? 1 : 2); glUniform1f(U(compose_, "uExposure"), expo);
     glUniform1i(U(compose_, "uHasAo"), ao ? 1 : 0); glUniform1f(U(compose_, "uAoAmount"), quality.aoAmount);
-    glUniform1i(U(compose_, "uHasBloom"), bloom ? 1 : 0); glUniform1f(U(compose_, "uBloomAmount"), quality.bloomAmount);
+    glUniform1i(U(compose_, "uHasBloom"), bloom ? 1 : 0); glUniform1f(U(compose_, "uBloomAmount"), quality.bloomAmount * std::max(f.world.post.bloom, 0.f));
+    { const PostProcess& q = f.world.post; bool on = f.viewMode == VM_Lit && !q.isDefault(); glUniform1i(U(compose_, "uPost"), on ? 1 : 0);
+      glUniform1f(U(compose_, "uTime"), f.time); glUniform2f(U(compose_, "uRes"), (float)w, (float)h); glUniform1f(U(compose_, "uVignette"), q.vignette); glUniform1f(U(compose_, "uGrain"), q.grain);
+      glUniform1f(U(compose_, "uChroma"), q.chromatic); glUniform1f(U(compose_, "uScan"), q.scanlines); glUniform1f(U(compose_, "uVhs"), q.vhs); glUniform1f(U(compose_, "uSat"), q.saturation);
+      glUniform1f(U(compose_, "uContrast"), q.contrast); glUniform1f(U(compose_, "uTemp"), q.temperature); V3(compose_, "uTint", q.tint); }
     glDrawArrays(GL_TRIANGLES, 0, 3); drawCalls++;
     glDepthFunc(GL_LEQUAL); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
   } else {

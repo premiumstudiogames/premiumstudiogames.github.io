@@ -33,11 +33,16 @@ struct Actor {
   bool isLight() const { return type == "PointLight" || type == "SpotLight" || type == "DirectionalLight"; }
 };
 
+// camera effects over the whole picture (like Unreal's Post Process Volume): 0 = off; saturation / contrast / bloom 1 = as is
+struct PostProcess {
+  float vignette = 0, grain = 0, chromatic = 0, scanlines = 0, vhs = 0, saturation = 1, contrast = 1, temperature = 0, bloom = 1; glm::vec3 tint{1};
+  bool isDefault() const { return vignette == 0 && grain == 0 && chromatic == 0 && scanlines == 0 && vhs == 0 && saturation == 1 && contrast == 1 && temperature == 0 && bloom == 1 && tint == glm::vec3(1); }
+};
 struct WorldSettings {
   std::string gameMode = "FirstPerson";
   glm::vec3 sky{0.56f, 0.72f, 0.88f}, skyLight{0.87f, 0.92f, 1.0f}, groundLight{0.23f, 0.25f, 0.29f}, fogColor{0.56f, 0.72f, 0.88f};
   float ambient = 0.8f, exposure = 1, gravity = -9.81f, killZ = -30, fogDensity = 0.01f, fov = 75;
-  bool fog = false;
+  bool fog = false; PostProcess post;
   // a sky drawn behind everything (scripts, world.setSky): colour at the top (sky is the horizon), the sun's disc and glow,
   // the moon, stars. Not saved with the level; skyTop.x < 0 = a flat sky of the sky colour (as before)
   glm::vec3 skyTop{-1, -1, -1}, sunDisc{0}, sunDiscDir{0, 1, 0}; float sunSize = 0.035f, moon = 0, stars = 0;

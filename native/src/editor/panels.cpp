@@ -460,6 +460,21 @@ void Editor::drawWorldSettings() {
     rowLabel("Exponential Fog"); ch |= ImGui::Checkbox("##fog", &w.fog);
     ImGui::BeginDisabled(!w.fog); rowLabel("Fog Color"); ch |= ImGui::ColorEdit3("##fc", &w.fogColor.x); rowLabel("Fog Density"); ch |= ImGui::SliderFloat("##fd", &w.fogDensity, 0.001f, 0.2f, "%.3f", ImGuiSliderFlags_Logarithmic); ImGui::EndDisabled();
     ImGui::EndTable(); }
+  if (ImGui::CollapsingHeader("Post Process (Camera Effects)") && beginProps("pp")) { propCols(); PostProcess& q = w.post;
+    auto sl = [&](const char* l, const char* id, float* v, float lo, float hi, const char* tip) { rowLabel(l); bool c = ImGui::SliderFloat(id, v, lo, hi, "%.2f"); if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip); ch |= c; };
+    sl("Vignette", "##pv", &q.vignette, 0, 1, "Darker corners.");
+    sl("Film Grain", "##pg", &q.grain, 0, 1, "Moving noise, like film or a cheap camera.");
+    sl("Chromatic Aberration", "##pc", &q.chromatic, 0, 1, "Red and blue split towards the edges, like a lens.");
+    sl("VHS", "##ph", &q.vhs, 0, 1, "A worn tape: wobbling lines, colour bleed, a rolling tracking band (found footage, horror).");
+    sl("Scanlines", "##ps", &q.scanlines, 0, 1, "Thin dark lines, like an old screen.");
+    sl("Saturation", "##pst", &q.saturation, 0, 2, "0 = black and white, 1 = as is.");
+    sl("Contrast", "##pct", &q.contrast, 0, 2, "1 = as is.");
+    sl("Temperature", "##ptm", &q.temperature, -1, 1, "Cold (blue) to warm (orange).");
+    sl("Bloom", "##pbl", &q.bloom, 0, 4, "How much bright light glows (1 = as is).");
+    rowLabel("Tint"); ch |= ImGui::ColorEdit3("##ptn", &q.tint.x);
+    rowLabel(""); if (ImGui::Button("Reset")) { q = PostProcess(); ch = true; } ImGui::SameLine(); if (ImGui::Button("Found Footage")) { q = PostProcess(); q.vhs = 0.6f; q.grain = 0.35f; q.vignette = 0.45f; q.chromatic = 0.3f; q.scanlines = 0.25f; q.saturation = 0.8f; ch = true; }
+    ImGui::SameLine(); if (ImGui::Button("Cinematic")) { q = PostProcess(); q.vignette = 0.35f; q.grain = 0.12f; q.contrast = 1.12f; q.temperature = 0.15f; q.bloom = 1.4f; ch = true; }
+    ImGui::EndTable(); }
   if (ImGui::CollapsingHeader("Physics", ImGuiTreeNodeFlags_DefaultOpen) && beginProps("wp")) { propCols();
     rowLabel("Gravity Z"); ch |= ImGui::DragFloat("##grav", &w.gravity, 0.05f, -100, 100, "%.2f m/s2");
     rowLabel("Kill Z"); ch |= ImGui::DragFloat("##kz", &w.killZ, 0.5f, -10000, 1000, "%.1f m");

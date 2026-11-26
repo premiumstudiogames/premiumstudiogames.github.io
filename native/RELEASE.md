@@ -6,6 +6,7 @@ Premium Engine for Windows (experimental). Unzip and run PremiumEngine.exe.
 - Play in the editor, package games as Windows .exe
 - Models: glTF 2.0 (.glb / .gltf) with their materials, textures, skeletons and animations - drop them on the window
 - Materials with textures: base colour, normal, roughness, metallic, ambient occlusion, emissive; tiling, world aligned, masked
+- Camera effects (post process): vignette, film grain, chromatic aberration, VHS tape, scanlines, saturation, contrast, temperature, bloom, tint
 - Blueprints (visual scripting) with English and Arabic names and explanations
 
 Every build is tested on Windows: engine tests, the editor makes a project, plays and packages it, and the packaged game starts and walks.
