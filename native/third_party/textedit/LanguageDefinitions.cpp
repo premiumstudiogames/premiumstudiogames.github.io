@@ -967,7 +967,7 @@ const TextEditor::LanguageDefinition& TextEditor::LanguageDefinition::JavaScript
 			langDef.mKeywords.insert(k);
 
 		static const std::pair<const char*, const char*> identifiers[] = {
-			{"self", "The actor this script is on: name, position, rotation, scale, visible, setColor(), setText(), addForce(), setVelocity(), lookAt(), distanceTo(), destroy()"},
+			{"self", "The actor this script is on: name, position, rotation, scale, visible, setColor(), setText(), addForce(), setVelocity(), lookAt(), distanceTo(), destroy(); models: playAnimation(), stopAnimation(), animation, animations, bone()"},
 			{"world", "The game: vars, time, player, find(name), findAll(tag), spawn(mesh, options), destroy(actor), message(text, seconds), hud(id, text), restart(), setGravity(y)"},
 			{"input", "Keyboard and mouse: key('w'), pressed('space'), mouse.dx, mouse.dy, mouse.left, mouse.right"},
 			{"log", "log(...values): writes to the Output Log"},

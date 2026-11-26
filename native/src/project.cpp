@@ -231,7 +231,8 @@ static glm::vec3 col(const json& j, const char* k, glm::vec3 d) { auto it = j.fi
 
 static json actorJson(const Actor& a) {
   json j = {{"id", a.id}, {"name", a.name}, {"type", a.type}, {"parent", a.parent.empty() ? json() : json(a.parent)}, {"p", v3(a.p)}, {"r", v3(a.r)}, {"s", v3(a.s)}, {"visible", a.visible}, {"tags", a.tags}};
-  if (a.type == "StaticMesh") { j["mesh"] = a.mesh; j["material"] = a.material; j["physics"] = {{"simulate", a.physics.simulate}, {"mass", a.physics.mass}, {"collision", a.physics.collision}}; }
+  if (a.type == "StaticMesh") { j["mesh"] = a.mesh; j["material"] = a.material; j["physics"] = {{"simulate", a.physics.simulate}, {"mass", a.physics.mass}, {"collision", a.physics.collision}};
+    if (!a.anim.empty()) j["animation"] = {{"name", a.anim}, {"loop", a.animLoop}, {"speed", a.animSpeed}}; }
   if (a.isLight()) j["light"] = {{"color", colorHex(a.light.color)}, {"intensity", a.light.intensity}, {"range", a.light.range}, {"angle", a.light.angle}, {"shadows", a.light.shadows}};
   if (a.type == "TextRender") j["text"] = {{"value", a.text.value}, {"color", colorHex(a.text.color)}, {"size", a.text.size}};
   if (!a.script.empty()) j["script"] = a.script;
@@ -242,7 +243,8 @@ static Actor actorFrom(const json& j) {
   a.parent = j.contains("parent") && j["parent"].is_string() ? j["parent"].get<std::string>() : "";
   a.p = v3(j.value("p", json()), glm::vec3(0)); a.r = v3(j.value("r", json()), glm::vec3(0)); a.s = v3(j.value("s", json()), glm::vec3(1));
   a.visible = get<bool>(j, "visible", true); if (j.contains("tags") && j["tags"].is_array()) for (auto& t : j["tags"]) if (t.is_string()) a.tags.push_back(t);
-  a.mesh = get<std::string>(j, "mesh", "Cube"); a.material = get<std::string>(j, "material", "M_Default"); a.script = get<std::string>(j, "script", "");
+  a.mesh = get<std::string>(j, "mesh", "Cube"); a.material = get<std::string>(j, "material", "M_Default");
+  if (j.contains("animation") && j["animation"].is_object()) { const json& an = j["animation"]; a.anim = get<std::string>(an, "name", ""); a.animLoop = get<bool>(an, "loop", true); a.animSpeed = get<float>(an, "speed", 1.f); } a.script = get<std::string>(j, "script", "");
   if (j.contains("physics")) { auto& p = j["physics"]; a.physics.simulate = get<bool>(p, "simulate", false); a.physics.mass = get<float>(p, "mass", 1); a.physics.collision = get<bool>(p, "collision", true); }
   if (j.contains("light")) { auto& l = j["light"]; a.light.color = col(l, "color", a.light.color); a.light.intensity = get<float>(l, "intensity", a.light.intensity); a.light.range = get<float>(l, "range", a.light.range); a.light.angle = get<float>(l, "angle", a.light.angle); a.light.shadows = get<bool>(l, "shadows", true); }
   if (j.contains("text")) { auto& t = j["text"]; a.text.value = get<std::string>(t, "value", "Text"); a.text.color = col(t, "color", glm::vec3(1)); a.text.size = get<float>(t, "size", 0.6f); }
@@ -266,7 +268,11 @@ bool levelFromJson(const std::string& t, Level& out) { try { out = levelF(json::
 
 std::string toJson(const Project& p, int indent) {
   json levels = json::object(); for (auto& [n, l] : p.levels) levels[n] = levelJ(l);
-  json mats = json::object(); for (auto& [id, m] : p.materials) mats[id] = {{"name", m.name}, {"color", colorHex(m.color)}, {"metalness", m.metalness}, {"roughness", m.roughness}, {"emissive", colorHex(m.emissive)}, {"emissiveIntensity", m.emissiveIntensity}, {"opacity", m.opacity}};
+  json mats = json::object(); for (auto& [id, m] : p.materials) { json& j = mats[id]; j = {{"name", m.name}, {"color", colorHex(m.color)}, {"metalness", m.metalness}, {"roughness", m.roughness}, {"emissive", colorHex(m.emissive)}, {"emissiveIntensity", m.emissiveIntensity}, {"opacity", m.opacity}};
+    const std::pair<const char*, const std::string*> maps[6] = {{"baseMap", &m.baseMap}, {"normalMap", &m.normalMap}, {"roughnessMap", &m.roughnessMap}, {"metalMap", &m.metalMap}, {"aoMap", &m.aoMap}, {"emissiveMap", &m.emissiveMap}};
+    for (auto& [k, v] : maps) if (!v->empty()) j[k] = *v;
+    if (m.hasMaps()) { j["tiling"] = {m.tiling.x, m.tiling.y}; j["normalStrength"] = m.normalStrength; j["aoStrength"] = m.aoStrength; }
+    if (m.worldAligned) j["worldAligned"] = true; if (m.directXNormal) j["directXNormal"] = true; if (m.masked) { j["masked"] = true; j["cutoff"] = m.cutoff; } }
   json scr = json::object(); for (auto& [id, s] : p.scripts) { scr[id] = {{"name", s.name}, {"code", s.code}}; if (s.blueprint()) scr[id]["blueprint"] = s.graph; }
   json j = {{"id", p.id}, {"name", p.name}, {"template", p.templ}, {"engine", PGE_VERSION}, {"created", p.created}, {"updated", p.updated}, {"description", p.description},
             {"startLevel", p.startLevel}, {"levelOrder", json::array()}, {"levels", levels}, {"assets", {{"materials", mats}, {"scripts", scr}}}};
@@ -285,7 +291,11 @@ bool fromJson(const std::string& text, Project& P, std::string* err) {
     if (!p.level(p.startLevel)) p.startLevel = p.levels[0].first;
     if (j.contains("assets")) {
       auto& as = j["assets"];
-      if (as.contains("materials")) for (auto& [id, m] : as["materials"].items()) { Material x; x.name = get<std::string>(m, "name", id); x.color = col(m, "color", x.color); x.metalness = get<float>(m, "metalness", 0); x.roughness = get<float>(m, "roughness", 0.6f); x.emissive = col(m, "emissive", glm::vec3(0)); x.emissiveIntensity = get<float>(m, "emissiveIntensity", 1); x.opacity = get<float>(m, "opacity", 1); p.materials[id] = x; }
+      if (as.contains("materials")) for (auto& [id, m] : as["materials"].items()) { Material x; x.name = get<std::string>(m, "name", id); x.color = col(m, "color", x.color); x.metalness = get<float>(m, "metalness", 0); x.roughness = get<float>(m, "roughness", 0.6f); x.emissive = col(m, "emissive", glm::vec3(0)); x.emissiveIntensity = get<float>(m, "emissiveIntensity", 1); x.opacity = get<float>(m, "opacity", 1);
+        for (auto [k, v] : {std::make_pair("baseMap", &x.baseMap), std::make_pair("normalMap", &x.normalMap), std::make_pair("roughnessMap", &x.roughnessMap), std::make_pair("metalMap", &x.metalMap), std::make_pair("aoMap", &x.aoMap), std::make_pair("emissiveMap", &x.emissiveMap)}) *v = get<std::string>(m, k, "");
+        if (m.contains("tiling") && m["tiling"].is_array() && m["tiling"].size() == 2 && m["tiling"][0].is_number() && m["tiling"][1].is_number()) x.tiling = {m["tiling"][0].get<float>(), m["tiling"][1].get<float>()};
+        x.normalStrength = get<float>(m, "normalStrength", 1); x.aoStrength = get<float>(m, "aoStrength", 1); x.worldAligned = get<bool>(m, "worldAligned", false); x.directXNormal = get<bool>(m, "directXNormal", false);
+        x.masked = get<bool>(m, "masked", false); x.cutoff = get<float>(m, "cutoff", 0.5f); p.materials[id] = x; }
       if (as.contains("scripts")) for (auto& [id, s] : as["scripts"].items()) { p.scripts[id] = {get<std::string>(s, "name", id), get<std::string>(s, "code", "")}; if (s.contains("blueprint") && s["blueprint"].is_object()) p.scripts[id].graph = s["blueprint"]; }
     }
     if (!p.materials.count("M_Default")) p.materials["M_Default"] = Material();

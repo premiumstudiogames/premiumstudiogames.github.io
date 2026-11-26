@@ -36,7 +36,7 @@ bool Editor::init() {
 /* ------------------------------------------------------------------ project */
 void Editor::setProject(Project&& p) {
   if (game) stopPlay();
-  P = std::move(p); hasProject = true; level = P.level(P.startLevel) ? P.startLevel : P.levels[0].first; sel.clear();
+  P = std::move(p); hasProject = true; setAssetRoot(P.path.empty() ? std::string() : fs::u8path(P.path).parent_path().u8string()); filesScanned_ = -1; level = P.level(P.startLevel) ? P.startLevel : P.levels[0].first; sel.clear();
   undo_.clear(); redo_.clear(); stable_ = toJson(P, -1); pending_ = false; dirty = false; tabs.clear(); bpTabs.clear(); materialOpen.clear(); wScripts = wMaterial = wBlueprints = false;
   frameAll(); SDL_SetWindowTitle(win.win, (P.name + " - Premium Engine").c_str());
   addRecent(P.path); lastAutosave_ = SDL_GetTicks() / 1000.0;
@@ -54,14 +54,14 @@ bool Editor::openProjectFile(const std::string& file) {
   if (!loadProjectFile(file, p, &err)) { logMsg("error: could not open " + file + ": " + err, LogKind::Error); notify("Could not open the project: " + err); return false; }
   setProject(std::move(p)); logMsg("Opened " + file, LogKind::Ok); return true;
 }
-void Editor::closeProject() { if (game) stopPlay(); hasProject = false; P = Project(); sel.clear(); tabs.clear(); SDL_SetWindowTitle(win.win, "Premium Engine"); }
+void Editor::closeProject() { if (game) stopPlay(); setAssetRoot(""); hasProject = false; P = Project(); sel.clear(); tabs.clear(); SDL_SetWindowTitle(win.win, "Premium Engine"); }
 bool Editor::save() {
   if (!hasProject) return false;
   for (auto& t : tabs) { auto it = P.scripts.find(t.id); std::string txt = t.ed->GetText(); if (it != P.scripts.end() && it->second.code != txt) { it->second.code = txt; t.savedText = txt; touch(); } }
   if (pending_) commit();
   P.updated = nowMs(); std::string err;
   if (P.path.empty()) P.path = (fs::u8path(projectsDir()) / fs::u8path(sanitizeName(P.name)) / fs::u8path(sanitizeName(P.name) + ".pge.json")).u8string();
-  std::error_code ec; fs::create_directories(fs::u8path(P.path).parent_path(), ec);
+  std::error_code ec; fs::create_directories(fs::u8path(P.path).parent_path(), ec); setAssetRoot(fs::u8path(P.path).parent_path().u8string());
   if (!saveProjectFile(P, P.path, &err)) { logMsg("error: save failed: " + err, LogKind::Error); notify("Save failed: " + err); return false; }
   dirty = false; saveThumbnail(); logMsg("Saved " + P.path, LogKind::Ok); notify("Saved"); lastAutosave_ = SDL_GetTicks() / 1000.0; return true;
 }
@@ -111,10 +111,12 @@ glm::vec3 Editor::dropPoint(float mx, float my) {
 }
 Actor& Editor::addActor(const std::string& type, const std::string& mesh, const glm::vec3* at) {
   Actor a = newActor(type, type == "StaticMesh" ? mesh : actorTypeLabel(type)); if (type == "StaticMesh") a.mesh = mesh.empty() ? "Cube" : mesh;
-  a.name = uniqueName(type == "StaticMesh" ? a.mesh : type);
+  bool isModel = type == "StaticMesh" && isModelFile(a.mesh); if (isModel) a.material.clear();   // a model keeps its own materials
+  a.name = uniqueName(type == "StaticMesh" ? (isModel ? fs::u8path(a.mesh).stem().u8string() : a.mesh) : type);
   if (at) a.p = *at;
   else { glm::vec3 f(-std::sin(camYaw) * std::cos(camPitch), std::sin(camPitch), -std::cos(camYaw) * std::cos(camPitch)); a.p = view == View::Perspective ? camPos + f * 6.f : orthoCenter; }
-  if (type == "StaticMesh" && a.mesh != "Plane") a.p.y = std::max(a.p.y, 0.5f * a.s.y);
+  if (isModel) { const MeshData& md = meshShape(a.mesh); a.p.y = std::max(a.p.y, -md.bmin.y * a.s.y); }   // stands on the ground
+  else if (type == "StaticMesh" && a.mesh != "Plane") a.p.y = std::max(a.p.y, 0.5f * a.s.y);
   if (type == "DirectionalLight") a.r = {-50, 35, 0};
   if (snapT) a.p = glm::round(a.p / snapTv) * snapTv;
   L().actors.push_back(a); sel = a.id; touch(); logMsg("Placed " + a.name);
@@ -165,11 +167,11 @@ void Editor::frameAll() {
 }
 void Editor::snapToFloor() {
   Actor* a = actor(sel); if (!a) return; glm::mat4 W = worldOf(*a);
-  float bottom = 0; if (a->type == "StaticMesh") { MeshData m = makePrimitive(a->mesh); float mn = 1e9f; for (auto& v : m.v) mn = std::min(mn, (W * glm::vec4(v.p, 1)).y); bottom = mn - W[3].y; }
+  float bottom = 0; if (a->type == "StaticMesh") { const MeshData& m = meshShape(a->mesh); float mn = 1e9f; for (auto& v : m.v) mn = std::min(mn, (W * glm::vec4(v.p, 1)).y); bottom = mn - W[3].y; }
   // highest surface below: other meshes' tops under the actor's x/z, else y = 0
   glm::vec3 c(W[3]); float floorY = 0;
-  for (auto& o : L().actors) { if (o.id == a->id || o.type != "StaticMesh") continue; glm::mat4 OW = worldOf(o); MeshData m = makePrimitive(o.mesh); glm::vec3 mn(1e9f), mx(-1e9f);
-    for (auto& v : m.v) { glm::vec3 w = OW * glm::vec4(v.p, 1); mn = glm::min(mn, w); mx = glm::max(mx, w); }
+  for (auto& o : L().actors) { if (o.id == a->id || o.type != "StaticMesh") continue; glm::mat4 OW = worldOf(o); const MeshData& m = meshShape(o.mesh); glm::vec3 mn(1e9f), mx(-1e9f);
+    for (int k = 0; k < 8; k++) { glm::vec3 w = OW * glm::vec4((k & 1) ? m.bmax.x : m.bmin.x, (k & 2) ? m.bmax.y : m.bmin.y, (k & 4) ? m.bmax.z : m.bmin.z, 1); mn = glm::min(mn, w); mx = glm::max(mx, w); }
     if (c.x >= mn.x && c.x <= mx.x && c.z >= mn.z && c.z <= mx.z && mx.y <= c.y + bottom + 0.01f && mx.y > floorY) floorY = mx.y; }
   float dy = floorY - (c.y + bottom); a->p.y += dy; touch();
 }
@@ -223,13 +225,18 @@ void Editor::runMapCheck() {
     bool ps = false; std::set<std::string> ids; for (auto& a : lv.actors) ids.insert(a.id);
     for (auto& a : lv.actors) {
       if (a.type == "PlayerStart") ps = true;
-      if (a.type == "StaticMesh" && !P.materials.count(a.material)) { mapCheck.push_back("warning: " + ln + ": " + a.name + " uses a missing material " + a.material); warns++; }
+      if (a.type == "StaticMesh" && !(a.material.empty() && isModelFile(a.mesh)) && !P.materials.count(a.material)) { mapCheck.push_back("warning: " + ln + ": " + a.name + " uses a missing material " + a.material); warns++; }
+      if (a.type == "StaticMesh" && isModelFile(a.mesh)) { ModelRef m = model(a.mesh);   // a model the game can't load is an error: it would be a pink box
+        if (!m || !m->ok()) { mapCheck.push_back("error: " + ln + ": " + a.name + ": model " + a.mesh + ": " + (m ? m->error : "missing")); errs++; }
+        else if (!a.anim.empty() && m->anim(a.anim) < 0) { mapCheck.push_back("warning: " + ln + ": " + a.name + ": the model has no animation " + a.anim); warns++; } }
       if (!a.script.empty() && !P.scripts.count(a.script)) { mapCheck.push_back("error: " + ln + ": " + a.name + " uses a missing script " + a.script); errs++; }
       if (!a.parent.empty() && !ids.count(a.parent)) { mapCheck.push_back("warning: " + ln + ": " + a.name + " is attached to an actor that doesn't exist"); warns++; }
       if (a.type == "StaticMesh" && a.physics.simulate && a.p.y < lv.world.killZ) { mapCheck.push_back("warning: " + ln + ": " + a.name + " starts below Kill Z"); warns++; }
     }
     if (!ps && lv.world.gameMode != "Spectator") { mapCheck.push_back("warning: " + ln + ": no Player Start, the player will start at (0, 2, 5)"); warns++; }
   }
+  for (auto& [id, m] : P.materials) for (const std::string* f : {&m.baseMap, &m.normalMap, &m.roughnessMap, &m.metalMap, &m.aoMap, &m.emissiveMap}) {
+    if (f->empty()) continue; const Texture* t = texture(*f, f == &m.baseMap || f == &m.emissiveMap); if (t && !t->error.empty()) { mapCheck.push_back("error: material " + id + ": " + t->error); errs++; } }
   for (auto& [id, s] : P.scripts) { std::string e = ScriptHost::check(s.code); if (!e.empty()) { mapCheck.push_back("error: script " + s.name + ": " + e); errs++; } }
   for (auto& [id, s] : P.scripts) if (s.blueprint()) { std::vector<BpMessage> m; bpCompile(bpFromJson(s.graph), id, m); Blueprint g = bpFromJson(s.graph);
     for (auto& x : m) { const BpNode* n = g.node(x.node); const BpNodeDef* d = n ? bpDef(n->type) : nullptr;
@@ -349,6 +356,7 @@ void Editor::run(const std::string& c) {
   else if (c == "newLevel") { newName = "NewLevel"; wNewLevel = true; } else if (c == "openLevel") wOpenLevel = true;
   else if (c == "newProject" || c == "openProject") { if (dirty) save(); closeProject(); }
   else if (c == "importLevel") wImport = true;
+  else if (c == "importAsset") importDialog();
   else if (c == "package") packageProject(); else if (c == "exit") requestQuit();
   else if (c == "prefs") wPrefs = true; else if (c == "projectSettings") wProjectSettings = true;
   else if (c == "worldSettings") { wWorld = true; ImGui::SetWindowFocus("World Settings"); }
@@ -414,7 +422,13 @@ void Editor::event(const SDL_Event& e) {
   bool captured = playing && game && !mouseFree && SDL_GetRelativeMouseMode();
   if (e.type == SDL_QUIT) { requestQuit(); return; }
   if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE && e.window.windowID == SDL_GetWindowID(win.win)) { requestQuit(); return; }
-  if (e.type == SDL_DROPFILE) { std::string f = e.drop.file; SDL_free(e.drop.file); if (f.size() > 9 && f.substr(f.size() - 9) == ".pge.json") { if (hasProject && dirty) save(); openProjectFile(f); } return; }
+  if (e.type == SDL_DROPFILE) { std::string f = e.drop.file; SDL_free(e.drop.file); if (f.size() > 9 && f.substr(f.size() - 9) == ".pge.json") { if (hasProject && dirty) save(); openProjectFile(f); return; }
+    if (hasProject && (isModelFile(f) || isImageFile(f))) {   // models and pictures dropped on the window: into the project; a model on the viewport is placed there
+      auto r = importFiles({f}); int mx = 0, my = 0; SDL_GetMouseState(&mx, &my); float sx = (float)mx, sy = (float)my;
+      if (r.size() == 1 && isModelFile(r[0]) && sx >= vpX && sy >= vpY && sx < vpX + vpW && sy < vpY + vpH && !playing) { glm::vec3 at = dropPoint(sx, sy); addActor("StaticMesh", r[0], &at); }
+      else if (r.size() == 1) { cbFolder = isModelFile(r[0]) ? "Models" : "Textures"; wContent = true; } }
+    else if (hasProject) notify("Drop models (.glb, .gltf) or pictures (.png, .jpg) here to import them");
+    return; }
   if (e.type == SDL_MOUSEMOTION) { g_flyDx += e.motion.xrel; g_flyDy += e.motion.yrel; }
   if (playing && game) {
     // Escape stops playing; when the game's own menus use Escape (ui.escape = true), Shift+Escape does
@@ -441,6 +455,8 @@ void Editor::frame() {
   Uint64 now = SDL_GetPerformanceCounter(); dt_ = (float)((now - lastTick_) / (double)SDL_GetPerformanceFrequency()); lastTick_ = now; dt_ = std::min(dt_, 0.25f);
   fps_ = fps_ * 0.95f + (dt_ > 0 ? 1.f / dt_ : 0) * 0.05f;
   if (playing && game) { game->update(dt_); if (!game) playing = false; }
+  if (!animPaused) animClock += dt_;
+  if (hasProject && SDL_GetTicks() / 1000.0 - assetsChecked_ > 1.0) { assetsChecked_ = SDL_GetTicks() / 1000.0; if (reloadChangedAssets()) { filesScanned_ = -1; logMsg("Files of the project changed on disk: loaded again"); } }
   if (playing && game && !mouseFree && SDL_GetRelativeMouseMode() && !game->wantsMouseLock()) { mouseFree = true; SDL_SetRelativeMouseMode(SDL_FALSE); }   // the game opened a menu
   if (console) consoleFrame();
   beginFrame(); ImGuizmo::BeginFrame();
@@ -501,10 +517,15 @@ void Editor::buildFrame(Frame& f, Camera& cam, float aspect) {
   unsigned idx = 0;
   for (auto& a : L().actors) { idx++;
     bool vis = a.visible; for (Actor* p = actor(a.parent); p && vis; p = actor(p->parent)) vis = p->visible;
-    if (!vis) continue; addActorVisual(f, P, a, worldOf(a), showIcons, idx, nullptr, nullptr, &R); }
+    if (!vis) continue;
+    AnimPlay ap; const AnimPlay* anim = nullptr;   // a model's animation plays in the viewport too (as it will in the game)
+    if (a.type == "StaticMesh" && !a.anim.empty() && isModelFile(a.mesh)) { ModelRef m = model(a.mesh); int ai = m ? m->anim(a.anim) : -1;
+      if (ai >= 0) { float d = m->anims[ai].duration; ap.anim = ai; ap.playing = true; ap.time = d > 0 ? (a.animLoop ? std::fmod(std::fmod(animClock * a.animSpeed, d) + d, d) : std::min(std::fmod(animClock, d + 1.f) * std::abs(a.animSpeed), d)) : 0; anim = &ap; } }
+    addActorVisual(f, P, a, worldOf(a), showIcons, idx, nullptr, nullptr, &R, anim); }
   if (Actor* s = actor(sel)) {   // selection outline
     glm::mat4 W = worldOf(*s); LineItem l; l.color = glm::vec4(1, 0.55f, 0.1f, 1); l.onTop = false;
-    if (s->type == "StaticMesh") { l.mesh = &primitive(s->mesh); l.model = W; l.wire = true; f.lines.push_back(l); }
+    if (s->type == "StaticMesh" && isModelFile(s->mesh)) { const MeshData& md = meshShape(s->mesh); l.mesh = &R.wireBox(); l.model = W * glm::translate(glm::mat4(1), (md.bmin + md.bmax) * 0.5f) * glm::scale(glm::mat4(1), glm::max(md.bmax - md.bmin, glm::vec3(0.01f))); f.lines.push_back(l); }
+    else if (s->type == "StaticMesh") { l.mesh = &primitive(s->mesh); l.model = W; l.wire = true; f.lines.push_back(l); }
     else if (s->type == "TriggerBox") { l.mesh = &R.wireBox(); l.model = W; l.onTop = true; f.lines.push_back(l); }
   }
   float asp = std::max(aspect, 0.01f);

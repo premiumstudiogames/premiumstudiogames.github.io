@@ -63,6 +63,10 @@ jobs:
           mkdir -p selftest/blueprint
           ./run/PremiumEngine.exe --home "$PWD/selftest/blueprint/home" --bptest "$PWD/selftest/blueprint" || { cat selftest/blueprint/bp-result.txt; exit 1; }
           cat selftest/blueprint/bp-result.txt
+          # models and textures: a .glb dropped on the viewport, drawn with its picture, its animation bending it, a texture on a material, Play, Package
+          mkdir -p selftest/model
+          ./run/PremiumEngine.exe --home "$PWD/selftest/model/home" --modeltest "$PWD/selftest/model" || { cat selftest/model/model-result.txt; exit 1; }
+          head -20 selftest/model/model-result.txt
 
       - name: Packaged game self-test (walks forward)
         timeout-minutes: 10

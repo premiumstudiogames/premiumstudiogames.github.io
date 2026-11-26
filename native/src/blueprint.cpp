@@ -189,6 +189,24 @@ static std::vector<BpNodeDef> buildLibrary() {
       "if (input.rumble) input.rumble($in(Strength), $in(Strength), $in(Duration));\n$exec(then)");
 
   // ---- sound
+  // ---- animation (models with animations: .glb / .gltf)
+  add("Event.AnimationEnd", "Events", E, "On Animation End", "عند انتهاء الحركة", "A model's animation that doesn't loop reached its end. Animation = its name.",
+      "حركة المجسم (اللي ما تتكرر) وصلت لنهايتها. Animation = اسم الحركة.", {"<then", "<Animation:string"});
+  add("Animation.Play", "Animation", X, "Play Animation", "شغّل حركة", "Plays an animation of the model (its name in the file: Idle, Walk, Run...). Blend Time = seconds to blend from the one before.",
+      "يشغّل حركة من حركات المجسم (اسمها في الملف مثل Idle أو Walk أو Run). Blend Time = كم ثانية ينتقل فيها بنعومة من الحركة اللي قبلها.",
+      {">exec", T, ">Animation:string=\"Idle\"", ">Loop:bool=true", ">PlayRate:number=1", ">BlendTime:number=0.2", "<then"},
+      "{ const __t = $in(Target); if (__t && __t.playAnimation) __t.playAnimation($in(Animation), { loop: !!$in(Loop), speed: +$in(PlayRate), blend: +$in(BlendTime) }); }\n$exec(then)");
+  add("Animation.Stop", "Animation", X, "Stop Animation", "أوقف الحركة", "Stops the model's animation (it goes back to how it is in the file).", "يوقف حركة المجسم (يرجع لشكله في الملف).",
+      {">exec", T, "<then"}, "{ const __t = $in(Target); if (__t && __t.stopAnimation) __t.stopAnimation(); }\n$exec(then)");
+  add("Animation.SetPlayRate", "Animation", X, "Set Play Rate", "سرعة الحركة", "How fast the animation plays (1 = normal, 2 = twice as fast, -1 = backwards).", "سرعة تشغيل الحركة (1 عادي، 2 ضعف السرعة، ‎-1 بالعكس).",
+      {">exec", T, ">PlayRate:number=1", "<then"}, "{ const __t = $in(Target); if (__t && __t.playAnimation) __t.animationSpeed = +$in(PlayRate); }\n$exec(then)");
+  add("Animation.Current", "Animation", U, "Get Current Animation", "الحركة الحالية", "The name of the animation that plays (\"\" = none).", "اسم الحركة اللي تشتغل الحين (فاضي = ولا حركة).",
+      {T, "<ReturnValue:string@(($in(Target) && $in(Target).animation) ? $in(Target).animation.name : \"\")"});
+  add("Animation.IsPlaying", "Animation", U, "Is Animation Playing", "هل الحركة شغالة؟", "True while an animation plays (false when one that doesn't loop has ended).", "صح طول ما فيه حركة شغالة (خطأ لما تخلص حركة ما تتكرر).",
+      {T, "<ReturnValue:bool@!!(($in(Target) && $in(Target).animation) ? $in(Target).animation.playing : false)"});
+  add("Animation.BoneLocation", "Animation", U, "Get Bone Location", "موقع العظمة", "Where a bone (joint) of the model is in the world: hold a sword in Hand_R, shoot from Muzzle...",
+      "مكان عظمة (مفصل) من المجسم في العالم: تمسك سيف في Hand_R، تطلق من Muzzle...", {T, ">Bone:string=\"Hand_R\"", "<ReturnValue:vector@__bp.bone($in(Target), $in(Bone))"});
+
   add("Audio.PlaySound", "Audio", X, "Play Sound 2D", "شغّل صوت", "Plays a sound file from the project (sounds/coin.ogg ...).", "يشغّل ملف صوت من المشروع (مثل sounds/coin.ogg).", {">exec", ">Sound:string=\"sounds/click.ogg\"", ">Volume:number=1", "<then"},
       "if (typeof sound !== 'undefined') sound.play($in(Sound), { volume: $in(Volume) });\n$exec(then)");
   add("Audio.PlaySoundAt", "Audio", X, "Play Sound at Location", "شغّل صوت في مكان", "Plays a sound at a place (quieter far away).", "يشغّل صوت في مكان معين (يوطى كل ما بعدت).", {">exec", ">Sound:string=\"sounds/click.ogg\"", ">Location:vector", ">Volume:number=1", "<then"},
@@ -270,7 +288,7 @@ const BpNodeDef* bpDef(const std::string& type) {
 }
 std::string bpCategoryAr(const std::string& c) {
   static const std::map<std::string, std::string> m = {{"Events", "الأحداث"}, {"Flow Control", "التحكم بالتنفيذ"}, {"Utilities", "أدوات"}, {"Actor", "الممثل"}, {"World", "العالم"},
-    {"Player", "اللاعب والكاميرا"}, {"Input", "الإدخال"}, {"Audio", "الصوت"}, {"Save Game", "حفظ اللعبة"}, {"Math", "رياضيات ومنطق"}, {"Vector", "المتجهات"}, {"String", "النصوص"},
+    {"Player", "اللاعب والكاميرا"}, {"Input", "الإدخال"}, {"Audio", "الصوت"}, {"Animation", "الحركات (الأنيميشن)"}, {"Save Game", "حفظ اللعبة"}, {"Math", "رياضيات ومنطق"}, {"Vector", "المتجهات"}, {"String", "النصوص"},
     {"Array", "القوائم"}, {"Variables", "المتغيرات"}};
   auto it = m.find(c); return it == m.end() ? c : it->second;
 }
@@ -291,7 +309,8 @@ std::string bpPinAr(const std::string& id) {
     {"Location", "الموقع"}, {"Physics", "فيزياء"}, {"Script", "السكربت"}, {"OutActors", "الممثلين"}, {"Seconds", "الثواني"}, {"Id", "المعرّف"}, {"Gravity", "الجاذبية"},
     {"Player", "اللاعب"}, {"Fly", "يطير"}, {"WalkSpeed", "سرعة المشي"}, {"RunSpeed", "سرعة الركض"}, {"X", "X"}, {"Y", "Y"}, {"Z", "Z"}, {"Axis", "المحور"},
     {"Strength", "القوة"}, {"Sound", "الصوت"}, {"Volume", "الارتفاع"}, {"Min", "الأقل"}, {"Max", "الأكثر"}, {"Alpha", "النسبة"}, {"PickA", "اختر A"}, {"InVec", "المتجه"},
-    {"Scale", "المضاعف"}, {"V1", "النقطة 1"}, {"V2", "النقطة 2"}, {"In", "المدخل"}, {"Sub", "الجزء"}, {"Output", "القيمة"}};
+    {"Scale", "المضاعف"}, {"V1", "النقطة 1"}, {"V2", "النقطة 2"}, {"In", "المدخل"}, {"Sub", "الجزء"}, {"Output", "القيمة"},
+    {"Animation", "الحركة"}, {"Loop", "تتكرر"}, {"PlayRate", "السرعة"}, {"BlendTime", "زمن الانتقال"}, {"Bone", "العظمة"}};
   if (id == "exec" || id == "then") return ""; auto it = m.find(id); return it == m.end() ? bpPinEn(id) : it->second;
 }
 
@@ -355,6 +374,7 @@ static const char* BP_RUNTIME = R"JS(const __bp = (() => {
   vnorm(a) { a = B.vec(a); const l = Math.hypot(a.x, a.y, a.z) || 1; return B.v(a.x / l, a.y / l, a.z / l); },
   dist(a, b) { a = B.vec(a); b = B.vec(b); return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z); },
   valid(a) { return !!a && (a.isPlayer || a.alive !== false); },
+  bone(a, n) { const b = a && a.bone ? a.bone(String(n)) : null; return b ? B.v(b.position.x, b.position.y, b.position.z) : B.pos(a); },
   pos(a) { if (!a) return B.v(0, 0, 0); if (a.isPlayer) return a.position; return a.worldPosition ? a.worldPosition : B.vec(a); },
   setPos(a, v) { v = B.vec(v); if (a.isPlayer) a.teleport(v.x, v.y, v.z); else if (a.position) a.position.set(v.x, v.y, v.z); },
   rot(a) { if (!a || !a.rotation) return B.v(0, 0, 0); const r = a.rotation; return B.v(r.x / D, r.y / D, r.z / D); },
@@ -527,7 +547,7 @@ std::string bpCompile(const Blueprint& bp, const std::string& name, std::vector<
   // the events → the engine's functions
   std::map<std::string, std::vector<const BpNode*>> ev;
   for (auto& n : bp.nodes) if (const BpNodeDef* d = bpDef(n.type)) if (d->kind == BpNodeDef::Event) ev[n.type].push_back(&n);
-  for (const char* one : {"Event.BeginPlay", "Event.Tick", "Event.ActorBeginOverlap", "Event.Hit", "Event.EndPlay", "Event.AnyKey"})
+  for (const char* one : {"Event.BeginPlay", "Event.Tick", "Event.ActorBeginOverlap", "Event.Hit", "Event.EndPlay", "Event.AnyKey", "Event.AnimationEnd"})
     if (ev[one].size() > 1) for (size_t i = 1; i < ev[one].size(); i++) g.err(ev[one][i]->id, std::string("Only one ") + bpDef(one)->en + " can be in a Blueprint", std::string("ما يصير أكثر من ") + bpDef(one)->ar + " في البلوبرنت");
   auto body = [&](const BpNode* n) { return g.execOut(*n, "then", 1); };
   auto setOut = [&](const BpNode* n, const std::string& pin, const std::string& value) { return g.outVar(n->id, pin) + " = " + value + ";\n"; };
@@ -544,6 +564,7 @@ std::string bpCompile(const Blueprint& bp, const std::string& name, std::vector<
     fn("function onKey(code)", pre, b);
   }
   if (!ev["Event.EndPlay"].empty()) { std::string b; for (auto* n : ev["Event.EndPlay"]) b += body(n); fn("function onStop()", "", b); }
+  if (!ev["Event.AnimationEnd"].empty()) { std::string b, pre; for (auto* n : ev["Event.AnimationEnd"]) { pre += setOut(n, "Animation", "name"); b += body(n); } fn("function onAnimationEnd(name)", pre, b); }
   for (auto* n : ev["Event.Custom"]) fn("function __ce_" + bpSanitize(g.field(*n, "Name")) + "()", "", body(n));
   std::string uiBinds;
   for (auto* n : ev["Event.WidgetClicked"]) uiBinds += "__bp.uiOn(" + json(g.field(*n, "Widget")).dump() + ", 'click', () => {\n" + body(n) + "\n});\n";

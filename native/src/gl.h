@@ -81,6 +81,8 @@
   X(PFNGLBLITFRAMEBUFFERPROC, glBlitFramebuffer) \
   X(PFNGLRENDERBUFFERSTORAGEMULTISAMPLEPROC, glRenderbufferStorageMultisample) \
   X(PFNGLUNIFORM2FVPROC, glUniform2fv) \
+  X(PFNGLGETFLOATVPROC, glGetFloatv) \
+  X(PFNGLTEXPARAMETERFPROC, glTexParameterf) \
 
 #define PGE_GL_DECL(T, n) extern T pge_##n;
 PGE_GL_FUNCS(PGE_GL_DECL)
@@ -163,5 +165,7 @@ PGE_GL_FUNCS(PGE_GL_DECL)
 #define glBlitFramebuffer pge_glBlitFramebuffer
 #define glRenderbufferStorageMultisample pge_glRenderbufferStorageMultisample
 #define glUniform2fv pge_glUniform2fv
+#define glGetFloatv pge_glGetFloatv
+#define glTexParameterf pge_glTexParameterf
 
 bool pgeLoadGL();  // call after the GL context is created; false if a function is missing

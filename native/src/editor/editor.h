@@ -82,6 +82,13 @@ public:
   void notify(const std::string& t);
   void savePrefs(); void loadPrefs(); void addRecent(const std::string& f);
   std::string uniqueName(const std::string& base);
+  // the project's own files (assets_ui.cpp): models and pictures in its folder, importing, picture slots, a model's animation
+  std::vector<std::string> projModels, projTextures; double filesScanned_ = -1, assetsChecked_ = 0; float animClock = 0; bool animPaused = false;   // animClock: the viewport's animations (paused: tests)
+  void scanFiles(bool now = false);
+  std::vector<std::string> importFiles(const std::vector<std::string>& files);
+  void importDialog();
+  bool textureSlot(const char* id, std::string& file, bool srgb);
+  bool modelDetails(Actor& a);
 
   // ---- UI (panels.cpp / dialogs.cpp)
   void drawMenuBar(); void drawToolbar(); void drawStatusBar(); void drawViewport();

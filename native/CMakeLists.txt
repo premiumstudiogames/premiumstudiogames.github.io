@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(PremiumEngine VERSION 0.13.0 LANGUAGES C CXX)
+project(PremiumEngine VERSION 0.14.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -51,11 +51,13 @@ FetchContent_Declare(glm GIT_REPOSITORY https://github.com/g-truc/glm GIT_TAG 1.
 FetchContent_Declare(boostregex GIT_REPOSITORY https://github.com/boostorg/regex GIT_TAG boost-1.86.0 GIT_SHALLOW TRUE)
 # ---- stb_image (PNG texture atlases for the block world) — public domain / MIT
 FetchContent_Declare(stb GIT_REPOSITORY https://github.com/nothings/stb GIT_TAG 9600522de53973336fa033a289858a4354cbb04c)
+# ---- cgltf (glTF 2.0 models: .glb / .gltf) — MIT
+FetchContent_Declare(cgltf GIT_REPOSITORY https://github.com/jkuhlmann/cgltf GIT_TAG v1.14 GIT_SHALLOW TRUE)
 # ---- miniaudio (game sound: wav / ogg / mp3 / flac, 3D) — public domain / MIT-0
 FetchContent_Declare(miniaudio GIT_REPOSITORY https://github.com/mackron/miniaudio GIT_TAG 0.11.21 GIT_SHALLOW TRUE)
 
 FetchContent_MakeAvailable(sdl2 jolt quickjs json glm)
-foreach(dep imgui boostregex stb miniaudio)   # sources only, no CMake project
+foreach(dep imgui boostregex stb miniaudio cgltf)   # sources only, no CMake project
   FetchContent_GetProperties(${dep})
   if(NOT ${dep}_POPULATED)
     FetchContent_Populate(${dep})
@@ -73,8 +75,8 @@ target_link_libraries(imgui PUBLIC SDL2::SDL2-static)
 
 # ---- the engine (shared by the editor and the game player)
 add_library(pgcore STATIC
-  src/gl.cpp src/project.cpp src/mesh.cpp src/renderer.cpp src/physics.cpp src/script.cpp src/game.cpp src/log.cpp src/ui_style.cpp src/app.cpp src/voxel.cpp src/arabic.cpp src/ui.cpp src/audio.cpp src/miniaudio_impl.c src/models.cpp src/net.cpp src/blueprint.cpp)
-target_include_directories(pgcore PUBLIC src third_party/gl ${stb_SOURCE_DIR} ${miniaudio_SOURCE_DIR})
+  src/gl.cpp src/project.cpp src/mesh.cpp src/renderer.cpp src/physics.cpp src/script.cpp src/game.cpp src/log.cpp src/ui_style.cpp src/app.cpp src/voxel.cpp src/arabic.cpp src/ui.cpp src/audio.cpp src/miniaudio_impl.c src/models.cpp src/net.cpp src/blueprint.cpp src/assets.cpp)
+target_include_directories(pgcore PUBLIC src third_party/gl ${stb_SOURCE_DIR} ${miniaudio_SOURCE_DIR} ${cgltf_SOURCE_DIR})
 target_link_libraries(pgcore PUBLIC imgui Jolt qjs nlohmann_json::nlohmann_json glm::glm)
 if(UNIX)
   target_link_libraries(pgcore PUBLIC ${CMAKE_DL_LIBS} pthread m)
@@ -103,7 +105,7 @@ target_compile_definitions(textedit PUBLIC BOOST_REGEX_STANDALONE)
 target_link_libraries(textedit PUBLIC imgui)
 
 # editor
-add_executable(PremiumEngine WIN32 src/editor/main.cpp src/editor/editor.cpp src/editor/panels.cpp src/editor/dialogs.cpp src/editor/platform.cpp src/editor/console.cpp src/editor/bp_editor.cpp)
+add_executable(PremiumEngine WIN32 src/editor/main.cpp src/editor/editor.cpp src/editor/panels.cpp src/editor/dialogs.cpp src/editor/platform.cpp src/editor/console.cpp src/editor/bp_editor.cpp src/editor/assets_ui.cpp)
 target_link_libraries(PremiumEngine PRIVATE pgcore textedit SDL2::SDL2main)
 # game player (packaged games are this program + the project file)
 add_executable(PremiumEnginePlayer WIN32 src/player/main.cpp)

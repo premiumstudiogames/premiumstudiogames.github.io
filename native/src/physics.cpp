@@ -1,5 +1,8 @@
 #include "physics.h"
 #include "mesh.h"
+#include "assets.h"
+#include <map>
+#include <cstdio>
 #include "log.h"
 #include <Jolt/Jolt.h>
 #include <Jolt/RegisterTypes.h>
@@ -13,6 +16,7 @@
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
+#include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
@@ -102,20 +106,26 @@ static RefConst<Shape> makeShape(const std::string& mesh, glm::vec3 s, Motion m)
     return new BoxShape(h, r);
   }
   if (mesh == "Sphere" && std::abs(s.x - s.y) < 1e-3f && std::abs(s.y - s.z) < 1e-3f) return new SphereShape(0.5f * s.x);
-  MeshData md = makePrimitive(mesh);
-  if (m == Motion::Dynamic) {   // moving bodies need a convex shape
-    Array<Vec3> pts; for (auto& v : md.v) pts.push_back(J(v.p * s));
+  const MeshData& md = meshShape(mesh);   // a shape or a model file
+  if (md.v.empty()) return new BoxShape(Vec3(0.5f * s.x, 0.5f * s.y, 0.5f * s.z), 0.0f);
+  // the same model at the same size: one shape for all of them (a forest of one tree model)
+  static std::map<std::string, RefConst<Shape>> cache; char key[160]; std::snprintf(key, sizeof key, "|%d|%.4f|%.4f|%.4f|%zu", (int)(m == Motion::Dynamic), s.x, s.y, s.z, md.v.size());
+  std::string k = assetRoot() + "|" + mesh + key; if (isModelFile(mesh)) { auto it = cache.find(k); if (it != cache.end()) return it->second; }
+  auto keep = [&](RefConst<Shape> sh) { if (isModelFile(mesh)) { if (cache.size() > 512) cache.clear(); cache[k] = sh; } return sh; };
+  if (m == Motion::Dynamic) {   // moving bodies need a convex shape (big models: a spread of their points)
+    Array<Vec3> pts; size_t step = std::max<size_t>(1, md.v.size() / 2048); for (size_t i = 0; i < md.v.size(); i += step) pts.push_back(J(md.v[i].p * s));
     ConvexHullShapeSettings cs(pts, std::min(0.05f, std::min({s.x, s.y, s.z}) * 0.1f));
-    auto r = cs.Create(); if (r.IsValid()) return r.Get();
+    auto r = cs.Create(); if (r.IsValid()) return keep(r.Get());
     logMsg("warning: physics: convex hull failed for " + mesh + ", using a box", LogKind::Warn);
   } else {   // static and script-moved: the exact triangles (a ring can be walked through)
     VertexList vl; IndexedTriangleList tl;
     for (auto& v : md.v) vl.push_back(Float3(v.p.x * s.x, v.p.y * s.y, v.p.z * s.z));
     for (size_t i = 0; i + 2 < md.i.size(); i += 3) tl.push_back(IndexedTriangle(md.i[i], md.i[i + 1], md.i[i + 2], 0));
-    MeshShapeSettings ms(vl, tl); auto r = ms.Create(); if (r.IsValid()) return r.Get();
+    MeshShapeSettings ms(vl, tl); auto r = ms.Create(); if (r.IsValid()) return keep(r.Get());
     logMsg("warning: physics: mesh shape failed for " + mesh + ", using a box", LogKind::Warn);
   }
-  return new BoxShape(Vec3(0.5f * s.x, 0.5f * s.y, 0.5f * s.z), 0.0f);
+  glm::vec3 c = (md.bmin + md.bmax) * 0.5f * s, h = glm::max((md.bmax - md.bmin) * 0.5f * s, glm::vec3(0.01f));   // its bounds
+  return new RotatedTranslatedShape(J(c), Quat::sIdentity(), new BoxShape(J(h), 0.0f));
 }
 
 uint32_t Physics::addMesh(const std::string& mesh, const glm::vec3& scale, const glm::vec3& pos, const glm::quat& rot, Motion m, float mass, uint64_t userData) {

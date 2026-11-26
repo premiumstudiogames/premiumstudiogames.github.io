@@ -7,6 +7,8 @@
 #include "gl.h"
 #include "platform.h"
 #include "project.h"
+#include "assets.h"
+#include "testmodel.h"
 #include <imgui.h>
 #include <SDL.h>
 #include <cstring>
@@ -16,9 +18,9 @@
 #include <filesystem>
 
 int main(int argc, char** argv) {
-  std::string selftest, ctest, bptest; bool console = false;
-  for (int i = 1; i + 1 < argc; i++) { if (!std::strcmp(argv[i], "--selftest")) selftest = argv[i + 1]; if (!std::strcmp(argv[i], "--consoletest")) ctest = argv[i + 1]; if (!std::strcmp(argv[i], "--bptest")) bptest = argv[i + 1]; }
-  if (!bptest.empty()) selftest.clear();
+  std::string selftest, ctest, bptest, mtest; bool console = false;
+  for (int i = 1; i + 1 < argc; i++) { if (!std::strcmp(argv[i], "--selftest")) selftest = argv[i + 1]; if (!std::strcmp(argv[i], "--consoletest")) ctest = argv[i + 1]; if (!std::strcmp(argv[i], "--bptest")) bptest = argv[i + 1]; if (!std::strcmp(argv[i], "--modeltest")) mtest = argv[i + 1]; }
+  if (!bptest.empty() || !mtest.empty()) selftest.clear();
   if (!ctest.empty()) selftest.clear();
   // the console version (from Premium Games console mode): --console --home <the console's engine folder>
   for (int i = 1; i < argc; i++) { if (!std::strcmp(argv[i], "--console")) console = true; if (!std::strcmp(argv[i], "--home") && i + 1 < argc) pge::setDocumentsDir(argv[i + 1]); }
@@ -31,7 +33,7 @@ int main(int argc, char** argv) {
     pge::Editor ed(W); ed.console = console; ed.consolePreview = console; ed.init();
     std::string newT, newN; for (int i = 1; i + 2 < argc; i++) if (!std::strcmp(argv[i], "--new")) { newT = argv[i + 1]; newN = argv[i + 2]; }   // from Premium Games: new project
     if (!newT.empty()) ed.queue("newProject:" + newT + ":" + newN);
-    else for (int i = 1; i < argc && selftest.empty(); i++) { const char* prev = i > 1 ? argv[i - 1] : ""; if (argv[i][0] != '-' && std::strcmp(prev, "--home") && std::strcmp(prev, "--consoletest") && std::strcmp(prev, "--bptest")) { ed.openProjectFile(argv[i]); break; } }
+    else for (int i = 1; i < argc && selftest.empty(); i++) { const char* prev = i > 1 ? argv[i - 1] : ""; if (argv[i][0] != '-' && std::strcmp(prev, "--home") && std::strcmp(prev, "--consoletest") && std::strcmp(prev, "--bptest") && std::strcmp(prev, "--modeltest")) { ed.openProjectFile(argv[i]); break; } }
     if (!selftest.empty()) { std::error_code ec; std::filesystem::create_directories(std::filesystem::u8path(selftest), ec); ed.prefs.autosave = false;
       ed.queue("newProject:FirstPerson:SelfTest" + std::to_string(SDL_GetTicks())); }
     int frame = 0;
@@ -77,6 +79,57 @@ int main(int argc, char** argv) {
           float y1 = ed.game ? ed.game->worldPos(ed.game->find(ed.actor(cube) ? ed.actor(cube)->name : "")).y : 0; check(y1 > y0 + 0.2f, "the Blueprint moves the cube up while playing (" + std::to_string(y0) + " → " + std::to_string(y1) + ")");
           ed.stopPlay(); ed.undo(); check(t && t->bp.nodes.size() >= 4, "undo keeps the editor in step"); }
         if (frame == 176) { std::ofstream o(std::filesystem::u8path(bptest + "/bp-result.txt")); o << (code == 0 ? "PASS\n" : "FAIL\n") << log; break; }
+      }
+      if (!mtest.empty()) {   // CI: models and textures used like a person would - a .glb dropped on the viewport, its animation, a picture on a material, Play, Package
+        frame++; static std::string log; auto check = [&](bool c, const std::string& what) { log += (c ? "ok   " : "FAIL ") + what + "\n"; if (!c) code = 2; };
+        namespace fs = std::filesystem; static fs::path src; static std::string botId, cubeId;
+        // what a screenshot shows: how many pixels are mostly red / green, and how wide the red ones spread
+        struct Px { int red = 0, green = 0, rx0 = 1 << 30, rx1 = -1; };
+        int rx = (int)ed.vpX, ry = (int)ed.vpY, rw = (int)ed.vpW, rh = (int)ed.vpH;   // only the viewport (the panels have red X fields)
+        auto look = [&](const std::string& f) { Px r; SDL_Surface* s0 = SDL_LoadBMP(f.c_str()); if (!s0) return r; SDL_Surface* s = SDL_ConvertSurfaceFormat(s0, SDL_PIXELFORMAT_RGBA32, 0); SDL_FreeSurface(s0); if (!s) return r;
+          for (int y = std::max(ry, 0); y < std::min(ry + rh, s->h); y++) for (int x = std::max(rx, 0); x < std::min(rx + rw, s->w); x++) { const Uint8* p = (const Uint8*)s->pixels + y * s->pitch + x * 4;
+            if (p[0] > 50 && p[0] > 3 * p[1] && p[0] > 3 * p[2]) { r.red++; r.rx0 = std::min(r.rx0, x); r.rx1 = std::max(r.rx1, x); } if (p[1] > 50 && p[1] > 2 * p[0] && p[1] > 2 * p[2]) r.green++; }
+          SDL_FreeSurface(s); return r; };
+        if (frame == 5) { std::error_code ec; fs::create_directories(fs::u8path(mtest), ec); src = fs::u8path(mtest) / "source"; fs::create_directories(src, ec);
+          check(pge::writeTestModel((src / "TestBot.glb").u8string()), "a model file outside the project (TestBot.glb)");
+          unsigned char g[8 * 8 * 4]; for (int i = 0; i < 64; i++) { g[i * 4] = 20; g[i * 4 + 1] = 230; g[i * 4 + 2] = 30; g[i * 4 + 3] = 255; } stbi_write_png((src / "Grass.png").u8string().c_str(), 8, 8, 4, g, 32);
+          ed.queue("newProject:Blank:ModelTest" + std::to_string(SDL_GetTicks())); ed.prefs.autosave = false; }
+        if (frame == 30) { check(ed.hasProject, "a project"); ed.camYaw = 0; ed.camPitch = 0; ed.camPos = {0, 1, 4}; ed.animPaused = true; ed.animClock = 0; ed.shotFile = mtest + "/model-before.bmp"; }
+        if (frame == 34) { SDL_WarpMouseInWindow(W.win, (int)(ed.vpX + ed.vpW / 2), (int)(ed.vpY + ed.vpH * 0.8f)); }
+        if (frame == 36) { SDL_Event e{}; e.type = SDL_DROPFILE; e.drop.file = SDL_strdup((src / "TestBot.glb").u8string().c_str()); e.drop.windowID = SDL_GetWindowID(W.win); SDL_PushEvent(&e); }
+        if (frame == 40) { fs::path inProj = fs::u8path(ed.P.path).parent_path() / "Models" / "TestBot.glb"; check(fs::exists(inProj), "dropped on the window: copied into the project's Models folder");
+          for (auto& a : ed.L().actors) if (a.mesh == "Models/TestBot.glb") botId = a.id; pge::Actor* b = ed.actor(botId);
+          check(b != nullptr, "dropped on the viewport: placed in the level"); check(b && b->material.empty() && b->name == "TestBot", "…with its own materials, named after the file");
+          if (b) { check(b->p.y > -0.01f && b->p.y < 0.6f, "…standing on the ground (y = " + std::to_string(b->p.y) + ")"); b->p = {0, 0, 0}; b->anim = "Wave"; b->animLoop = true; ed.touch(); ed.sel = botId; }
+          ed.scanFiles(true); check(ed.projModels.size() == 1 && ed.projModels[0] == "Models/TestBot.glb", "the Content Browser's Models folder shows it"); }
+        if (frame == 44) ed.shotFile = mtest + "/model-rest.bmp";
+        if (frame == 48) { ed.animClock = 0.5f; ed.shotFile = mtest + "/model-wave.bmp"; }
+        if (frame == 52) { Px a = look(mtest + "/model-before.bmp"), b = look(mtest + "/model-rest.bmp"), c = look(mtest + "/model-wave.bmp");
+          check(b.red > a.red + 2000, "the model is drawn with the red picture inside its file (" + std::to_string(a.red) + " → " + std::to_string(b.red) + " red pixels)");
+          check(c.rx1 - c.rx0 > (b.rx1 - b.rx0) + 20, "its animation bends it on the GPU (red width " + std::to_string(b.rx1 - b.rx0) + " → " + std::to_string(c.rx1 - c.rx0) + " px)");
+          ed.animPaused = false;
+          auto r = ed.importFiles({(src / "Grass.png").u8string()}); check(r.size() == 1 && r[0] == "Textures/Grass.png", "a picture imported into Textures");
+          std::string mid = ed.newMaterial("M_Grass"); ed.P.materials[mid].baseMap = r.empty() ? "" : r[0]; glm::vec3 at(1.2f, 0, 0); pge::Actor& cb = ed.addActor("StaticMesh", "Cube", &at); cb.material = mid; cubeId = cb.id; ed.touch(); ed.shotFile = mtest + "/model-texture.bmp"; }
+        if (frame == 54) { ed.materialOpen = "M_Grass"; ed.wMaterial = true; ed.cbFolder = "Textures"; ed.wContent = true; ImGui::SetWindowFocus("Content Browser"); }
+        if (frame == 55) ed.shotFile = mtest + "/model-ui.bmp";
+        if (frame == 56) { Px a = look(mtest + "/model-wave.bmp"), d = look(mtest + "/model-texture.bmp"); check(d.green > a.green + 2000, "a material with a Base Color picture draws it (" + std::to_string(a.green) + " → " + std::to_string(d.green) + " green pixels)");
+          ed.runMapCheck(); bool bad = false; for (auto& m : ed.mapCheck) bad = bad || m.rfind("error", 0) == 0; check(!bad, "Map Check: no errors"); ed.play(); }
+        if (frame == 90) { check(ed.playing && ed.game, "Play"); std::string st = ed.game ? ed.game->animation(ed.game->find("TestBot"), "state", "") : "";
+          check(st.find("\"Wave\"") != std::string::npos && st.find("\"playing\":true") != std::string::npos, "in the game the model plays Wave from the start: " + st); ed.shotFile = mtest + "/model-play.bmp"; }
+        if (frame == 94) { ed.stopPlay(); ed.packageProject(); }
+        // more models to look at (a folder of .glb / .gltf): placed in a row, each with its first animation, a screenshot (not checked)
+        if (const char* extra = std::getenv("PGE_MODELTEST_EXTRA")) {
+          static std::vector<std::string> ids;
+          if (frame == 96) { std::vector<std::string> fl; std::error_code ec; for (auto& e : fs::directory_iterator(fs::u8path(extra), ec)) if (pge::isModelFile(e.path().u8string())) fl.push_back(e.path().u8string());
+            std::sort(fl.begin(), fl.end()); auto r = ed.importFiles(fl); float x = -3; for (auto& m : r) { glm::vec3 at(x, 0, 1.5f); pge::Actor& a = ed.addActor("StaticMesh", m, &at); pge::ModelRef md = pge::model(m);
+              if (md && md->ok()) { glm::vec3 sz = md->shape.bmax - md->shape.bmin; float k = 1.8f / std::max({sz.x, sz.y, sz.z, 1e-3f}); a.s = glm::vec3(k); a.p.y = -md->shape.bmin.y * k; if (!md->anims.empty()) a.anim = md->anims[0].name; }
+              log += "extra: " + m + (md ? (md->ok() ? " " + std::to_string(md->triangles) + " tris, " + std::to_string(md->anims.size()) + " anims" : " ERROR " + md->error) : "") + "\n"; x += 2.5f; }
+            ed.sel.clear(); ed.wPackage = false; ed.camPos = {-0.5f, 1.4f, 5.5f}; ed.camYaw = 0; ed.camPitch = -0.08f; ed.animPaused = false; ed.touch(); }
+          if (frame == 99) ed.shotFile = mtest + "/model-extra.bmp";
+          if (frame == 100) ed.shotFile.clear(); }
+        if (frame == (std::getenv("PGE_MODELTEST_EXTRA") ? 104 : 100)) { check(ed.packageOk, "Package"); check(fs::exists(fs::u8path(ed.packageDir) / "Models" / "TestBot.glb") && fs::exists(fs::u8path(ed.packageDir) / "Textures" / "Grass.png"), "the packaged game has the model and the picture");
+          check(glGetError() == GL_NO_ERROR, "no OpenGL errors");
+          std::ofstream o(fs::u8path(mtest + "/model-result.txt")); o << (code == 0 ? "PASS\n" : "FAIL\n") << log; for (auto& l : pge::logLines()) o << "[" << l.time << "] " << l.text << "\n"; break; }
       }
       if (!ctest.empty()) {   // CI: the console version - its folder, the keyboard typing with the controller, a project made with it
         frame++; auto pad = [](int b, bool down = true) { SDL_Event e{}; e.type = down ? SDL_CONTROLLERBUTTONDOWN : SDL_CONTROLLERBUTTONUP; e.cbutton.button = (Uint8)b; SDL_PushEvent(&e); };

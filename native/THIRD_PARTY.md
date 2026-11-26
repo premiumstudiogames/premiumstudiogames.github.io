@@ -14,5 +14,6 @@
 | Roboto, Cousine fonts | Apache 2.0 |
 | Noto Sans Arabic font | SIL Open Font License 1.1 |
 | stb_image | MIT / public domain |
+| cgltf 1.14 (glTF 2.0 models) | MIT |
 | Khronos OpenGL headers | MIT / Apache 2.0 |
 | miniaudio 0.11.21 (+ stb_vorbis) | public domain / MIT-0 (stb_vorbis: MIT / public domain) |

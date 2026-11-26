@@ -21,6 +21,7 @@ Scripts are JavaScript. Add one to an actor in Details > Script. These functions
   function onOverlap(other) { }   the player walked into this actor (Trigger Box or mesh)
   function onHit(other) { }       a physics body hit this actor (needs collision)
   function onKey(code) { }        a key was pressed, e.g. 'KeyE', 'Space', 'Digit1'
+  function onAnimationEnd(name) { }   a model's animation that doesn't loop reached its end
 
 self  - the actor the script is on
   self.name, self.tags, self.id
@@ -36,9 +37,17 @@ self  - the actor the script is on
   self.lookAt(x, y, z)           turn towards a point
   self.distanceTo(other)         metres to another actor or the player
   self.destroy()                 remove from the game
+  models (.glb / .gltf):
+  self.playAnimation('Run', { loop: true, speed: 1, blend: 0.2 })   play one of its animations (blend: seconds from the one before); false if it has none of that name
+  self.stopAnimation()           back to how it is in the file
+  self.animation                 { name, time, duration, playing, loop, speed }
+  self.animations                ['Idle', 'Walk', 'Run', ...]
+  self.animationSpeed = 2        twice as fast (-1 = backwards)
+  self.bone('Hand_R')            { position, rotation } of a bone (joint) in the world: hold things, shoot from a muzzle
 
 world
   world.time                     seconds since the game started
+  world.spawn('Models/Robot.glb', { position: [0, 0, 5], animation: 'Idle' })   a model of the project (or 'Cube', 'Sphere', ...)
   world.vars                     an object to keep your own values (score, ...)
   world.player                   .position, .teleport(x, y, z), .launch(x, y, z)
   world.player.fly = true        flying: no falling, Space goes up, the sneak key (or Shift) down
@@ -157,7 +166,9 @@ R"(
 BLUEPRINTS - scripts made of nodes and wires, like Unreal Engine's (+ Add > Blueprint, or Details > Script > + New Blueprint)
   A Blueprint is put on an actor like a script, and runs the same way: in Play, in packaged games, on the console.
   Events start the flow: Event BeginPlay, Event Tick (Delta Seconds), Event ActorBeginOverlap, Event Hit, Key Pressed,
-  Any Key Pressed, Event EndPlay, Custom Event, On Widget Clicked (a game UI button).
+  Any Key Pressed, Event EndPlay, Custom Event, On Widget Clicked (a game UI button), On Animation End (a model's animation finished).
+  Animation: Play Animation (name, loop, play rate, blend time), Stop Animation, Set Play Rate, Get Current Animation, Is Animation Playing,
+  Get Bone Location (where a bone of the model is: Hand_R ...).
   The white wire (exec) is the order things happen in; coloured wires carry values: red Boolean, green Float, pink String,
   yellow Vector, blue Actor, teal Array. Inputs with no wire use the value typed on the node; Target = self.
   Flow Control: Branch, Sequence, For Loop, For Each Loop, While Loop, Do Once, Flip Flop, Gate, Delay, Set Timer by Event,
@@ -282,6 +293,14 @@ static const char* DOCS_TEXT = R"(PREMIUM ENGINE - QUICK START
 3. Move them with the gizmo: W move, E rotate, R scale. Hold the right mouse button in the viewport and use W A S D Q E to fly.
 4. Change an actor in the Details panel: mesh, material, physics, light, text, script.
 5. Materials: Content Browser > Materials. Double-click to edit. Drag a material onto an actor in the viewport to apply it.
+   Textures: the Material Editor's slots (Base Color, Normal, Roughness, Metallic, Ambient Occlusion, Emissive) take pictures of the project.
+   Tiling repeats them; World Aligned lays them on the world so scaled walls and floors don't stretch; Masked cuts out leaves and fences.
+   Roughness reads the green channel, Metallic the blue, Ambient Occlusion the red: a packed ORM picture goes in all three.
+5b. Models: drop .glb / .gltf files (Blender, Mixamo, Sketchfab...) on the editor window, or Content Browser > Import. They go into
+   the project's Models folder with their materials, textures, skeleton and animations. Drop one on the viewport to place it, or drag
+   it from Content Browser > Models. Details > Animation picks the one that plays from the start; scripts and Blueprints play others.
+   A model changed on disk (exported again) is loaded again by itself. Pictures go into Textures the same way.
+   Export from Blender: File > Export > glTF 2.0 (.glb), +Y Up, with Animation; no Draco compression.
 6. Scripts: Tools > New Script, or Details > Script > New Script. Press F7 to compile. See Help > Script API Reference.
 7. Press Play (Alt+P) to play in the viewport. Esc stops. Shift+F1 frees the mouse.
 8. Platforms > Windows packages the game as a Windows program (.exe) in Documents\PremiumEngine\Builds.
@@ -370,7 +389,7 @@ void Editor::drawDialogs() {
     if (ch) { touch(); SDL_SetWindowTitle(win.win, (P.name + " - Premium Engine").c_str()); }
     ImGui::End(); }
   if (beginDialog("Statistics", &wStats, {420 * s, 0})) {
-    std::map<std::string, int> types; int tris = 0; for (auto& a : L().actors) { types[actorTypeLabel(a.type)]++; if (a.type == "StaticMesh") tris += (int)makePrimitive(a.mesh).i.size() / 3; }
+    std::map<std::string, int> types; int tris = 0; for (auto& a : L().actors) { types[actorTypeLabel(a.type)]++; if (a.type == "StaticMesh") tris += (int)meshShape(a.mesh).i.size() / 3; }
     if (ImGui::BeginTable("st", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders)) {
       auto row = [](const std::string& k, const std::string& v) { ImGui::TableNextRow(); ImGui::TableNextColumn(); ImGui::TextUnformatted(k.c_str()); ImGui::TableNextColumn(); ImGui::TextUnformatted(v.c_str()); };
       row("Level", level); row("Actors", std::to_string(L().actors.size())); for (auto& [t, n] : types) row("  " + t, std::to_string(n));

@@ -119,6 +119,14 @@ function __api(id) {
     get velocity() { const v = __n.getv(id, 'v'); return new Vec3(v[0], v[1], v[2]); },
     distanceTo(o) { const p = o && o.isPlayer ? o.position : (o && o.worldPosition) ? o.worldPosition : o; return this.worldPosition.distanceTo(p); },
     lookAt(x, y, z) { __n.lookAt(id, ...__xyz(x, y, z)); },
+    // models: playAnimation('Run', { loop: true, speed: 1, blend: 0.2 }), stopAnimation(), animation (what plays), animations (names), bone('Hand_R')
+    playAnimation(name, o) { return __n.anim(id, 'play', JSON.stringify(Object.assign({ name: String(name) }, o || {}))) === '1'; },
+    stopAnimation() { __n.anim(id, 'stop', ''); },
+    get animation() { const r = __n.anim(id, 'state', ''); return r ? JSON.parse(r) : null; },
+    get animations() { const r = __n.anim(id, 'list', ''); return r ? JSON.parse(r) : []; },
+    set animationSpeed(v) { __n.anim(id, 'speed', String(+v)); },
+    bone(name) { const r = __n.anim(id, 'bone', String(name)); if (!r) return null; const b = JSON.parse(r);
+      return { position: new Vec3(b.p[0], b.p[1], b.p[2]), rotation: new Vec3(b.r[0], b.r[1], b.r[2]) }; },
     destroy() { __n.destroy(id); } };
   __apis.set(id, a); return a;
 }
@@ -301,7 +309,7 @@ globalThis.__uiDispatch = function (json) {
 };
 )JS";
 
-static const char* EVENTS[EV_COUNT] = {"onStart", "onUpdate", "onOverlap", "onHit", "onKey", "onStop"};
+static const char* EVENTS[EV_COUNT] = {"onStart", "onUpdate", "onOverlap", "onHit", "onKey", "onStop", "onAnimationEnd"};
 
 struct Behaviour { std::string actor, actorName, script; JSValue obj; bool ev[EV_COUNT]; bool alive = true; };
 struct ScriptHost::Impl {
@@ -339,6 +347,7 @@ static void bindNatives(JSContext* c) {
   FN("addForce", 4, W(c)->addForce(S(c, a[0]), {(float)D(c, a[1]), (float)D(c, a[2]), (float)D(c, a[3])}); return JS_UNDEFINED;);
   FN("lookAt", 4, W(c)->lookAt(S(c, a[0]), {(float)D(c, a[1]), (float)D(c, a[2]), (float)D(c, a[3])}); return JS_UNDEFINED;);
   FN("destroy", 1, W(c)->destroyActor(S(c, a[0])); return JS_UNDEFINED;);
+  FN("anim", 3, { std::string s = W(c)->animation(S(c, a[0]), S(c, a[1]), S(c, a[2])); return JS_NewStringLen(c, s.data(), s.size()); });
   FN("info", 1, { std::string s = W(c)->actorInfo(S(c, a[0])); return JS_NewStringLen(c, s.data(), s.size()); });
   FN("find", 1, { std::string s = W(c)->find(S(c, a[0])); return s.empty() ? JS_NULL : JS_NewStringLen(c, s.data(), s.size()); });
   FN("findAll", 1, { auto v = W(c)->findAll(S(c, a[0])); JSValue r = JS_NewArray(c); for (size_t i = 0; i < v.size(); i++) JS_SetPropertyUint32(c, r, (uint32_t)i, JS_NewStringLen(c, v[i].data(), v[i].size())); return r; });
@@ -566,7 +575,8 @@ static std::string wrap(const std::string& code) {
   // first user line stays line 1 so error lines match the editor
   return "(function (self, world, input, log, THREE, math) { \"use strict\"; " + code +
          "\n;return { onStart: typeof onStart === 'function' ? onStart : null, onUpdate: typeof onUpdate === 'function' ? onUpdate : null,"
-         " onOverlap: typeof onOverlap === 'function' ? onOverlap : null, onHit: typeof onHit === 'function' ? onHit : null, onKey: typeof onKey === 'function' ? onKey : null, onStop: typeof onStop === 'function' ? onStop : null }; })";
+         " onOverlap: typeof onOverlap === 'function' ? onOverlap : null, onHit: typeof onHit === 'function' ? onHit : null, onKey: typeof onKey === 'function' ? onKey : null, onStop: typeof onStop === 'function' ? onStop : null,"
+         " onAnimationEnd: typeof onAnimationEnd === 'function' ? onAnimationEnd : null }; })";
 }
 
 int ScriptHost::attach(const std::string& actorId, const std::string& actorName, const std::string& scriptName, const std::string& code) {
@@ -592,7 +602,7 @@ void ScriptHost::call(int i, ScriptEvent e, double num, const std::string& arg) 
   else if (e == EV_Overlap || e == EV_Hit) {
     if (arg.empty()) av[0] = JS_NULL; else { JSValue s = JS_NewStringLen(c, arg.data(), arg.size()); av[0] = JS_Call(c, d->api, JS_UNDEFINED, 1, &s); JS_FreeValue(c, s); if (JS_IsException(av[0])) { JS_FreeValue(c, JS_GetException(c)); av[0] = JS_NULL; } }
     n = 1;
-  } else if (e == EV_Key) { av[0] = JS_NewStringLen(c, arg.data(), arg.size()); n = 1; }
+  } else if (e == EV_Key || e == EV_AnimEnd) { av[0] = JS_NewStringLen(c, arg.data(), arg.size()); n = 1; }
   d->deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
   JSValue r = JS_Call(c, fn, b.obj, n, av);
   for (int k = 0; k < n; k++) JS_FreeValue(c, av[k]);

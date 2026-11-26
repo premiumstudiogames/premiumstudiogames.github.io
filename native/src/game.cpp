@@ -35,11 +35,7 @@ static void decompose(const glm::mat4& W, glm::vec3& pos, glm::quat& rot, glm::v
   glm::mat3 R(glm::vec3(W[0]) / std::max(scale.x, 1e-6f), glm::vec3(W[1]) / std::max(scale.y, 1e-6f), glm::vec3(W[2]) / std::max(scale.z, 1e-6f));
   rot = glm::normalize(glm::quat_cast(R));
 }
-static void meshBounds(const std::string& mesh, glm::vec3& mn, glm::vec3& mx) {
-  static std::map<std::string, std::pair<glm::vec3, glm::vec3>> cache;
-  auto it = cache.find(mesh); if (it == cache.end()) { MeshData d = makePrimitive(mesh); it = cache.emplace(mesh, std::make_pair(d.bmin, d.bmax)).first; }
-  mn = it->second.first; mx = it->second.second;
-}
+static void meshBounds(const std::string& mesh, glm::vec3& mn, glm::vec3& mx) { const MeshData& d = meshShape(mesh); mn = d.bmin; mx = d.bmax; }
 
 std::string keyCode(SDL_Scancode sc) {
   if (sc >= SDL_SCANCODE_A && sc <= SDL_SCANCODE_Z) return std::string("Key") + (char)('A' + (sc - SDL_SCANCODE_A));
@@ -54,17 +50,51 @@ std::string keyCode(SDL_Scancode sc) {
   }
 }
 
-void addActorVisual(Frame& f, const Project& P, const Actor& a, const glm::mat4& W, bool editor, unsigned id, const glm::vec3* colorOverride, const std::string* textOverride, const Renderer* r) {
+void applyMaterial(DrawItem& d, const Material& m) {
+  d.color = m.color; d.emissive = m.emissive * m.emissiveIntensity; d.metal = m.metalness; d.rough = m.roughness; d.opacity = m.opacity;
+  if (!m.hasMaps()) return;
+  auto tx = [](const std::string& f, bool srgb) -> unsigned { const Texture* t = texture(f, srgb); return t ? t->id : 0; };
+  d.tex[0] = tx(m.baseMap, true); d.tex[1] = tx(m.roughnessMap, false); d.tex[2] = tx(m.metalMap, false); d.tex[3] = tx(m.normalMap, false); d.tex[4] = tx(m.aoMap, false); d.tex[5] = tx(m.emissiveMap, true);
+  if (d.tex[5] && glm::length(d.emissive) < 1e-4f) d.emissive = glm::vec3(m.emissiveIntensity);   // an emissive picture with a black colour: the picture's own colours
+  d.tiling = m.tiling; d.normalScale = m.normalStrength; d.aoStrength = m.aoStrength; d.worldUV = m.worldAligned; d.flipGreen = m.directXNormal;
+  if (m.masked && d.tex[0]) d.cutoff = m.cutoff;
+}
+// a model file: one draw per part (primitive), with its own materials (or the actor's), posed by its animation
+static void addModelDraws(Frame& f, const Project& P, const Actor& a, const glm::mat4& W, unsigned id, const glm::vec3* colorOverride, const AnimPlay* anim) {
+  ModelRef m = model(a.mesh); if (!m || !m->ok()) { DrawItem d; d.mesh = &primitive("Cube"); d.model = W; d.id = id; d.color = glm::vec3(1, 0, 1); d.emissive = glm::vec3(0.4f, 0, 0.4f); f.draws.push_back(d); return; }   // missing: a pink box, like other engines
+  f.keep.push_back(m);
+  auto pose = std::make_shared<std::vector<glm::mat4>>(); ModelPose mp; poseModel(*m, anim, mp);
+  *pose = mp.joints; f.bones.push_back(pose);
+  auto it = a.material.empty() ? P.materials.end() : P.materials.find(a.material); const Material* over = it != P.materials.end() ? &it->second : nullptr;
+  for (const ModelPrim& pr : m->prims) { if (pr.node < 0) continue;
+    DrawItem d; d.mesh = &pr.gpu; d.id = id;
+    if (pr.skin >= 0 && pr.skin < (int)m->skins.size() && !m->skins[pr.skin].joints.empty()) { d.model = W; d.bones = pose->data() + mp.skinAt[pr.skin]; d.boneCount = (int)m->skins[pr.skin].joints.size(); }
+    else d.model = W * mp.world[pr.node];
+    if (over) applyMaterial(d, *over);
+    else if (pr.material >= 0 && pr.material < (int)m->mats.size()) { const ModelMaterial& mm = m->mats[pr.material];
+      d.color = glm::vec3(mm.base); d.opacity = mm.base.a; d.metal = mm.metal; d.rough = mm.rough; d.emissive = mm.emissive; d.normalScale = mm.normalScale; d.aoStrength = mm.occlusion;
+      auto tid = [](const Texture* t) { return t && t->ok ? t->id : 0u; };
+      d.tex[0] = tid(mm.baseTex); d.tex[1] = d.tex[2] = tid(mm.mrTex); d.tex[3] = tid(mm.normalTex); d.tex[4] = tid(mm.occTex); d.tex[5] = tid(mm.emissiveTex);
+      if (mm.alphaMode == 1) { d.cutoff = mm.cutoff; d.opacity = 1; } else if (mm.alphaMode == 2) d.blend = true; else d.opacity = 1;
+      d.vcolor = pr.colors; }
+    else { d.color = glm::vec3(0.8f); d.metal = 0; d.rough = 0.6f; d.vcolor = pr.colors; }
+    d.linear = !over;   // glTF colours are linear light already
+    if (colorOverride) { d.color = *colorOverride; d.linear = false; }
+    f.draws.push_back(d); }
+}
+
+void addActorVisual(Frame& f, const Project& P, const Actor& a, const glm::mat4& W, bool editor, unsigned id, const glm::vec3* colorOverride, const std::string* textOverride, const Renderer* r, const AnimPlay* anim) {
   glm::vec3 pos(W[3]); glm::vec3 fwd = glm::normalize(glm::mat3(W) * glm::vec3(0, 0, -1) + glm::vec3(1e-7f));
   glm::mat4 at = glm::translate(glm::mat4(1), pos);                       // icon placed at the actor, no scale
   glm::mat4 rotOnly = at * glm::mat4(glm::mat3(glm::normalize(glm::vec3(W[0])), glm::normalize(glm::vec3(W[1])), glm::normalize(glm::vec3(W[2]))));
   auto icon = [&](const char* mesh, glm::vec3 c, float s) { DrawItem d; d.mesh = &primitive(mesh); d.model = glm::scale(at, glm::vec3(s)); d.color = c; d.unlit = true; d.castShadow = false; d.id = id; f.draws.push_back(d); };
   auto proxy = [&](const char* mesh, glm::mat4 m) { DrawItem d; d.mesh = &primitive(mesh); d.model = m; d.pickOnly = true; d.id = id; f.draws.push_back(d); };
   auto line = [&](const GpuMesh& m, glm::mat4 model, glm::vec3 c, bool top) { LineItem l; l.mesh = &m; l.model = model; l.color = glm::vec4(c, 0.95f); l.onTop = top; l.id = id; f.lines.push_back(l); };
-  if (a.type == "StaticMesh") {
+  if (a.type == "StaticMesh" && isModelFile(a.mesh)) addModelDraws(f, P, a, W, id, colorOverride, anim);
+  else if (a.type == "StaticMesh") {
     DrawItem d; d.mesh = &primitive(a.mesh); d.model = W; d.id = id;
     auto it = P.materials.find(a.material); Material m = it != P.materials.end() ? it->second : Material();
-    d.color = colorOverride ? *colorOverride : m.color; d.emissive = m.emissive * m.emissiveIntensity; d.metal = m.metalness; d.rough = m.roughness; d.opacity = m.opacity;
+    applyMaterial(d, m); if (colorOverride) d.color = *colorOverride;
     f.draws.push_back(d);
   } else if (a.isLight()) {
     LightItem l; l.type = a.type == "DirectionalLight" ? 0 : a.type == "PointLight" ? 1 : 2; l.pos = pos; l.dir = fwd; l.color = a.light.color; l.intensity = a.light.intensity;
@@ -108,6 +138,7 @@ bool Game::start() {
   if (!pad_) for (int i = 0; i < SDL_NumJoysticks(); i++) padOpen(i);
   clear();
   const Level* L = project_.level(levelName); if (!L) { logMsg("error: level \"" + levelName + "\" not found", LogKind::Error); return false; }
+  setAssetRoot(project_.path.empty() ? std::string() : std::filesystem::u8path(project_.path).parent_path().u8string());
   level_ = *L; time_ = 0; restartRequested_ = false; tune_ = Tune(); sunSet_ = false; mouseSens_ = 1; grounded_ = running_ = sneaking_ = tapRun_ = false;
   for (auto& a : level_.actors) { auto o = std::make_unique<Obj>(); o->a = a; o->p = a.p; o->r = glm::radians(a.r); o->s = a.s; o->visible = a.visible; byId_[a.id] = o.get(); objs_.push_back(std::move(o)); }
   phys_.reset(new Physics()); phys_->init(level_.world.gravity); gravity_ = level_.world.gravity; swimming_ = false;
@@ -123,6 +154,9 @@ bool Game::start() {
   for (auto& op : objs_) { Obj& o = *op; if (o.a.script.empty()) continue;
     auto it = project_.scripts.find(o.a.script); if (it == project_.scripts.end()) { logMsg("warning: " + o.a.name + ": script \"" + o.a.script + "\" not found", LogKind::Warn); continue; }
     o.beh = scripts_->attach(o.a.id, o.a.name, it->second.name, it->second.code); }
+  for (auto& op : objs_) { Obj& o = *op; if (o.a.type != "StaticMesh" || !isModelFile(o.a.mesh) || o.a.anim.empty()) continue;   // animations that play from the start
+    ModelRef m = model(o.a.mesh); int ai = m ? m->anim(o.a.anim) : -1;
+    if (ai >= 0) o.anim.play(ai, o.a.animLoop, o.a.animSpeed, 0); else logMsg("warning: " + o.a.name + ": the model has no animation \"" + o.a.anim + "\"", LogKind::Warn); }
   started_ = true;
   for (int b = 0; b < scripts_->count(); b++) scripts_->call(b, EV_Start);
   return true;
@@ -307,6 +341,9 @@ void Game::update(float dt) {
     if (glm::any(glm::greaterThan(glm::abs(sc - o.bodyScale), glm::vec3(1e-4f)))) { phys_->setShape(o.body, o.a.mesh, sc); o.bodyScale = sc; }
     if (o.motion == Motion::Kinematic) phys_->moveKinematic(o.body, pos, q); else phys_->teleport(o.body, pos, q);
     o.lastWorld = W; }
+  // models' animations move on; a script hears when one that doesn't loop reaches its end
+  for (size_t i = 0; i < objs_.size(); i++) { Obj& o = *objs_[i]; if (!o.alive || o.anim.anim < 0) continue; ModelRef m = model(o.a.mesh); if (!m) continue;
+    if (o.anim.advance(*m, dt) && o.anim.anim >= 0 && o.anim.anim < (int)m->anims.size()) scripts_->call(o.beh, EV_AnimEnd, 0, m->anims[o.anim.anim].name); }
   soundFrame();
   if (models_) models_->update(dt);   // particles
   pressed_.clear(); scripts_->runJobs();
@@ -320,7 +357,7 @@ void Game::buildFrame(Frame& f, Camera& cam, float aspect) const {
   for (auto& op : objs_) { const Obj& o = *op; if (!o.alive) continue;
     bool vis = o.visible; int guard = 0; for (Obj* p = get(o.a.parent); p && vis && guard < 64; p = get(p->a.parent), guard++) vis = p->visible;
     if (!vis) continue;
-    addActorVisual(f, project_, o.a, world(o), false, 0, o.hasColor ? &o.color : nullptr); }
+    addActorVisual(f, project_, o.a, world(o), false, 0, o.hasColor ? &o.color : nullptr, nullptr, nullptr, o.anim.anim >= 0 ? &o.anim : nullptr); }
   if (sunSet_) { bool done = false; for (auto& l : f.lights) if (l.type == 0) { l.dir = sunDir_; l.color = sunColor_; l.intensity = sunInt_; done = true; break; }
     if (!done) { LightItem l; l.type = 0; l.dir = sunDir_; l.color = sunColor_; l.intensity = sunInt_; l.shadows = true; f.lights.insert(f.lights.begin(), l); } }
   glm::vec3 eye;
@@ -420,16 +457,36 @@ static glm::vec3 jv(const json& j, glm::vec3 d) {
 }
 std::string Game::spawn(const std::string& mesh, const std::string& opts) {
   json o = json::object(); try { o = json::parse(opts); } catch (...) {}
-  bool known = false; for (int i = 0; i < MESH_COUNT; i++) known |= mesh == MESHES[i];
-  Actor a = newActor("StaticMesh", o.value("name", mesh)); a.mesh = known ? mesh : "Cube";
+  bool known = isModelFile(mesh); for (int i = 0; i < MESH_COUNT; i++) known |= mesh == MESHES[i];
+  Actor a = newActor("StaticMesh", o.value("name", mesh)); a.mesh = known ? mesh : "Cube"; if (isModelFile(mesh)) a.material.clear();
+  if (o.contains("animation") && o["animation"].is_string()) a.anim = o["animation"];
   a.p = jv(o.value("position", json()), {0, 1, 0}); a.s = jv(o.value("scale", json()), glm::vec3(1)); glm::vec3 rot = jv(o.value("rotation", json()), glm::vec3(0));
   if (o.contains("material") && o["material"].is_string()) a.material = o["material"];
   a.physics.simulate = o.value("physics", false); if (o.contains("tags") && o["tags"].is_array()) for (auto& t : o["tags"]) if (t.is_string()) a.tags.push_back(t);
   auto ob = std::make_unique<Obj>(); ob->a = a; ob->p = a.p; ob->r = rot; ob->s = a.s; Obj& ref = *ob; byId_[a.id] = ob.get(); objs_.push_back(std::move(ob));
   if (o.contains("color") && o["color"].is_string()) setColor(a.id, o["color"]);
   addBody(ref);
+  if (!a.anim.empty()) { ModelRef m = model(a.mesh); int ai = m ? m->anim(a.anim) : -1; if (ai >= 0) ref.anim.play(ai, true, 1, 0); }
   if (o.contains("script") && o["script"].is_string()) { auto it = project_.scripts.find(o["script"]); if (it != project_.scripts.end()) { ref.a.script = it->first; ref.beh = scripts_->attach(a.id, a.name, it->second.name, it->second.code); scripts_->call(ref.beh, EV_Start); } }
   return a.id;
+}
+std::string Game::animation(const std::string& id, const std::string& op, const std::string& arg) {
+  Obj* o = get(id); if (!o || o->a.type != "StaticMesh" || !isModelFile(o->a.mesh)) return ""; ModelRef m = model(o->a.mesh); if (!m || !m->ok()) return "";
+  AnimPlay& an = o->anim;
+  if (op == "list") { json a = json::array(); for (auto& x : m->anims) a.push_back(x.name); return a.dump(); }
+  if (op == "state") { json s = {{"name", an.anim >= 0 && an.anim < (int)m->anims.size() ? m->anims[an.anim].name : ""}, {"time", an.time}, {"playing", an.playing}, {"loop", an.loop}, {"speed", an.speed},
+      {"duration", an.anim >= 0 && an.anim < (int)m->anims.size() ? m->anims[an.anim].duration : 0.f}}; return s.dump(); }
+  if (op == "stop") { an = AnimPlay(); return "1"; }
+  if (op == "speed") { an.speed = (float)std::atof(arg.c_str()); return "1"; }
+  if (op == "play") { json j = json::object(); try { j = json::parse(arg); } catch (...) {}
+    std::string n = j.value("name", ""); int ai = m->anim(n);
+    if (ai < 0) { std::string names; for (auto& x : m->anims) names += (names.empty() ? "" : ", ") + x.name; logMsg("warning: " + o->a.name + ": no animation \"" + n + "\" in " + o->a.mesh + (names.empty() ? " (it has none)" : " - it has: " + names), LogKind::Warn); return "0"; }
+    float blend = j.contains("blend") && j["blend"].is_number() ? j["blend"].get<float>() : 0.2f, speed = j.contains("speed") && j["speed"].is_number() ? j["speed"].get<float>() : 1.f;
+    an.play(ai, !j.contains("loop") || !j["loop"].is_boolean() || j["loop"].get<bool>(), speed, blend); return "1"; }
+  if (op == "bone") { int ni = -1; for (size_t i = 0; i < m->nodes.size(); i++) if (m->nodes[i].name == arg) { ni = (int)i; break; } if (ni < 0) return "";
+    ModelPose p; poseModel(*m, an.anim >= 0 ? &an : nullptr, p); glm::mat4 W = world(*o) * p.world[ni]; glm::vec3 pos, sc; glm::quat q; decompose(W, pos, q, sc); glm::vec3 e = eulerYXZ(q);
+    return json{{"p", {pos.x, pos.y, pos.z}}, {"r", {e.x, e.y, e.z}}}.dump(); }
+  return "";
 }
 void Game::message(const std::string& t, float sec) { msg_ = t; msgUntil_ = time_ + std::max(0.1f, sec); }
 void Game::hud(const std::string& id, const std::string& t) {
