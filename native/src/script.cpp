@@ -76,7 +76,7 @@ class Vec3Ref {
   toString() { return this.clone().toString(); }
   toJSON() { return this.toArray(); }
 }
-const __xyz = (x, y, z) => (x !== null && typeof x === 'object') ? [+x.x || 0, +x.y || 0, +x.z || 0] : [+x || 0, +y || 0, +z || 0];
+const __xyz = (x, y, z) => Array.isArray(x) ? [+x[0] || 0, +x[1] || 0, +x[2] || 0] : (x !== null && typeof x === 'object') ? [+x.x || 0, +x.y || 0, +x.z || 0] : [+x || 0, +y || 0, +z || 0];   // a Vec3, { x, y, z }, [x, y, z] or x, y, z
 const __apis = new Map();
 const __player = { name: 'Player', isPlayer: true, tags: [],
   get position() { const a = __n.playerPos(); return new Vec3(a[0], a[1], a[2]); },
