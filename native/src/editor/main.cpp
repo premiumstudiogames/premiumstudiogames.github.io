@@ -3,6 +3,8 @@
 //   PremiumEngine --new <Blank|FirstPerson|ThirdPerson> <Name>
 //   PremiumEngine --selftest <folder>   (CI: makes a project, plays it, packages it, saves a screenshot, exits 0 when all worked)
 #include "editor.h"
+#include "zipwrite.h"
+#include "platform.h"
 #include "log.h"
 #include "gl.h"
 #include "platform.h"
@@ -311,6 +313,16 @@ int main(int argc, char** argv) {
           check(glm::length(inRoom) < glm::length(outside) * 0.35f, "…inside a closed room it is dark (" + f3(inRoom) + ", outside " + f3(outside) + ")");
           ed.shotFile = mtest + "/gi-on.bmp"; giWait = -frame; }
         if (giWait < 0 && frame == -giWait + 3) { double dd = 0; cornerLum(mtest + "/gi-on.bmp", &dd, mtest + "/gi-off.bmp"); check(dd > 1.0, "…and the picture shows it (" + std::to_string(dd) + " per pixel)");
+          // Platforms > Linux and macOS: the game for those systems, zipped with its program executable
+          for (std::string tg : {"Linux", "macOS", "Windows"}) { std::string lw = tg; for (char& ch : lw) ch = (char)std::tolower((unsigned char)ch);
+            if (tg != pge::hostPlatform() && !fs::exists(fs::u8path(pge::exeDir()) / "players" / lw)) { log += "skip Package " + tg + " (no player for it next to the editor)\n"; continue; }
+            ed.packageProject(false, tg); std::string nm = pge::sanitizeName(ed.P.name); check(ed.packageOk, "Platforms > " + tg + ": packaged");
+            if (tg == "Windows") { check(fs::exists(fs::u8path(ed.packageDir) / fs::u8path(nm + ".exe")) && fs::exists(fs::u8path(ed.packageDir) / "game.pge.json"), "…" + nm + ".exe and its data"); continue; }
+            std::vector<pge::ZipEntry> zs; bool rd = pge::readZip(ed.packageZip, zs); bool crc = rd && !zs.empty(); for (auto& z : zs) crc &= z.crcOk;
+            std::string exeName = tg == "macOS" ? ed.P.name + ".app/Contents/MacOS/" + nm : nm + "/" + nm; uint32_t mode = 0; bool data = false, plist = false;
+            for (auto& z : zs) { if (z.name == exeName) mode = z.mode; if (z.name == (tg == "macOS" ? ed.P.name + ".app/Contents/Resources/game.pge.json" : nm + "/game.pge.json")) data = true; if (z.name == ed.P.name + ".app/Contents/Info.plist") plist = true; }
+            check(crc && (mode & 0777) == 0755 && data && (tg != "macOS" || plist), "…" + fs::u8path(ed.packageZip).filename().u8string() + ": " + std::to_string(zs.size()) + " files, the program executable (" + std::to_string(mode & 0777) + " octal " + [&] { char b[8]; std::snprintf(b, 8, "%o", mode & 0777); return std::string(b); }() + ")" + (tg == "macOS" ? ", an app with Info.plist" : ""));
+            if (tg == "Linux") { std::vector<pge::ZipEntry> z2 = zs; bool sh = false; for (auto& z : z2) if (z.name == nm + "/" + nm + ".sh") sh = (z.mode & 0777) == 0755; check(sh, "…and " + nm + ".sh to start it"); } }
           check(glGetError() == GL_NO_ERROR, "no OpenGL errors");
           std::ofstream o(fs::u8path(mtest + "/model-result.txt")); o << (code == 0 ? "PASS\n" : "FAIL\n") << log; for (auto& l : pge::logLines()) o << "[" << l.time << "] " << l.text << "\n"; break; }
         if (landCheckAt && frame > landCheckAt + 6000) { check(false, "the gameplay part finished in time"); std::ofstream o(fs::u8path(mtest + "/model-result.txt")); o << "FAIL\n" << log; break; }

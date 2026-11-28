@@ -1,4 +1,5 @@
 #include "editor.h"
+#include "zipwrite.h"
 #include "bp_editor.h"
 #include "platform.h"
 #include "gl.h"
@@ -335,19 +336,32 @@ void Editor::runMapCheck() {
 }
 // the console version has a size limit (the whole game folder); the PC version has none
 static const uintmax_t CONSOLE_LIMIT_MB = 2048;
-void Editor::packageProject(bool console) {
+void Editor::packageProject(bool console, std::string target) {
   compileScripts(true); runMapCheck(); wMapCheck = false;
-  packageOk = false; packageDir.clear();
+  packageOk = false; packageDir.clear(); packageZip.clear();
   for (auto& m : mapCheck) if (m.rfind("error", 0) == 0) { packageResult = "Packaging stopped: fix the errors in the Output Log first.\n\n" + m; wPackage = true; wLog = true; return; }
-  std::string name = sanitizeName(P.name); fs::path out = fs::u8path(buildsDir()) / fs::u8path(name) / (console ? "Console" : "Windows");
-  fs::path player = fs::u8path(exeDir()) / fs::u8path("PremiumEnginePlayer" + exeSuffix());
+  if (target.empty() || console) target = hostPlatform();
+  // the game player program for that system: this editor's own, or the one shipped for it in players/<system>
+  bool host = target == hostPlatform(); std::string psuf = target == "Windows" ? ".exe" : "";
+  std::string lower = target; for (char& ch : lower) ch = (char)std::tolower((unsigned char)ch);
+  fs::path player = host ? fs::u8path(exeDir()) / fs::u8path("PremiumEnginePlayer" + exeSuffix()) : fs::u8path(exeDir()) / "players" / lower / fs::u8path("PremiumEnginePlayer" + psuf);
+  std::string name = sanitizeName(P.name); fs::path folder = fs::u8path(buildsDir()) / fs::u8path(name) / (console ? "Console" : target);
   std::error_code ec;
-  if (!fs::exists(player)) { packageResult = "The game player program is missing next to the editor:\n" + player.u8string(); wPackage = true; return; }
-  fs::remove_all(out, ec); fs::create_directories(out, ec);
-  fs::path exe = out / fs::u8path(name + exeSuffix());
+  if (!fs::exists(player)) { packageResult = "The game player program for " + target + " is missing next to the editor:\n" + player.u8string() + "\n\nDownload the full Premium Engine again (it has the players for Windows, Linux and macOS)."; wPackage = true; return; }
+  fs::remove_all(folder, ec); fs::create_directories(folder, ec);
+  // where the game's files go: next to the program; on a Mac inside the app (Name.app/Contents/Resources, the program in Contents/MacOS)
+  bool mac = target == "macOS" && !console; fs::path out = mac ? folder / fs::u8path(P.name + ".app") / "Contents" / "Resources" : folder;
+  fs::path exe = mac ? folder / fs::u8path(P.name + ".app") / "Contents" / "MacOS" / fs::u8path(name) : folder / fs::u8path(name + psuf);
+  fs::create_directories(out, ec); fs::create_directories(exe.parent_path(), ec);
   fs::copy_file(player, exe, fs::copy_options::overwrite_existing, ec);
   if (ec) { packageResult = "Could not copy the game program: " + ec.message(); wPackage = true; return; }
   fs::copy(fs::u8path(exeDir()) / "assets", out / "assets", fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
+  if (mac) { std::ofstream pl(folder / fs::u8path(P.name + ".app") / "Contents" / "Info.plist"); std::string bid = "games.premium."; for (char ch : name) bid += std::isalnum((unsigned char)ch) ? (char)std::tolower((unsigned char)ch) : '-';
+    pl << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict>\n"
+       << "<key>CFBundleExecutable</key><string>" << name << "</string>\n<key>CFBundleIdentifier</key><string>" << bid << "</string>\n<key>CFBundleName</key><string>" << P.name << "</string>\n"
+       << "<key>CFBundlePackageType</key><string>APPL</string>\n<key>CFBundleShortVersionString</key><string>1.0</string>\n<key>CFBundleVersion</key><string>1</string>\n"
+       << "<key>LSMinimumSystemVersion</key><string>11.0</string>\n<key>NSHighResolutionCapable</key><true/>\n<key>LSApplicationCategoryType</key><string>public.app-category.games</string>\n</dict></plist>\n"; }
+  if (target == "Linux" && !console) { std::ofstream sh(folder / fs::u8path(name + ".sh")); sh << "#!/bin/sh\n# starts " << P.name << " (double-click, or: sh \"" << name << ".sh\")\ncd \"$(dirname \"$0\")\"\nchmod +x \"./" << name << "\" 2>/dev/null\nexec \"./" << name << "\" \"$@\"\n"; }
   // the game's own files next to its project (textures, sounds, fonts, models, data): the packaged game finds them the same way
   int own = 0;
   if (!P.path.empty()) { fs::path root = fs::u8path(P.path).parent_path(), builds = fs::u8path(buildsDir());
@@ -365,7 +379,13 @@ void Editor::packageProject(bool console) {
   if (!saveProjectFile(q, (out / "game.pge.json").u8string(), &err)) { packageResult = "Could not write the game data: " + err; wPackage = true; return; }
 #ifndef _WIN32
   fs::permissions(exe, fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec, fs::perm_options::add, ec);
+  if (target == "Linux") fs::permissions(folder / fs::u8path(name + ".sh"), fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec, fs::perm_options::add, ec);
 #endif
+  if ((target == "Linux" || target == "macOS") && !console) {   // a zip that keeps the program executable (a folder zipped on Windows would lose it)
+    fs::path zip = folder.parent_path() / fs::u8path(name + "-" + target + ".zip"); std::string zerr; std::string top = mac ? "" : name + "/";
+    std::string exeRel = mac ? P.name + ".app/Contents/MacOS/" + name : name;
+    if (!writeZip(zip.u8string(), folder.u8string(), top, [&](const std::string& rel) { return rel == exeRel || rel == name + ".sh"; }, &zerr)) { packageResult = "Could not make the zip: " + zerr; wPackage = true; return; }
+    packageZip = zip.u8string(); }
   if (console) {   // full screen, controller first, the console's picture settings
     std::ofstream cf(out / "console.json"); cf << json{{"console", true}, {"limitMB", CONSOLE_LIMIT_MB}, {"quality", {{"msaa", 2}, {"ssao", true}, {"bloom", true}, {"shadowDistance", 120}}}}.dump(2); }
   uintmax_t size = 0; for (auto& e : fs::recursive_directory_iterator(out, ec)) if (e.is_regular_file()) size += e.file_size();
@@ -374,12 +394,14 @@ void Editor::packageProject(bool console) {
     fs::remove_all(out, ec); char lim[96]; std::snprintf(lim, sizeof lim, "%.1f MB of %llu MB", size / 1048576.0, (unsigned long long)CONSOLE_LIMIT_MB);
     packageResult = std::string("The console version is too big: ") + lim + ".\n\nMake the game's files smaller (pictures, sounds, music) and package again."; wPackage = true;
     logMsg(std::string("error: Package (Console): too big, ") + lim, LogKind::Error); return; }
-  packageOk = true; packageDir = out.u8string();
+  packageOk = true; packageDir = folder.u8string();
   if (console) { char lim[96]; std::snprintf(lim, sizeof lim, "%s of %llu MB", mb, (unsigned long long)CONSOLE_LIMIT_MB); std::snprintf(mb, sizeof mb, "%s", lim); }
-  packageResult = "Packaged " + P.name + (console ? " for the console (" : " for Windows (") + mb + ").\n\n" + exe.u8string() +
-    (console ? "\n\nThe console version opens full screen, is played with a controller and has the on-screen keyboard. Upload it next to the PC version on Premium Games."
-             : "\n\nThe folder is the whole game: zip it and share it, or upload it to Premium Games.");
-  logMsg("Package: " + exe.u8string(), LogKind::Ok); wPackage = true;
+  std::string how = console ? "\n\nThe console version opens full screen, is played with a controller and has the on-screen keyboard. Upload it next to the PC version on Premium Games."
+    : target == "Windows" ? "\n\nThe folder is the whole game: zip it and share it, or upload it to Premium Games."
+    : target == "Linux" ? "\n\nShare the zip (" + fs::u8path(packageZip).filename().u8string() + "): unzipped, the game starts with " + name + ".sh (or the program " + name + ")."
+    : "\n\nShare the zip (" + fs::u8path(packageZip).filename().u8string() + "): unzipped, open " + P.name + ".app. It isn't signed by Apple: the first time, right-click it and choose Open.";
+  packageResult = "Packaged " + P.name + (console ? " for the console (" : " for " + target + " (") + mb + ").\n\n" + (mac ? (folder / fs::u8path(P.name + ".app")).u8string() : exe.u8string()) + how;
+  packageDir = folder.u8string(); packageTarget = target; packageExe = exe.u8string(); logMsg("Package: " + exe.u8string(), LogKind::Ok); wPackage = true;
 }
 
 /* ------------------------------------------------------------------ play */

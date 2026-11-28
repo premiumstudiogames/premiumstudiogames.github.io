@@ -87,7 +87,8 @@ public:
   void openScript(const std::string& id); std::string newScript(const std::string& name);
   void openBlueprint(const std::string& id); std::string newBlueprint(const std::string& name); bool compileBlueprint(const std::string& id, bool report);
   std::string newMaterial(const std::string& name);
-  void compileScripts(bool quiet); void runMapCheck(); void packageProject(bool console = false);
+  void compileScripts(bool quiet); void runMapCheck(); void packageProject(bool console = false, std::string target = "");   // target: Windows, Linux, macOS ("" = this computer's)
+  std::string packageZip, packageTarget, packageExe;   // Linux / macOS: the zip to share (made with the program marked executable)
   void notify(const std::string& t);
   void savePrefs(); void loadPrefs(); void addRecent(const std::string& f);
   std::string uniqueName(const std::string& base);

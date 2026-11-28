@@ -1,14 +1,14 @@
 # Premium Engine (experimental)
 
-A game engine and editor for Windows, written in C++. The editor is laid out like Unreal Engine 5:
+A game engine and editor for Windows, Linux and macOS, written in C++. The editor is laid out like Unreal Engine 5:
 menu bar (File, Edit, Window, Tools, Build, Select, Actor, Help), toolbar, Viewport, Outliner,
-Details, World Settings, Content Browser and Output Log. Games are packaged as Windows programs (.exe).
+Details, World Settings, Content Browser and Output Log. Games are packaged for Windows (.exe), Linux and macOS (.app), from any of the three.
 
 ## Start
 1. Unzip anywhere and run **PremiumEngine.exe**.
 2. In the Project Browser pick a template (Blank, First Person, Third Person), type a name, press **Create**.
 3. Press the green **Play** button (Alt+P). Esc stops.
-4. **Platforms > Windows (.exe)** packages the game to `Documents\PremiumEngine\Builds\<Name>\Windows`.
+4. **Platforms > Windows (.exe) / Linux / macOS (.app)** packages the game to `Documents\PremiumEngine\Builds\<Name>\<System>` (Linux and macOS also as a zip that keeps the program executable).
    That folder is the whole game: zip it and share it.
 
 Projects are saved in `Documents\PremiumEngine\Projects` as `.pge.json` files
@@ -30,7 +30,7 @@ Projects are saved in `Documents\PremiumEngine\Projects` as `.pge.json` files
   map check, statistics, console commands.
 
 ## Needs
-Windows 10 or 11 (64-bit) and a graphics card with OpenGL 3.3 (any PC from the last 12 years).
+Windows 10 or 11 (64-bit), Linux (64-bit, glibc 2.35+: Ubuntu 22.04 and newer) or macOS 11+ (Apple Silicon or Intel), and a graphics card with OpenGL 3.3 (any PC from the last 12 years; every Mac since 2012).
 
 ## Build from source
 ```

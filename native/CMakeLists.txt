@@ -75,7 +75,7 @@ target_link_libraries(imgui PUBLIC SDL2::SDL2-static)
 
 # ---- the engine (shared by the editor and the game player)
 add_library(pgcore STATIC
-  src/gl.cpp src/project.cpp src/mesh.cpp src/renderer.cpp src/physics.cpp src/script.cpp src/game.cpp src/log.cpp src/ui_style.cpp src/app.cpp src/voxel.cpp src/arabic.cpp src/ui.cpp src/audio.cpp src/miniaudio_impl.c src/models.cpp src/net.cpp src/blueprint.cpp src/assets.cpp src/navigation.cpp src/gameplay.cpp src/animation.cpp src/netsync.cpp src/foliage.cpp src/fracture.cpp src/cloth.cpp src/landscape.cpp)
+  src/gl.cpp src/project.cpp src/mesh.cpp src/renderer.cpp src/physics.cpp src/script.cpp src/game.cpp src/log.cpp src/ui_style.cpp src/app.cpp src/voxel.cpp src/arabic.cpp src/ui.cpp src/audio.cpp src/miniaudio_impl.c src/models.cpp src/net.cpp src/blueprint.cpp src/assets.cpp src/navigation.cpp src/gameplay.cpp src/animation.cpp src/netsync.cpp src/foliage.cpp src/fracture.cpp src/cloth.cpp src/zipwrite.cpp src/landscape.cpp)
 target_include_directories(pgcore PUBLIC src third_party/gl ${stb_SOURCE_DIR} ${miniaudio_SOURCE_DIR} ${cgltf_SOURCE_DIR})
 target_link_libraries(pgcore PUBLIC imgui Jolt qjs nlohmann_json::nlohmann_json glm::glm)
 if(UNIX)

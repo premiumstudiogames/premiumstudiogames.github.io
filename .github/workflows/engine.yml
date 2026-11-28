@@ -1,8 +1,9 @@
-name: Premium Engine (Windows)
+name: Premium Engine (Windows, Linux, macOS)
 
-# Builds the C++ engine (editor + game player) with MSVC, runs the engine tests,
-# starts the editor and a packaged game for real (software OpenGL), and publishes
-# PremiumEngine-<version>-Windows.zip as a GitHub release.
+# Builds the C++ engine (editor + game player) for Windows (MSVC), Linux and macOS (Apple Silicon + Intel), runs the
+# engine tests on each, starts the editor and packaged games for real (software OpenGL), and publishes
+# PremiumEngine-<version>-Windows.zip (with the Linux and macOS game players inside, so Platforms > Linux / macOS
+# package from Windows), PremiumEngine-<version>-Linux.zip and PremiumEngine-<version>-macOS.zip as a GitHub release.
 on:
   push:
     branches: [main]
@@ -13,7 +14,110 @@ permissions:
   contents: write
 
 jobs:
+  linux:
+    runs-on: ubuntu-22.04   # an older system: the program runs on most Linux computers (glibc 2.35+)
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - name: Libraries to build against (SDL loads them when the game runs)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q ninja-build xvfb mesa-utils libgl1-mesa-dri libgl1-mesa-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
+            libxinerama-dev libxss-dev libxfixes-dev libxxf86vm-dev libwayland-dev libxkbcommon-dev libegl1-mesa-dev libasound2-dev libpulse-dev libudev-dev libdbus-1-dev unzip zip
+      - name: Configure
+        run: cmake -S native -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Engine tests
+        run: xvfb-run -a build/PremiumEngineTests
+      - name: Editor self-tests (new project, play, package; Blueprints; models, foliage, destruction, cloth, LOD, occlusion, GI, Linux / macOS packages)
+        timeout-minutes: 30
+        run: |
+          mkdir -p selftest/model selftest/blueprint
+          xvfb-run -a -s "-screen 0 1600x900x24" build/PremiumEngine --selftest "$PWD/selftest" || { cat selftest/editor-result.txt; exit 1; }
+          head -4 selftest/editor-result.txt
+          xvfb-run -a -s "-screen 0 1600x900x24" build/PremiumEngine --home "$PWD/selftest/blueprint/home" --bptest "$PWD/selftest/blueprint" || { cat selftest/blueprint/bp-result.txt; exit 1; }
+          PGE_MT_VARIANT=nomsaa timeout 1500 xvfb-run -a -s "-screen 0 1600x900x24" build/PremiumEngine --home "$PWD/selftest/model/home" --modeltest "$PWD/selftest/model" || { cat selftest/model/model-result.txt; tail -40 selftest/model/model-progress.txt; exit 1; }
+          head -40 selftest/model/model-result.txt
+      - name: The packaged Linux game, from its zip (walks forward)
+        timeout-minutes: 10
+        run: |
+          Z=$(ls selftest/model/home/Builds/*/*-Linux.zip | head -1); mkdir -p unz st; unzip -q "$Z" -d unz; N=$(ls unz)
+          ls -la "unz/$N"; test -x "unz/$N/$N"
+          (cd "unz/$N" && xvfb-run -a sh "./$N.sh" --selftest "$GITHUB_WORKSPACE/st") || { cat st/player-result.txt; exit 1; }
+          cat st/player-result.txt
+      - name: Keep the Linux programs
+        run: |
+          mkdir -p out && cp build/PremiumEngine build/PremiumEnginePlayer out/ && cp -r build/assets out/ && cp build/version.txt out/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engine-linux
+          path: out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: selftest-linux
+          path: selftest
+
+  macos:
+    strategy:
+      matrix:
+        include:
+          - { runner: macos-14, arch: arm64 }    # Apple Silicon
+          - { runner: macos-13, arch: x86_64 }   # Intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S native -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+      - name: Build
+        run: cmake --build build --config Release --parallel -- -quiet
+      - name: Engine tests
+        run: build/Release/PremiumEngineTests
+      - name: A game played by the player program (Third Person template, walks forward)
+        timeout-minutes: 10
+        run: |
+          mkdir -p st && build/Release/PremiumEngineTests --write-template ThirdPerson "$PWD/st/game.pge.json"
+          cp -r build/Release/assets st/ 2>/dev/null || true
+          build/Release/PremiumEnginePlayer --game "$PWD/st/game.pge.json" --selftest "$PWD/st" || { cat st/player-result.txt; exit 1; }
+          cat st/player-result.txt
+      - name: Keep the programs
+        run: |
+          mkdir -p out && cp build/Release/PremiumEngine build/Release/PremiumEnginePlayer out/ && cp -r build/Release/assets out/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engine-macos-${{ matrix.arch }}
+          path: out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: selftest-macos-${{ matrix.arch }}
+          path: st
+
+  macos-universal:   # one program for both kinds of Mac
+    needs: macos
+    runs-on: macos-14
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: engine-macos-arm64
+          path: arm
+      - uses: actions/download-artifact@v4
+        with:
+          name: engine-macos-x86_64
+          path: x64
+      - name: lipo
+        run: |
+          mkdir -p out && cp -r arm/assets out/
+          for p in PremiumEngine PremiumEnginePlayer; do lipo -create "arm/$p" "x64/$p" -output "out/$p"; chmod +x "out/$p"; lipo -info "out/$p"; done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engine-macos
+          path: out
+
   windows:
+    needs: [linux, macos-universal]
     runs-on: windows-latest
     timeout-minutes: 75
     env:
@@ -44,6 +148,20 @@ jobs:
           mkdir -p run
           cp -r build/Release/* run/
           cp "$(dirname "$GL")"/*.dll run/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: engine-linux
+          path: players-linux
+      - uses: actions/download-artifact@v4
+        with:
+          name: engine-macos
+          path: players-macos
+      - name: The Linux and macOS game players next to the editor (Platforms > Linux / macOS)
+        shell: bash
+        run: |
+          for d in run build/Release; do mkdir -p $d/players/linux $d/players/macos; cp players-linux/PremiumEnginePlayer $d/players/linux/; cp players-macos/PremiumEnginePlayer $d/players/macos/; done
+          ls -la run/players/*
 
       - name: Editor self-test (new project, play, package)
         timeout-minutes: 15
@@ -126,9 +244,16 @@ jobs:
           cp -r build/Release/assets dist/PremiumEngine/
           cp native/README.md dist/PremiumEngine/README.md
           cp native/THIRD_PARTY.md dist/PremiumEngine/THIRD_PARTY.md
+          mkdir -p dist/PremiumEngine/players/linux dist/PremiumEngine/players/macos
+          cp players-linux/PremiumEnginePlayer dist/PremiumEngine/players/linux/; cp players-macos/PremiumEnginePlayer dist/PremiumEngine/players/macos/
           cd dist && 7z a -tzip "PremiumEngine-$VER-Windows.zip" PremiumEngine > /dev/null
           ls -la
           echo "ver=$VER" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engine-windows-player
+          path: build/Release/PremiumEnginePlayer.exe
 
       - name: Publish release
         if: github.ref == 'refs/heads/main'
@@ -177,3 +302,41 @@ jobs:
             git commit -q -m "Premium Engine $VER: versions.json (Windows build)" && git push -q origin HEAD:main && break
             sleep 5
           done
+
+  unix-zips:   # the editor for Linux and for macOS (zipped here: the programs stay executable), each with the other systems' game players
+    needs: windows
+    runs-on: ubuntu-22.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: engine-linux
+          path: linux
+      - uses: actions/download-artifact@v4
+        with:
+          name: engine-macos
+          path: macos
+      - uses: actions/download-artifact@v4
+        with:
+          name: engine-windows-player
+          path: win
+      - name: Zip
+        run: |
+          VER=$(cat linux/version.txt); mkdir -p dist
+          for os in Linux macOS; do src=linux; other=macos; [ $os = macOS ] && { src=macos; other=linux; }
+            D=stage/$os/PremiumEngine; mkdir -p $D/players/windows $D/players/$other
+            cp $src/PremiumEngine $src/PremiumEnginePlayer $D/; cp -r $src/assets $D/; cp native/README.md native/THIRD_PARTY.md $D/
+            cp win/PremiumEnginePlayer.exe $D/players/windows/; cp $other/PremiumEnginePlayer $D/players/$other/
+            chmod +x $D/PremiumEngine $D/PremiumEnginePlayer $D/players/$other/PremiumEnginePlayer
+            (cd stage/$os && zip -qr "../../dist/PremiumEngine-$VER-$os.zip" PremiumEngine); done
+          ls -la dist; unzip -Z dist/PremiumEngine-$VER-Linux.zip | grep -E "PremiumEngine(Player)?$"
+          echo "VER=$VER" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engine-unix-zips
+          path: dist
+      - name: Publish
+        if: github.ref == 'refs/heads/main'
+        run: gh release upload "engine-$VER" dist/*.zip --clobber -R ${{ github.repository }}

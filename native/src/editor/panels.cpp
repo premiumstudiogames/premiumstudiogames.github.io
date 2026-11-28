@@ -154,7 +154,8 @@ void Editor::drawToolbar() {
     ImGui::SameLine(); ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical); ImGui::SameLine();
     if (toolButton("##platforms", IC_Box, "Platforms", IM_COL32(230, 180, 80, 255), "Package the game")) ImGui::OpenPopup("platforms");
     if (ImGui::BeginPopup("platforms")) {
-      section("PACKAGE"); if (!console && ImGui::MenuItem("Windows (.exe)")) packageProject(); if (ImGui::MenuItem("Console (controller, up to 2 GB)")) packageProject(true); if (!console && ImGui::MenuItem("Open Builds Folder")) { std::error_code ec; fs::create_directories(fs::u8path(buildsDir()), ec); openInExplorer(buildsDir()); }
+      section("PACKAGE"); if (!console && ImGui::MenuItem("Windows (.exe)")) packageProject(false, "Windows");
+      if (!console && ImGui::MenuItem("Linux")) packageProject(false, "Linux"); if (!console && ImGui::MenuItem("macOS (.app)")) packageProject(false, "macOS"); if (ImGui::MenuItem("Console (controller, up to 2 GB)")) packageProject(true); if (!console && ImGui::MenuItem("Open Builds Folder")) { std::error_code ec; fs::create_directories(fs::u8path(buildsDir()), ec); openInExplorer(buildsDir()); }
       section("SETTINGS"); if (ImGui::MenuItem("Packaging Settings...")) run("projectSettings");
       ImGui::EndPopup(); }
     float right = ImGui::GetWindowWidth() - 130; ImGui::SameLine(std::max(right, ImGui::GetCursorPosX()));

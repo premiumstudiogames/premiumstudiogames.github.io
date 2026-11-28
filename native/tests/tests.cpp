@@ -13,6 +13,8 @@
 #include "assets.h"
 #include "testmodel.h"
 #include "mannequin.h"
+#include "zipwrite.h"
+#include <fstream>
 #include <imgui.h>
 #include <chrono>
 #include <cstdio>
@@ -536,6 +538,18 @@ int main(int argc, char** argv) {
     Renderer::Quality q; DrawItem d; d.mesh = &g; g.bmin = sp.bmin; g.bmax = sp.bmax; d.model = glm::mat4(1);
     int nearL = Renderer::lodOf(d, {0, 0, 3}, 1.3f, q), midL = Renderer::lodOf(d, {0, 0, 9}, 1.3f, q), farL = Renderer::lodOf(d, {0, 0, 40}, 1.3f, q); q.lod = false; int offL = Renderer::lodOf(d, {0, 0, 40}, 1.3f, q);
     CHECK(nearL == 0 && midL == 1 && farL == 2 && offL == 0, ("near: all, further: fewer, far: fewest (" + std::to_string(nearL) + std::to_string(midL) + std::to_string(farL) + ")").c_str());
+  }
+  {   // zips for Linux / macOS games: the program stays executable (made on any system)
+    std::printf("zip\n");
+    namespace fs = std::filesystem; fs::path d = fs::temp_directory_path() / "pge-zip-test"; std::error_code ec; fs::remove_all(d, ec); fs::create_directories(d / "Game" / "assets", ec);
+    { std::ofstream(d / "Game" / "Game", std::ios::binary) << std::string("\x7f" "ELF program", 12); std::ofstream(d / "Game" / "assets" / "a.txt") << "hello"; std::ofstream(d / "Game" / u8"لعبة.json") << "{}"; }
+    std::string zf = (d / "Game.zip").u8string(); CHECK(writeZip(zf, (d / "Game").u8string(), "Game/", [](const std::string& r) { return r == "Game"; }), "a zip is written");
+    std::vector<ZipEntry> zs; CHECK(readZip(zf, zs) && zs.size() == 3, "…with its 3 files");
+    bool ok = true; for (auto& z : zs) { ok &= z.crcOk; if (z.name == "Game/Game") ok &= (z.mode & 0777) == 0755; else ok &= (z.mode & 0777) == 0644; }
+    bool arabic = false; for (auto& z : zs) arabic |= z.name == std::string("Game/") + (const char*)u8"لعبة.json";
+    CHECK(ok && arabic, "…the program is executable (755), the rest not (644); Arabic names kept; contents whole");
+    if (std::system("command -v unzip > /dev/null 2>&1") == 0) { std::string cmd = "cd '" + d.u8string() + "' && unzip -q -o Game.zip -d out && test -x out/Game/Game && test ! -x out/Game/assets/a.txt && cat out/Game/assets/a.txt | grep -q hello";
+      CHECK(std::system(cmd.c_str()) == 0, "…unzip makes the program executable"); }
   }
   {   // online: two games on this computer kept the same (physics, cars, ragdolls, spawned actors, players, damage, decals)
     std::printf("online sync\n");

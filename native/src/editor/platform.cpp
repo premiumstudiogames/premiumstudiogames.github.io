@@ -23,6 +23,15 @@ std::string exeSuffix() {
   return "";
 #endif
 }
+std::string hostPlatform() {
+#if defined(_WIN32)
+  return "Windows";
+#elif defined(__APPLE__)
+  return "macOS";
+#else
+  return "Linux";
+#endif
+}
 #ifdef _WIN32
 static std::wstring W(const std::string& s) { int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0); std::wstring w(n > 0 ? n - 1 : 0, L'\0'); if (n > 1) MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, w.data(), n); return w; }
 static std::string U(const std::wstring& w) { int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr); std::string s(n > 0 ? n - 1 : 0, '\0'); if (n > 1) WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, s.data(), n, nullptr, nullptr); return s; }

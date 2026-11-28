@@ -364,7 +364,8 @@ static const char* DOCS_TEXT = R"(PREMIUM ENGINE - QUICK START
    temperature, bloom, tint (Found Footage and Cinematic presets). Scripts: world.setPostProcess; Blueprints: Set Camera Effect.
 6. Scripts: Tools > New Script, or Details > Script > New Script. Press F7 to compile. See Help > Script API Reference.
 7. Press Play (Alt+P) to play in the viewport. Esc stops. Shift+F1 frees the mouse.
-8. Platforms > Windows packages the game as a Windows program (.exe) in Documents\PremiumEngine\Builds.
+8. Platforms > Windows / Linux / macOS packages the game for that system in Documents\PremiumEngine\Builds (Linux and macOS: a zip to share,
+   the program inside it stays executable; on a Mac an app - not signed by Apple, so the first time: right-click > Open).
 
 Projects are saved in Documents\PremiumEngine\Projects as .pge.json files.
 They also open in Premium Engine 0.1 (web) and the other way round.
@@ -465,7 +466,7 @@ void Editor::drawDialogs() {
   if (beginDialog("Package Project", &wPackage, {560 * s, 0})) {
     ImGui::TextWrapped("%s", packageResult.c_str()); ImGui::Spacing();
     if (packageOk) { if (!console) { if (ImGui::Button("Open Folder", {130, 0})) openInExplorer(packageDir); ImGui::SameLine(); }
-      if (ImGui::Button("Run Game", {130, 0})) { std::string err; std::string exe = (fs::u8path(packageDir) / fs::u8path(sanitizeName(P.name) + exeSuffix())).u8string(); if (!launchProgram(exe, console ? std::vector<std::string>{} : std::vector<std::string>{"--windowed"}, &err)) notify(err); } ImGui::SameLine(); }
+      if (packageTarget == hostPlatform() && ImGui::Button("Run Game", {130, 0})) { std::string err; if (!launchProgram(packageExe, console ? std::vector<std::string>{} : std::vector<std::string>{"--windowed"}, &err)) notify(err); } ImGui::SameLine(); }
     if (ImGui::Button("Close", {100, 0})) wPackage = false; ImGui::End(); }
   if (beginDialog("Script API Reference", &wApi, {720 * s, 620 * s})) { ImGui::PushFont(ImGui::GetIO().Fonts->Fonts.Size > 2 ? ImGui::GetIO().Fonts->Fonts[2] : ImGui::GetFont()); ImGui::TextUnformatted(API_TEXT); ImGui::PopFont(); ImGui::End(); }
   if (beginDialog("Documentation", &wDocs, {720 * s, 420 * s})) { ImGui::TextWrapped("%s", DOCS_TEXT); ImGui::End(); }
