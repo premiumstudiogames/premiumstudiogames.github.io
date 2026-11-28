@@ -63,8 +63,8 @@ jobs:
     strategy:
       matrix:
         include:
-          - { runner: macos-14, arch: arm64 }    # Apple Silicon
-          - { runner: macos-13, arch: x86_64 }   # Intel
+          - { runner: macos-15, arch: arm64 }    # Apple Silicon
+          - { runner: macos-15-intel, arch: x86_64 }   # Intel
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 75
     steps:
@@ -97,7 +97,7 @@ jobs:
 
   macos-universal:   # one program for both kinds of Mac
     needs: macos
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/download-artifact@v4
         with:
