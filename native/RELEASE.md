@@ -1,9 +1,9 @@
-Premium Engine for Windows (experimental). Unzip and run PremiumEngine.exe.
+Premium Engine for Windows, Linux and macOS (experimental). Unzip and run PremiumEngine.exe (Windows) or PremiumEngine (Linux, macOS).
 
 - Unreal-style editor: File / Edit / Window / Tools / Build / Select / Actor / Help, Viewport, Outliner, Details, World Settings, Content Browser, Output Log
 - Templates: Blank, First Person, Third Person
 - Physically based renderer (OpenGL 3.3), Jolt Physics, JavaScript scripts
-- Play in the editor, package games as Windows .exe
+- Play in the editor, package games for Windows (.exe), Linux and macOS (.app) from any of the three
 - Models: glTF 2.0 (.glb / .gltf) with their materials, textures, skeletons and animations - drop them on the window
 - Materials with textures: base colour, normal, roughness, metallic, ambient occlusion, emissive; tiling, world aligned, masked
 - Camera effects (post process): vignette, film grain, chromatic aberration, VHS tape, scanlines, saturation, contrast, temperature, bloom, tint
@@ -16,6 +16,12 @@ Premium Engine for Windows (experimental). Unzip and run PremiumEngine.exe.
 - Physics Constraints: hinge (doors), fixed (breakable), ball socket (chains), slider (drawers, lifts, powered), distance (ropes); welded parts (a car built from blocks)
 - Ragdolls: character models fall limp (from damage or Simulate Physics) and can be picked up, dragged and thrown
 - Gameplay: line traces, damage and explosions (radial damage), player health, attaching to bones / the player / the camera (weapons, flashlights), decals (blood, bullet holes, scorch marks), carrying and throwing bodies
+- Animation: blend spaces (idle / walk / run by itself from the speed), layers on part of the body (shoot while running), two-bone IK (hands on things), look at, feet on the ground (foot IK)
+- Online: physics, cars, ragdolls, spawned and broken things are the same for every player by themselves; players see each other as characters; damage and decals reach everyone
+- Foliage: paint grass, bushes, trees, rocks on the ground with the mouse (thousands in one draw, swaying in the wind, with collision if wanted)
+- Destruction: meshes break into pieces from damage or a script (Destructible in Details, fracture(), Break Into Pieces)
+- Cloth: flags, curtains, capes that hang, blow in the wind and move round characters
+- Renderer: level of detail made by itself (far meshes with fewer triangles), occlusion culling (what a wall hides isn't drawn), global illumination (light bounced off walls and floors, World Settings)
 - Blueprints (visual scripting) with English and Arabic names and explanations
 
-Every build is tested on Windows: engine tests, the editor makes a project, plays and packages it, and the packaged game starts and walks.
+Every build is tested on Windows, Linux and macOS: engine tests, the editor makes a project, plays and packages it, and the packaged games start and walk.
