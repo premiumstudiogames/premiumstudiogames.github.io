@@ -22,6 +22,7 @@
   X(PFNGLDRAWELEMENTSPROC, glDrawElements) \
   X(PFNGLTEXSUBIMAGE3DPROC, glTexSubImage3D) \
   X(PFNGLTEXIMAGE3DPROC, glTexImage3D) \
+  X(PFNGLGETTEXIMAGEPROC, glGetTexImage) \
   X(PFNGLGETQUERYOBJECTUIVPROC, glGetQueryObjectuiv) \
   X(PFNGLENDQUERYPROC, glEndQuery) \
   X(PFNGLBEGINQUERYPROC, glBeginQuery) \
@@ -114,6 +115,7 @@ PGE_GL_FUNCS(PGE_GL_DECL)
 #define glDrawElements pge_glDrawElements
 #define glTexSubImage3D pge_glTexSubImage3D
 #define glTexImage3D pge_glTexImage3D
+#define glGetTexImage pge_glGetTexImage
 #define glGetQueryObjectuiv pge_glGetQueryObjectuiv
 #define glEndQuery pge_glEndQuery
 #define glBeginQuery pge_glBeginQuery

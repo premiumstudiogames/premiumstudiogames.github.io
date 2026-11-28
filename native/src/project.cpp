@@ -195,7 +195,7 @@ Project makeTemplate(const std::string& kind, const std::string& name) {
     { Actor w = newActor("Empty", "BlockWorld"); w.script = "SC_BlockWorld"; A.push_back(w); }
     P.scripts["SC_BlockWorld"] = {"SC_BlockWorld", SC_BLOCKS};
   }
-  if (kind == "FirstPerson" || kind == "ThirdPerson") {
+  if (kind == "FirstPerson" || kind == "ThirdPerson") { L.world.gi = true;
     L.world.gameMode = kind;
     { Actor ps = newActor("PlayerStart", "PlayerStart"); ps.p = {0, 1, 10}; A.push_back(ps); }
     float W[4][4] = {{0, -15, 30, 1}, {0, 15, 30, 1}, {-15, 0, 1, 30}, {15, 0, 1, 30}};
@@ -278,7 +278,7 @@ static Actor actorFrom(const json& j) {
 }
 static json worldJson(const WorldSettings& w) {
   json j = {{"gameMode", w.gameMode}, {"sky", colorHex(w.sky)}, {"skyLight", colorHex(w.skyLight)}, {"groundLight", colorHex(w.groundLight)}, {"ambient", w.ambient}, {"exposure", w.exposure},
-          {"gravity", w.gravity}, {"killZ", w.killZ}, {"fog", w.fog}, {"fogColor", colorHex(w.fogColor)}, {"fogDensity", w.fogDensity}, {"fov", w.fov}};
+          {"gravity", w.gravity}, {"killZ", w.killZ}, {"fog", w.fog}, {"fogColor", colorHex(w.fogColor)}, {"fogDensity", w.fogDensity}, {"fov", w.fov}, {"gi", w.gi}, {"giIntensity", w.giIntensity}};
   if (!w.post.isDefault()) { const PostProcess& q = w.post; j["post"] = {{"vignette", q.vignette}, {"grain", q.grain}, {"chromatic", q.chromatic}, {"scanlines", q.scanlines}, {"vhs", q.vhs},
       {"saturation", q.saturation}, {"contrast", q.contrast}, {"temperature", q.temperature}, {"bloom", q.bloom}, {"tint", colorHex(q.tint)}}; }
   if (!w.playerModel.empty()) j["playerModel"] = w.playerModel;
@@ -289,7 +289,7 @@ static WorldSettings worldFrom(const json& j) {
   WorldSettings w; if (!j.is_object()) return w;
   w.gameMode = get<std::string>(j, "gameMode", w.gameMode); w.sky = col(j, "sky", w.sky); w.skyLight = col(j, "skyLight", w.skyLight); w.groundLight = col(j, "groundLight", w.groundLight);
   w.ambient = get<float>(j, "ambient", w.ambient); w.exposure = get<float>(j, "exposure", w.exposure); w.gravity = get<float>(j, "gravity", w.gravity); w.killZ = get<float>(j, "killZ", w.killZ);
-  w.fog = get<bool>(j, "fog", false); w.fogColor = col(j, "fogColor", w.sky); w.fogDensity = get<float>(j, "fogDensity", w.fogDensity); w.fov = get<float>(j, "fov", w.fov);
+  w.fog = get<bool>(j, "fog", false); w.fogColor = col(j, "fogColor", w.sky); w.fogDensity = get<float>(j, "fogDensity", w.fogDensity); w.fov = get<float>(j, "fov", w.fov); w.gi = get<bool>(j, "gi", false); w.giIntensity = get<float>(j, "giIntensity", 1.f);
   if (j.contains("post") && j["post"].is_object()) { const json& q = j["post"]; PostProcess& o = w.post; o.vignette = get<float>(q, "vignette", 0); o.grain = get<float>(q, "grain", 0); o.chromatic = get<float>(q, "chromatic", 0);
     o.scanlines = get<float>(q, "scanlines", 0); o.vhs = get<float>(q, "vhs", 0); o.saturation = get<float>(q, "saturation", 1); o.contrast = get<float>(q, "contrast", 1); o.temperature = get<float>(q, "temperature", 0);
     o.bloom = get<float>(q, "bloom", 1); o.tint = col(q, "tint", glm::vec3(1)); }

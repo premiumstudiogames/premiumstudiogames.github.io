@@ -522,6 +522,21 @@ int main(int argc, char** argv) {
     // foliage with collision stops things
     { json h = json::parse(g.gameplay("raycast", "{\"from\":[20,5,20],\"to\":[20,-1,20],\"ignorePlayer\":true}", ""), nullptr, false); CHECK(h.is_object() && h["p"][1].get<float>() > 0.9f, "a tree painted with Collision is hit by a trace"); }
   }
+  {   // level of detail: far meshes with fewer triangles (made by itself), hard edges kept
+    std::printf("level of detail\n");
+    MeshData sp = makePrimitive("Sphere"); size_t nt = sp.i.size() / 3;
+    std::vector<unsigned> l1 = simplifyIndices(sp.v.data(), sizeof(Vertex), 0, 12, sp.v.size(), sp.i, 0.45f, sp.bmin, sp.bmax), l2 = simplifyIndices(sp.v.data(), sizeof(Vertex), 0, 12, sp.v.size(), sp.i, 0.15f, sp.bmin, sp.bmax);
+    bool okIdx = true; for (unsigned i : l1) okIdx &= i < sp.v.size(); for (unsigned i : l2) okIdx &= i < sp.v.size();
+    CHECK(nt >= 300 && l1.size() / 3 < nt * 0.6 && l1.size() / 3 > nt * 0.15 && l2.size() / 3 < l1.size() / 3 && l2.size() >= 36 && okIdx,
+          ("a sphere of " + std::to_string(nt) + " triangles: " + std::to_string(l1.size() / 3) + " far, " + std::to_string(l2.size() / 3) + " farther").c_str());
+    glm::vec3 mn(1e9f), mx(-1e9f); for (unsigned i : l2) { mn = glm::min(mn, sp.v[i].p); mx = glm::max(mx, sp.v[i].p); } CHECK(glm::length(mn - sp.bmin) < 0.15f && glm::length(mx - sp.bmax) < 0.15f, "…still the same size");
+    GpuMesh g; std::vector<unsigned> all = withLods(g, sp.v.data(), sizeof(Vertex), 0, 12, sp.v.size(), sp.i);
+    CHECK(g.lodCount[0] > 0 && g.lodCount[1] > 0 && g.lodCount[1] < g.lodCount[0] && all.size() == sp.i.size() + g.lodCount[0] + g.lodCount[1] && g.lodFirst[0] == sp.i.size(), "the levels follow the full mesh in one index buffer");
+    MeshData cube = makePrimitive("Cube"); GpuMesh gc; withLods(gc, cube.v.data(), sizeof(Vertex), 0, 12, cube.v.size(), cube.i); CHECK(gc.lodCount[0] == 0, "a low poly mesh (a cube) has none");
+    Renderer::Quality q; DrawItem d; d.mesh = &g; g.bmin = sp.bmin; g.bmax = sp.bmax; d.model = glm::mat4(1);
+    int nearL = Renderer::lodOf(d, {0, 0, 3}, 1.3f, q), midL = Renderer::lodOf(d, {0, 0, 9}, 1.3f, q), farL = Renderer::lodOf(d, {0, 0, 40}, 1.3f, q); q.lod = false; int offL = Renderer::lodOf(d, {0, 0, 40}, 1.3f, q);
+    CHECK(nearL == 0 && midL == 1 && farL == 2 && offL == 0, ("near: all, further: fewer, far: fewest (" + std::to_string(nearL) + std::to_string(midL) + std::to_string(farL) + ")").c_str());
+  }
   {   // online: two games on this computer kept the same (physics, cars, ragdolls, spawned actors, players, damage, decals)
     std::printf("online sync\n");
     Project q = makeTemplate("Blank", "Online"); Level& L = q.levels[0].second; L.actors.clear(); L.world.gameMode = "FirstPerson";

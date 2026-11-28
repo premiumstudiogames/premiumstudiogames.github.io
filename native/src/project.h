@@ -73,6 +73,7 @@ struct WorldSettings {
   glm::vec3 sky{0.56f, 0.72f, 0.88f}, skyLight{0.87f, 0.92f, 1.0f}, groundLight{0.23f, 0.25f, 0.29f}, fogColor{0.56f, 0.72f, 0.88f};
   float ambient = 0.8f, exposure = 1, gravity = -9.81f, killZ = -30, fogDensity = 0.01f, fov = 75;
   bool fog = false; PostProcess post; NavSettings nav;
+  bool gi = false; float giIntensity = 1;   // global illumination: light bounced off the level (like Lumen), how strong
   std::string playerModel;   // Third Person: the player's character ("" = the engine's mannequin, "Capsule", or a model of the project)
   // a sky drawn behind everything (scripts, world.setSky): colour at the top (sky is the horizon), the sun's disc and glow,
   // the moon, stars. Not saved with the level; skyTop.x < 0 = a flat sky of the sky colour (as before)

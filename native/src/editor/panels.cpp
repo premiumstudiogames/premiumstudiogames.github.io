@@ -300,7 +300,7 @@ void Editor::drawViewport() {
   }
   ImGui::PopStyleVar();
   if (showStats) {
-    char st[160]; std::snprintf(st, sizeof st, "%.0f FPS  %.1f ms\n%d draws  %d tris", fps_, 1000.f / std::max(fps_, 1.f), R.drawCalls, R.triangles);
+    char st[200]; std::snprintf(st, sizeof st, "%.0f FPS  %.1f ms\n%d draws  %d tris\n%d far (LOD)  %d hidden", fps_, 1000.f / std::max(fps_, 1.f), R.drawCalls, R.triangles, R.lodDraws, R.occluded);
     ImVec2 ts = ImGui::CalcTextSize(st); dl->AddText({pos.x + size.x - ts.x - 12, pos.y + 40}, IM_COL32(120, 255, 120, 255), st);
   }
   if (!playing) { std::string lv = "Level: " + level; dl->AddText({pos.x + 10, pos.y + size.y - 24}, IM_COL32(255, 255, 255, 120), lv.c_str()); }
@@ -598,6 +598,9 @@ void Editor::drawWorldSettings() {
   if (ImGui::CollapsingHeader("Fog", ImGuiTreeNodeFlags_DefaultOpen) && beginProps("fg")) { propCols();
     rowLabel("Exponential Fog"); ch |= ImGui::Checkbox("##fog", &w.fog);
     ImGui::BeginDisabled(!w.fog); rowLabel("Fog Color"); ch |= ImGui::ColorEdit3("##fc", &w.fogColor.x); rowLabel("Fog Density"); ch |= ImGui::SliderFloat("##fd", &w.fogDensity, 0.001f, 0.2f, "%.3f", ImGuiSliderFlags_Logarithmic); ImGui::EndDisabled();
+    rowLabel("Global Illumination"); ch |= ImGui::Checkbox("##gi", &w.gi); if (ImGui::IsItemHovered()) ImGui::SetTooltip("Light bounces off walls and floors onto what is near (a red wall makes the floor by it red,\nrooms are dark inside and lit by their windows). Worked out by itself when the level changes.");
+    if (w.gi) { ImGui::SameLine(); if (R.giFinished()) ImGui::TextDisabled("ready"); else ImGui::TextDisabled("%d%%", R.giTotal() ? R.giDone() * 100 / R.giTotal() : 0); }
+    ImGui::BeginDisabled(!w.gi); rowLabel("  Bounced Light"); ch |= ImGui::SliderFloat("##gii", &w.giIntensity, 0, 4, "%.2f"); ImGui::EndDisabled();
     ImGui::EndTable(); }
   if (ImGui::CollapsingHeader("Post Process (Camera Effects)") && beginProps("pp")) { propCols(); PostProcess& q = w.post;
     auto sl = [&](const char* l, const char* id, float* v, float lo, float hi, const char* tip) { rowLabel(l); bool c = ImGui::SliderFloat(id, v, lo, hi, "%.2f"); if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip); ch |= c; };

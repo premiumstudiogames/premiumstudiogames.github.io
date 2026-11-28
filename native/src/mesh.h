@@ -6,10 +6,16 @@
 namespace pge {
 struct Vertex { glm::vec3 p, n; glm::vec2 uv{0}; };   // uv: texture coordinates (1 = the texture once across a face)
 struct MeshData { std::vector<Vertex> v; std::vector<unsigned> i; glm::vec3 bmin{-0.5f}, bmax{0.5f}; };
-struct GpuMesh { unsigned vao = 0, vbo = 0, ebo = 0; int count = 0; bool lines = false; glm::vec3 bmin{-0.5f}, bmax{0.5f}; };
+// lod: fewer triangles for when it is far (made by itself on upload, in the same index buffer after the full one): count 0 = none
+struct GpuMesh { unsigned vao = 0, vbo = 0, ebo = 0; int count = 0; bool lines = false; glm::vec3 bmin{-0.5f}, bmax{0.5f}; int lodCount[2] = {0, 0}; unsigned lodFirst[2] = {0, 0}; };
+// Level of detail like Unreal's auto LOD: the vertices in one cell of a grid become one (hard edges kept: split by which way they face),
+// triangles that collapse go. Returns the indices for about `keep` of the triangles (0..1). Any vertex layout: where position and normal are.
+std::vector<unsigned> simplifyIndices(const void* verts, size_t stride, size_t posOff, size_t nrmOff, size_t nv, const std::vector<unsigned>& idx, float keep, glm::vec3 bmin, glm::vec3 bmax);
+// the full indices and two levels after them (for a big enough mesh); fills g.lodCount / lodFirst
+std::vector<unsigned> withLods(GpuMesh& g, const void* verts, size_t stride, size_t posOff, size_t nrmOff, size_t nv, const std::vector<unsigned>& idx);
 
 MeshData makePrimitive(const std::string& name);   // Cube, Sphere, Cylinder, Cone, Plane, Capsule, Torus, Wedge (unit size)
-GpuMesh upload(const MeshData& m, bool lines = false);
+GpuMesh upload(const MeshData& m, bool lines = false, bool lods = true);
 GpuMesh uploadLines(const std::vector<glm::vec3>& pts);   // pairs of points
 void destroy(GpuMesh& m);
 const GpuMesh& primitive(const std::string& name);       // cached GPU meshes (also meshes made at run time, below)

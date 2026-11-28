@@ -7,6 +7,8 @@
 #include <cmath>
 #include <string>
 #include <algorithm>
+#include <chrono>
+#include <unordered_map>
 #include <imgui.h>
 #include <imgui_internal.h>   // ImTextCharFromUtf8
 
@@ -36,6 +38,14 @@ void main(){ mat4 M = skinMatrix(); vec4 w = sway(M * vec4(aPos,1.0)); vPos = w.
 // lighting shared by meshes and the block world (sun with shadow, point / spot lights, sky light, reflections, ACES + sRGB, fog)
 static const char* LIGHT_LIB = R"(
 uniform vec3 uCam, uSky, uGround, uFogColor; uniform float uAmbient, uExposure, uFogDensity; uniform int uFog, uMode, uHasShadow;
+// global illumination: light bounced off the level, from a grid of probes (each: the light arriving from 6 directions, mixed by the normal)
+uniform int uGI; uniform vec3 uGIMin, uGIMax, uGIN; uniform sampler3D uGIPos, uGINeg; uniform float uGIInt;
+vec3 giLight(vec3 P, vec3 N, out float w){
+  vec3 size = max(uGIMax - uGIMin, vec3(1e-3)); vec3 q = (P + N * 0.3 - uGIMin) / size;
+  vec3 outside = max(max(-q, q - 1.0), vec3(0.0)) * size; w = 1.0 - smoothstep(0.0, 3.0, length(outside));
+  vec3 g = clamp(q, 0.0, 1.0) * (uGIN - 1.0) + 0.5; vec3 n2 = N * N; vec3 c = vec3(0.0);
+  for(int a = 0; a < 3; a++){ vec3 t = vec3((g.x + float(a) * uGIN.x) / (3.0 * uGIN.x), g.y / uGIN.y, g.z / uGIN.z); c += n2[a] * (N[a] >= 0.0 ? texture(uGIPos, t).rgb : texture(uGINeg, t).rgb); }
+  return c; }
 uniform int uNumLights; uniform int uLType[8]; uniform vec3 uLPos[8], uLDir[8], uLColor[8]; uniform float uLInt[8], uLRange[8], uLCos[8];
 uniform int uHasSun; uniform vec3 uSunDir, uSunColor; uniform float uSunInt; uniform sampler2DShadow uShadow;
 uniform mat4 uCasc[4]; uniform vec4 uSplit; uniform vec4 uTexel; uniform vec3 uCamFwd, uFogLin; uniform int uCascades;
@@ -84,9 +94,11 @@ vec3 lighting(vec3 N, vec3 P, vec3 base, float metal, float rough, float sh){
     if(uLType[i]==2){ float c = dot(-L, normalize(uLDir[i])); att *= smoothstep(uLCos[i], mix(uLCos[i],1.0,0.3), c); }
     col += brdf(N,V,L,base,metal,rough) * uLColor[i] * uLInt[i] * att; }
   vec3 hemi = mix(uGround, uSky, 0.5*N.y+0.5) * uAmbient * gAo;
+  float giW = 0.0; if(uGI == 1){ vec3 g = giLight(P, N, giW) * uGIInt; hemi = mix(hemi, g * gAo, giW); }
   col += hemi * base * (1.0-metal) / PI;
   // sky reflection, so metals and glossy surfaces are not black without an environment map
   vec3 Rv = reflect(-V, N); vec3 env = mix(uGround, uSky, smoothstep(-0.3, 0.3, Rv.y)) * uAmbient;
+  if(uGI == 1){ float w2; vec3 g = giLight(P, Rv, w2) * uGIInt / PI; env = mix(env, g, w2); }
   vec3 f0 = mix(vec3(0.04), base, metal); float NoV = max(dot(N,V), 0.0);
   vec3 fr = f0 + (max(vec3(1.0-rough), f0)-f0)*pow(1.0-NoV,5.0); float k = (1.0 - rough*0.85) * 0.6;
   if(uHasEnv == 1){   // what the capture saw in that direction (parallax corrected on its sphere), blurrier for rough surfaces
@@ -312,6 +324,11 @@ in vec2 vUv; uniform sampler2D uTex; uniform vec4 uColor; uniform int uId; out v
 void main(){ float a = texture(uTex, vUv).a; if(uId==1){ if(a<0.3) discard; frag = uColor; return; } frag = vec4(uColor.rgb, uColor.a*a); })";
 
 static bool inView(const glm::mat4& vp, const DrawItem& it);
+// one draw of a mesh at a level of detail (0 = all its triangles); the number of indices drawn
+static int drawMesh(const DrawItem& it, int lod) {
+  const GpuMesh& m = *it.mesh; int n = m.count; const void* off = nullptr; if (lod > 0 && m.lodCount[lod - 1]) { n = m.lodCount[lod - 1]; off = (const void*)(uintptr_t)(m.lodFirst[lod - 1] * 4u); }
+  glBindVertexArray(m.vao); if (it.inst) glDrawElementsInstanced(GL_TRIANGLES, n, GL_UNSIGNED_INT, off, (int)it.inst->size()); else glDrawElements(GL_TRIANGLES, n, GL_UNSIGNED_INT, off); return n;
+}
 static unsigned compile(const char* vs, const char* fs, const char* name) {
   auto sh = [&](GLenum t, const char* src) { unsigned s = glCreateShader(t); glShaderSource(s, 1, &src, nullptr); glCompileShader(s); int ok = 0; glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
     if (!ok) { char b[2048]; glGetShaderInfoLog(s, 2048, nullptr, b); logMsg(std::string("error: shader ") + name + ": " + b, LogKind::Error); } return s; };
@@ -332,6 +349,8 @@ bool Renderer::init() {
   { float id[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}; glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 4, 1, 0, GL_RGBA, GL_FLOAT, id); } glBindTexture(GL_TEXTURE_2D, 0); text_ = compile(TEXT_VS, TEXT_FS, "text");
   ssao_ = compile(POST_VS, SSAO_FS, "ssao"); aoBlur_ = compile(POST_VS, AOBLUR_FS, "ao blur"); bloomPre_ = compile(POST_VS, BLOOMPRE_FS, "bloom"); bloomDown_ = compile(POST_VS, BLOOMDOWN_FS, "bloom down"); bloomUp_ = compile(POST_VS, BLOOMUP_FS, "bloom up"); compose_ = compile(POST_VS, COMPOSE_FS, "compose"); sky_ = compile(POST_VS, SKY_FS, "sky");
   glGenVertexArrays(1, &postVao_); glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
+  occProg_ = compile("#version 330 core\nlayout(location=0) in vec3 aPos; uniform mat4 uVP, uModel; void main(){ gl_Position = uVP * uModel * vec4(aPos, 1.0); }",
+                     "#version 330 core\nout vec4 o; void main(){ o = vec4(1.0); }", "occlusion");
   glGenVertexArrays(1, &textVao_); glBindVertexArray(textVao_); glGenBuffers(1, &textVbo_); glBindBuffer(GL_ARRAY_BUFFER, textVbo_);
   glEnableVertexAttribArray(0); glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 20, (void*)0); glEnableVertexAttribArray(1); glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 20, (void*)12); glBindVertexArray(0);
   // shadow map
@@ -361,7 +380,8 @@ bool Renderer::init() {
   return true;
 }
 void Renderer::shutdown() { glDeleteProgram(vox_); glDeleteProgram(wat_); glDeleteProgram(text_); glDeleteVertexArrays(1, &textVao_); glDeleteBuffers(1, &textVbo_); glDeleteProgram(lit_); glDeleteProgram(flat_); glDeleteProgram(depth_); glDeleteProgram(vdepth_); glDeleteProgram(idp_); glDeleteTextures(1, &boneTex_); if (instTex_) glDeleteTextures(1, &instTex_); instTex_ = 0; for (auto& [k, pb] : probes_) glDeleteTextures(1, &pb.tex); probes_.clear(); if (capFbo_) glDeleteFramebuffers(1, &capFbo_); freeTarget(capRT_); glDeleteFramebuffers(1, &shadowFbo_); glDeleteTextures(1, &shadowTex_);
-  for (unsigned q : {ssao_, aoBlur_, bloomPre_, bloomDown_, bloomUp_, compose_, sky_}) glDeleteProgram(q); glDeleteVertexArrays(1, &postVao_); freePost();
+  for (unsigned q : {ssao_, aoBlur_, bloomPre_, bloomDown_, bloomUp_, compose_, sky_, occProg_}) glDeleteProgram(q); glDeleteVertexArrays(1, &postVao_); freePost(); std::swap(post_, capPost_); freePost(); std::swap(post_, capPost_);
+  for (auto& [k, o] : occ_) if (o.q) glDeleteQueries(1, &o.q); occ_.clear(); for (unsigned& t : giTex_) if (t) { glDeleteTextures(1, &t); t = 0; } freeTarget(giRT_); giN_ = glm::ivec3(0); giVersion_ = (size_t)-1;
   for (GpuMesh* m : {&wireBox_, &wireCapsule_, &arrow_, &axes_, &wireCam_, &grid_}) destroy(*m); releasePrimitives(); releaseAssets(); releaseLandscapes(); }
 
 // quads for each glyph of the ImGui font atlas (the big font, index 1 when loaded), centred on the origin, 1 unit = text size
@@ -463,7 +483,7 @@ void Renderer::shadowPass(const Frame& f, const Camera& cam, bool& has) {
       M4(depth_, "uModel", it.model); bindBones(depth_, it); bindInst(depth_, it, f.time);
       bool cut = it.cutoff >= 0 && it.tex[0]; glUniform1f(U(depth_, "uCutoff"), cut ? it.cutoff : -1.f); glUniform2f(U(depth_, "uTiling"), it.tiling.x, it.tiling.y);
       if (cut) { glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, it.tex[0]); glActiveTexture(GL_TEXTURE0); }
-      glBindVertexArray(it.mesh->vao); if (it.inst) glDrawElementsInstanced(GL_TRIANGLES, it.mesh->count, GL_UNSIGNED_INT, nullptr, (int)it.inst->size()); else glDrawElements(GL_TRIANGLES, it.mesh->count, GL_UNSIGNED_INT, nullptr); }
+      drawMesh(it, lodOf(it, cam.pos, cam.proj[1][1], quality)); }
     glUniform1i(U(depth_, "uInstN"), 0); glUniform1f(U(depth_, "uWind"), 0);
     if (!f.voxels.empty()) { glUseProgram(vdepth_); M4(vdepth_, "uVP", vp);
       glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, f.voxelAtlas); glUniform1i(U(vdepth_, "uAtlas"), 1); glUniform1i(U(vdepth_, "uTiles"), f.voxelAtlas ? f.voxelTiles : 0); glActiveTexture(GL_TEXTURE0);
@@ -524,7 +544,7 @@ void Renderer::captureProbes(const Frame& f) {
   Frame g = f; g.probes.clear(); g.lines.clear(); g.texts.clear(); g.grid = false; g.viewMode = VM_Lit;
   g.draws.erase(std::remove_if(g.draws.begin(), g.draws.end(), [](const DrawItem& d) { return d.pickOnly || (d.unlit && !d.castShadow); }), g.draws.end());
   static const glm::vec3 DIR[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}}, UP[6] = {{0, -1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, -1, 0}, {0, -1, 0}};
-  Quality keepQ = quality; quality.msaa = 0; quality.ssao = false; int keepDc = drawCalls, keepTr = triangles; capturing_ = true;
+  Quality keepQ = quality; quality.msaa = 0; quality.ssao = false; int keepDc = drawCalls, keepTr = triangles; capturing_ = true; std::swap(post_, capPost_);
   for (int i = 0; i < 6; i++) {
     Camera c; c.pos = todo->pos; c.view = glm::lookAt(c.pos, c.pos + DIR[i], UP[i]); c.proj = glm::perspective(glm::radians(90.f), 1.f, 0.05f, 2000.f);
     render(g, c, S, S, &capRT_);
@@ -532,28 +552,30 @@ void Renderer::captureProbes(const Frame& f) {
     glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, pb.tex, 0);
     glBlitFramebuffer(0, 0, S, S, 0, 0, S, S, GL_COLOR_BUFFER_BIT, GL_NEAREST); }
   glBindFramebuffer(GL_FRAMEBUFFER, 0); glBindTexture(GL_TEXTURE_CUBE_MAP, pb.tex); glGenerateMipmap(GL_TEXTURE_CUBE_MAP); glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
-  capturing_ = false; quality = keepQ; drawCalls = keepDc; triangles = keepTr; pb.ready = true; pb.version = f.probeVersion;
+  std::swap(post_, capPost_); capturing_ = false; quality = keepQ; drawCalls = keepDc; triangles = keepTr; pb.ready = true; pb.version = f.probeVersion;
 }
 static bool finiteM(const glm::mat4& m) { for (int c = 0; c < 4; c++) for (int r = 0; r < 4; r++) if (!std::isfinite(m[c][r])) return false; return true; }
 void Renderer::render(const Frame& f, const Camera& cam, int w, int h, const RenderTarget* rt) {
   if (!finiteM(cam.view) || !finiteM(cam.proj) || !std::isfinite(cam.pos.x + cam.pos.y + cam.pos.z)) {   // a broken camera: no picture this frame (some drivers stop on NaN)
     static bool told = false; if (!told) { told = true; logMsg("warning: renderer: the camera's view isn't a number this frame (skipped)", LogKind::Warn); }
     glBindFramebuffer(GL_FRAMEBUFFER, rt ? rt->fbo : 0); glViewport(0, 0, std::max(w, 1), std::max(h, 1)); glClearColor(0, 0, 0, 1); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); return; }
+  if (!capturing_ && f.viewMode == VM_Lit) { if (f.world.gi) bakeGI(f); else giOn_ = false; }
   if (!capturing_ && !f.probes.empty() && f.viewMode == VM_Lit) captureProbes(f);
-  drawCalls = triangles = 0; w = std::max(w, 1); h = std::max(h, 1);
+  drawCalls = triangles = 0; if (!capturing_) lodDraws = occluded = 0; w = std::max(w, 1); h = std::max(h, 1);
   unsigned target = rt ? rt->fbo : 0;
   bool scene = f.viewMode != VM_Wire;
-  bool hasShadow = false; if (scene) shadowPass(f, cam, hasShadow);
+  bool hasShadow = false; if (scene) { if (giCapturing_) hasShadow = cascN_ > 0; else shadowPass(f, cam, hasShadow); }   // baking light: one shadow over the whole level
   glm::mat4 vp = cam.proj * cam.view;
   if (scene) {
     ensurePost(w, h); Post& P = post_;
     float expo = f.world.exposure;
     glm::vec3 bg = f.viewMode == VM_Normals ? glm::vec3(0.12f) : f.world.sky;   // the sky colour is a screen colour (like three.js scene.background)
     glm::vec3 bgLin = f.viewMode == VM_Lit ? untonemap(bg, expo) : f.viewMode == VM_Unlit ? lin(bg) : bg;
+    if (giCapturing_) bgLin = lin(f.world.skyLight) * f.world.ambient / 3.14159265f;   // baking bounced light: the open sky gives the World's sky light (as without it)
     glm::vec3 fogLin = f.viewMode == VM_Lit ? untonemap(f.world.fogColor, expo) : lin(f.world.fogColor);
     glBindFramebuffer(GL_FRAMEBUFFER, P.samples ? P.msFbo : P.hdrFbo); glViewport(0, 0, w, h);
     glClearColor(bgLin.r, bgLin.g, bgLin.b, 1); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    if (f.viewMode == VM_Lit && f.world.skyTop.x >= 0 && sky_) {   // the sky (scripts): drawn first, everything else covers it
+    if (f.viewMode == VM_Lit && f.world.skyTop.x >= 0 && sky_ && !giCapturing_) {   // the sky (scripts): drawn first, everything else covers it
       glDisable(GL_DEPTH_TEST); glDepthMask(GL_FALSE); glDisable(GL_BLEND); glUseProgram(sky_); glBindVertexArray(postVao_);
       bool under = glm::distance(f.world.sky, f.world.fogColor) < 1e-4f && f.world.fogDensity > 0.05f;   // under water: just the water colour
       M4(sky_, "uInvVP", glm::inverse(vp)); V3(sky_, "uTop", under ? bgLin : untonemap(f.world.skyTop, expo)); V3(sky_, "uHor", bgLin);
@@ -566,7 +588,8 @@ void Renderer::render(const Frame& f, const Camera& cam, int w, int h, const Ren
       glUseProgram(p); M4(p, "uVP", vp); V3(p, "uCam", cam.pos); V3(p, "uCamFwd", camFwd);
       // linear-ish sky light colours from the display colours
       V3(p, "uSky", lin(f.world.skyLight)); V3(p, "uGround", lin(f.world.groundLight));
-      glUniform1f(U(p, "uAmbient"), f.viewMode == VM_Unlit ? 1.f : f.world.ambient); glUniform1f(U(p, "uExposure"), expo);
+      bool firstBounce = giCapturing_ && giPass_ == 0;   // baking, the first time: only the sun, lights and the open sky light the scene
+      glUniform1f(U(p, "uAmbient"), f.viewMode == VM_Unlit ? 1.f : firstBounce ? 0.f : f.world.ambient); glUniform1f(U(p, "uExposure"), expo);
       glUniform1i(U(p, "uFog"), f.fog ? 1 : 0); V3(p, "uFogColor", f.world.fogColor); V3(p, "uFogLin", fogLin); glUniform1f(U(p, "uFogDensity"), f.world.fogDensity);
       glUniform1i(U(p, "uMode"), f.viewMode); glUniform1i(U(p, "uHasShadow"), hasShadow ? 1 : 0);
       glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, shadowTex_); glUniform1i(U(p, "uShadow"), 0); glUniform1i(U(p, "uEnv"), 8); glUniform1i(U(p, "uHasEnv"), 0);
@@ -578,6 +601,9 @@ void Renderer::render(const Frame& f, const Camera& cam, int w, int h, const Ren
         if (l.type == 0 || n >= 8) continue; types[n] = l.type; pos[n] = l.pos; dir[n] = l.dir; col[n] = lin(l.color); in[n] = l.intensity; rg[n] = l.range; cs[n] = l.cosOuter; n++;
       }
       glUniform1i(U(p, "uHasSun"), sun); glUniform1i(U(p, "uNumLights"), n);
+      glUniform1i(U(p, "uGIPos"), 14); glUniform1i(U(p, "uGINeg"), 15); bool gi = giOn_ && giTex_[0] && f.viewMode == VM_Lit && !firstBounce; glUniform1i(U(p, "uGI"), gi ? 1 : 0);
+      if (gi) { V3(p, "uGIMin", giMin_); V3(p, "uGIMax", giMax_); V3(p, "uGIN", glm::vec3(giN_)); glUniform1f(U(p, "uGIInt"), f.world.giIntensity);
+        glActiveTexture(GL_TEXTURE14); glBindTexture(GL_TEXTURE_3D, giTex_[0]); glActiveTexture(GL_TEXTURE15); glBindTexture(GL_TEXTURE_3D, giTex_[1]); glActiveTexture(GL_TEXTURE0); }
       if (n) { glUniform1iv(U(p, "uLType"), n, types); glUniform3fv(U(p, "uLPos"), n, &pos[0].x); glUniform3fv(U(p, "uLDir"), n, &dir[0].x); glUniform3fv(U(p, "uLColor"), n, &col[0].x);
         glUniform1fv(U(p, "uLInt"), n, in); glUniform1fv(U(p, "uLRange"), n, rg); glUniform1fv(U(p, "uLCos"), n, cs); }
     };
@@ -590,13 +616,22 @@ void Renderer::render(const Frame& f, const Camera& cam, int w, int h, const Ren
       for (auto& v : f.voxels) { if (!v.visible) continue; V3(p, "uOffset", v.offset); voxModel(p, v); glBindVertexArray(v.vao); glDrawElements(GL_TRIANGLES, v.count, GL_UNSIGNED_INT, nullptr); drawCalls++; triangles += v.count / 3; }
       glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE); glEnable(GL_BLEND); }
     unsigned p = lit_;
+    bool occOn = quality.occlusion && !capturing_ && f.viewMode != VM_Wire; std::vector<std::pair<const DrawItem*, uint64_t>> tests;
     auto meshes = [&](int pass) {   // 0 opaque, 1 transparent
       common(p);
       static const char* TN[6] = {"uBaseTex", "uRoughTex", "uMetalTex", "uNormTex", "uAoTex", "uEmisTex"};
       for (int k = 0; k < 6; k++) glUniform1i(U(p, TN[k]), 1 + k); glUniform1i(U(p, "uBones"), 7);
       { const char* LN[4] = {"uL0", "uL1", "uL2", "uL3"}; for (int k = 0; k < 4; k++) glUniform1i(U(p, LN[k]), 9 + k); }
+      std::unordered_map<uint64_t, int> nth;
       for (auto& it : f.draws) {
         if (!it.mesh || !it.mesh->vao || it.pickOnly || (pass == 0) != (it.opacity >= 0.999f && !it.blend) || !inView(vp, it)) continue;
+        // hidden behind something (the last test saw none of it): not drawn, tested again below
+        if (occOn && pass == 0 && !it.inst && !it.bones && !it.decal && it.mesh->ebo) { uint64_t key = (uint64_t)(uintptr_t)it.mesh * 1469598103934665603ull ^ ((uint64_t)it.id << 32); key ^= (uint64_t)(nth[key]++) * 0x9E3779B97F4A7C15ull;
+          Occ& o = occ_[key]; glm::vec3 c = glm::vec3(it.model * glm::vec4((it.mesh->bmin + it.mesh->bmax) * 0.5f, 1)); float sz = glm::length(glm::vec3(it.model * glm::vec4(it.mesh->bmax - it.mesh->bmin, 0)));
+          if (o.pending) { GLuint av = 0; glGetQueryObjectuiv(o.q, GL_QUERY_RESULT_AVAILABLE, &av); if (av) { GLuint r = 0; glGetQueryObjectuiv(o.q, GL_QUERY_RESULT, &r); o.hidden = r == 0; o.pending = false; } }
+          if (glm::length(c - o.c) > 0.02f * sz + 1e-3f) o.hidden = false;   // it moved: seen again until tested
+          o.c = c; o.seen = occFrame_; tests.push_back({&it, key});
+          if (o.hidden) { occluded++; continue; } }
         M4(p, "uModel", it.model); V3(p, "uColor", it.linear ? it.color : lin(it.color)); V3(p, "uEmissive", it.linear ? it.emissive : lin(it.emissive)); bindBones(p, it); bindInst(p, it, f.time);
         glUniform1f(U(p, "uMetal"), it.metal); glUniform1f(U(p, "uRough"), it.rough); glUniform1f(U(p, "uOpacity"), it.opacity); glUniform1i(U(p, "uUnlit"), it.unlit ? 1 : 0);
         int maps = 0; for (int k = 0; k < 6; k++) if (it.tex[k]) { maps |= 1 << k; glActiveTexture(GL_TEXTURE1 + k); glBindTexture(GL_TEXTURE_2D, it.tex[k]); } glActiveTexture(GL_TEXTURE0);
@@ -613,12 +648,23 @@ void Renderer::render(const Frame& f, const Camera& cam, int w, int h, const Ren
             glUniform1f(U(p, "uEnvInt"), best->intensity); glUniform1f(U(p, "uEnvMips"), 7.f); } }
         if (pass == 1) glDepthMask(GL_FALSE);
         if (it.decal) { glEnable(GL_POLYGON_OFFSET_FILL); glPolygonOffset(-2.f, -8.f); }
-        glBindVertexArray(it.mesh->vao); if (it.inst) glDrawElementsInstanced(GL_TRIANGLES, it.mesh->count, GL_UNSIGNED_INT, nullptr, (int)it.inst->size()); else glDrawElements(GL_TRIANGLES, it.mesh->count, GL_UNSIGNED_INT, nullptr);
-        drawCalls++; triangles += it.mesh->count / 3 * (it.inst ? (int)it.inst->size() : 1);
+        int lod = lodOf(it, cam.pos, cam.proj[1][1], quality); if (lod && !capturing_) lodDraws++; int tri = drawMesh(it, lod);
+        drawCalls++; triangles += tri / 3 * (it.inst ? (int)it.inst->size() : 1);
         if (it.decal) glDisable(GL_POLYGON_OFFSET_FILL);
         glDepthMask(GL_TRUE);
       } };
     meshes(0);
+    if (occOn) {   // the boxes of what could be hidden, against what was drawn: any pixel of one in front = seen next frame
+      occFrame_++; glUseProgram(occProg_); M4(occProg_, "uVP", vp); glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE); glDepthMask(GL_FALSE); glDisable(GL_BLEND);
+      const GpuMesh& box = primitive("Cube");
+      for (auto& [ip, key] : tests) { Occ& o = occ_[key]; if (o.pending) continue; const DrawItem& it = *ip;
+        glm::vec3 mn = it.mesh->bmin, mx = it.mesh->bmax, pad = (mx - mn) * 0.02f + glm::vec3(0.01f); mn -= pad; mx += pad;
+        glm::vec3 lc = glm::vec3(glm::inverse(it.model) * glm::vec4(cam.pos, 1)); if (glm::all(glm::greaterThan(lc, mn - glm::vec3(0.3f))) && glm::all(glm::lessThan(lc, mx + glm::vec3(0.3f)))) { o.hidden = false; continue; }   // the camera is in it
+        if (!o.q) glGenQueries(1, &o.q);
+        M4(occProg_, "uModel", it.model * glm::translate(glm::mat4(1), (mn + mx) * 0.5f) * glm::scale(glm::mat4(1), mx - mn));
+        glBeginQuery(GL_ANY_SAMPLES_PASSED, o.q); glBindVertexArray(box.vao); glDrawElements(GL_TRIANGLES, box.count, GL_UNSIGNED_INT, nullptr); glEndQuery(GL_ANY_SAMPLES_PASSED); o.pending = true; }
+      glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE); glDepthMask(GL_TRUE); glEnable(GL_BLEND);
+      if (occFrame_ % 120 == 0) for (auto it = occ_.begin(); it != occ_.end();) { if (occFrame_ - it->second.seen > 240) { if (it->second.q) glDeleteQueries(1, &it->second.q); it = occ_.erase(it); } else ++it; } }
     if (!f.voxelWater.empty()) {   // liquids of the block world: after everything opaque, far to near
       std::vector<const VoxelDraw*> ws; for (auto& v : f.voxelWater) ws.push_back(&v);
       std::sort(ws.begin(), ws.end(), [&](const VoxelDraw* a, const VoxelDraw* b) { return glm::length((a->mn + a->mx) * 0.5f - cam.pos) > glm::length((b->mn + b->mx) * 0.5f - cam.pos); });
@@ -737,5 +783,111 @@ unsigned Renderer::pick(const Frame& f, const Camera& cam, RenderTarget& rt, int
   unsigned char px[4] = {0}; glPixelStorei(GL_PACK_ALIGNMENT, 1); glReadPixels(x, rt.h - 1 - y, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
   glBindFramebuffer(GL_FRAMEBUFFER, 0); glEnable(GL_BLEND);
   return px[0] | (px[1] << 8) | (px[2] << 16);
+}
+}
+
+namespace pge {
+// how small it looks: a sphere round it against the height of the view. Small: fewer triangles (a group of copies: by its nearest one)
+int Renderer::lodOf(const DrawItem& it, const glm::vec3& eye, float projY, const Quality& q) {
+  if (!q.lod || !it.mesh || !it.mesh->lodCount[0]) return 0; glm::vec3 ext = (it.mesh->bmax - it.mesh->bmin) * 0.5f, c; float sc = 1;
+  if (it.inst) { c = glm::clamp(eye, it.instMin, it.instMax); if (!it.inst->empty()) sc = glm::length(glm::vec3((*it.inst)[0][0])); }
+  else { c = glm::vec3(it.model * glm::vec4((it.mesh->bmin + it.mesh->bmax) * 0.5f, 1)); sc = std::max({glm::length(glm::vec3(it.model[0])), glm::length(glm::vec3(it.model[1])), glm::length(glm::vec3(it.model[2]))}); }
+  float r = glm::length(ext) * sc, d = glm::length(c - eye); if (d <= r) return 0;
+  float s = r / d * projY * std::max(q.lodScale, 0.01f); return s < 0.05f ? 2 : s < 0.14f ? 1 : 0;
+}
+
+// ---- global illumination
+static const int GI_FACE = 16;
+glm::vec3 Renderer::giAt(const glm::vec3& p, const glm::vec3& n) const {
+  int tot = giN_.x * giN_.y * giN_.z; if (!tot || giData_.size() < (size_t)tot * 6) return glm::vec3(0);
+  glm::vec3 q = glm::clamp((p - giMin_) / glm::max(giMax_ - giMin_, glm::vec3(1e-3f)), 0.f, 1.f) * glm::vec3(giN_ - 1); glm::ivec3 i = glm::ivec3(glm::round(q)); int k = (i.z * giN_.y + i.y) * giN_.x + i.x;
+  glm::vec3 c(0), n2 = n * n; for (int a = 0; a < 3; a++) c += n2[a] * giData_[(size_t)k * 6 + (n[a] >= 0 ? a : a + 3)]; return c;
+}
+void Renderer::giUpload() {
+  int nx = giN_.x, ny = giN_.y, nz = giN_.z; std::vector<float> buf[2]; for (auto& b : buf) b.assign((size_t)3 * nx * ny * nz * 3, 0.f);
+  for (int z = 0; z < nz; z++) for (int y = 0; y < ny; y++) for (int x = 0; x < nx; x++) { int k = (z * ny + y) * nx + x;
+    for (int d = 0; d < 6; d++) { int a = d % 3, s = d / 3; size_t t = (((size_t)z * ny + y) * (3 * nx) + a * nx + x) * 3; glm::vec3 v = giData_[(size_t)k * 6 + d]; buf[s][t] = v.r; buf[s][t + 1] = v.g; buf[s][t + 2] = v.b; } }
+  for (int s = 0; s < 2; s++) { if (!giTex_[s]) { glGenTextures(1, &giTex_[s]); glBindTexture(GL_TEXTURE_3D, giTex_[s]);
+      glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR); glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+      for (GLenum w : {GL_TEXTURE_WRAP_S, GL_TEXTURE_WRAP_T, GL_TEXTURE_WRAP_R}) glTexParameteri(GL_TEXTURE_3D, w, GL_CLAMP_TO_EDGE); }
+    glBindTexture(GL_TEXTURE_3D, giTex_[s]); glPixelStorei(GL_UNPACK_ALIGNMENT, 4); glTexImage3D(GL_TEXTURE_3D, 0, GL_RGB16F, 3 * nx, ny, nz, 0, GL_RGB, GL_FLOAT, buf[s].data()); }
+  glBindTexture(GL_TEXTURE_3D, 0);
+}
+// one shadow from the sun over the whole grid (the probes use it instead of shadows round each of their views)
+void Renderer::giShadow(const Frame& f) {
+  cascN_ = 0; const LightItem* sun = nullptr; for (auto& l : f.lights) if (l.type == 0) { sun = &l; break; } if (!sun || !sun->shadows) return;
+  glm::vec3 d = glm::normalize(sun->dir), up = std::abs(d.y) > 0.99f ? glm::vec3(0, 0, 1) : glm::vec3(0, 1, 0), c = (giMin_ + giMax_) * 0.5f; float r = glm::length(giMax_ - giMin_) * 0.5f + 2;
+  glm::mat4 view = glm::lookAt(c - d * r * 2.f, c, up), vp = glm::ortho(-r, r, -r, r, 0.f, r * 4) * view;
+  glBindFramebuffer(GL_FRAMEBUFFER, shadowFbo_); glViewport(0, 0, SHADOW_SIZE, SHADOW_SIZE); glEnable(GL_SCISSOR_TEST); glScissor(0, 0, SHADOW_SIZE, SHADOW_SIZE); glClear(GL_DEPTH_BUFFER_BIT);
+  glEnable(GL_DEPTH_TEST); glDisable(GL_CULL_FACE); glDisable(GL_BLEND); glEnable(GL_POLYGON_OFFSET_FILL); glPolygonOffset(1.6f, 2.f);
+  glUseProgram(depth_); M4(depth_, "uVP", vp); glUniform1i(U(depth_, "uBaseTex"), 1); glUniform1i(U(depth_, "uBones"), 7);
+  for (auto& it : f.draws) { if (!it.castShadow || !it.mesh || !it.mesh->vao || it.opacity < 0.5f || it.pickOnly || it.unlit) continue;
+    M4(depth_, "uModel", it.model); bindBones(depth_, it); bindInst(depth_, it, f.time); glUniform1f(U(depth_, "uCutoff"), -1.f); drawMesh(it, 1); }
+  glUniform1i(U(depth_, "uInstN"), 0); glUniform1f(U(depth_, "uWind"), 0);
+  if (!f.voxels.empty()) { glUseProgram(vdepth_); M4(vdepth_, "uVP", vp); glUniform1i(U(vdepth_, "uTiles"), 0);
+    for (auto& v : f.voxels) { if (!v.castShadow) continue; M4(vdepth_, "uModel", glm::translate(glm::mat4(1), v.offset) * v.model); glBindVertexArray(v.vao); glDrawElements(GL_TRIANGLES, v.count, GL_UNSIGNED_INT, nullptr); } }
+  glDisable(GL_POLYGON_OFFSET_FILL); glDisable(GL_SCISSOR_TEST);
+  cascN_ = 1; casc_[0] = vp; split_[0] = split_[1] = split_[2] = split_[3] = 1e9f; texel_[0] = texel_[1] = texel_[2] = texel_[3] = 2 * r / SHADOW_SIZE;
+}
+void Renderer::bakeGI(const Frame& f) {
+  giOn_ = true;
+  // what doesn't move (no bones), seen: the grid's box
+  auto solid = [](const DrawItem& d) { return d.mesh && d.mesh->vao && !d.pickOnly && !d.unlit && !d.bones && !d.inst && d.opacity >= 0.999f && !d.blend && !d.decal; };
+  if (giVersion_ != f.probeVersion || !giTotal()) {
+    glm::vec3 mn(1e9f), mx(-1e9f);
+    for (auto& d : f.draws) { if (!solid(d)) continue; for (int k = 0; k < 8; k++) { glm::vec3 w = glm::vec3(d.model * glm::vec4((k & 1) ? d.mesh->bmax.x : d.mesh->bmin.x, (k & 2) ? d.mesh->bmax.y : d.mesh->bmin.y, (k & 4) ? d.mesh->bmax.z : d.mesh->bmin.z, 1)); mn = glm::min(mn, w); mx = glm::max(mx, w); } }
+    for (auto& v : f.voxels) { mn = glm::min(mn, v.mn); mx = glm::max(mx, v.mx); }
+    if (mn.x > mx.x) { giN_ = glm::ivec3(0); giVersion_ = f.probeVersion; giOn_ = false; return; }
+    // near the camera when the level is big (60 m round it, 40 m high)
+    glm::vec3 e = f.eye; mn = glm::max(mn, glm::vec3(e.x - 60, mn.y, e.z - 60)); mx = glm::min(mx, glm::vec3(e.x + 60, mn.y + 40, e.z + 60)); mx = glm::max(mx, mn + glm::vec3(1));
+    mn -= glm::vec3(0.5f); mx += glm::vec3(0.5f, 2.f, 0.5f); glm::vec3 ext = mx - mn; float s = 1.5f; auto cnt = [&](float sp) { glm::ivec3 n = glm::max(glm::ivec3(glm::floor(ext / sp)) + 1, glm::ivec3(2)); return n; };
+    while (true) { glm::ivec3 n = cnt(s); if ((long)n.x * n.y * n.z <= 384) break; s *= 1.12f; }
+    glm::ivec3 n = cnt(s); bool same = n == giN_ && glm::length(mn - giMin_) < 1e-3f && glm::length(mx - giMax_) < 1e-3f;
+    if (!same) { giN_ = n; giMin_ = mn; giMax_ = mx; int tot = n.x * n.y * n.z; giData_.assign((size_t)tot * 6, glm::vec3(0)); giValid_.assign(tot, 0);
+      glm::vec3 sky = lin(f.world.skyLight) * f.world.ambient, gr = lin(f.world.groundLight) * f.world.ambient, side = (sky + gr) * 0.5f;   // to start with: the sky light as without it
+      for (int k = 0; k < tot; k++) { glm::vec3* q = &giData_[(size_t)k * 6]; q[0] = q[2] = q[3] = q[5] = side; q[1] = sky; q[4] = gr; }
+      giUpload(); }
+    giNext_ = 0; giPass_ = 0; giVersion_ = f.probeVersion; }
+  if (giPass_ >= 2) return;
+  auto t0 = std::chrono::steady_clock::now(); int tot = giTotal();
+  Frame g = f; g.probes.clear(); g.lines.clear(); g.texts.clear(); g.grid = false; g.viewMode = VM_Lit; g.world.post = PostProcess(); g.world.gi = true;
+  g.draws.erase(std::remove_if(g.draws.begin(), g.draws.end(), [](const DrawItem& d) { return d.pickOnly || (d.unlit && !d.castShadow); }), g.draws.end());
+  static const glm::vec3 DIR[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}}, UP[6] = {{0, -1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, -1, 0}, {0, -1, 0}};
+  static const glm::vec3 AX[6] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}, {-1, 0, 0}, {0, -1, 0}, {0, 0, -1}};
+  Quality keepQ = quality; quality.msaa = 0; quality.ssao = false; quality.bloom = false; quality.lod = true; int keepDc = drawCalls, keepTr = triangles; int keepLod = lodDraws, keepOcc = occluded;
+  capturing_ = true; giCapturing_ = true; std::swap(post_, capPost_); resizeTarget(giRT_, GI_FACE, GI_FACE); giShadow(g);
+  std::vector<float> px((size_t)GI_FACE * GI_FACE * 4); int done = 0;
+  while (giPass_ < 2 && done < 24) {
+    int k = giNext_; glm::ivec3 ix(k % giN_.x, (k / giN_.x) % giN_.y, k / (giN_.x * giN_.y)); glm::vec3 pos = giMin_ + (giMax_ - giMin_) * glm::vec3(ix) / glm::vec3(giN_ - 1);
+    bool inside = false;   // in something solid: it would see only the inside; its light comes from its neighbours
+    for (auto& d : f.draws) { if (!solid(d)) continue; glm::vec3 l = glm::vec3(glm::inverse(d.model) * glm::vec4(pos, 1)); glm::vec3 m = (d.mesh->bmax - d.mesh->bmin) * 0.02f;
+      if (glm::all(glm::greaterThan(l, d.mesh->bmin + m)) && glm::all(glm::lessThan(l, d.mesh->bmax - m))) { inside = true; break; } }
+    if (!inside) { glm::vec3 E[6] = {}; float W[6] = {};
+      for (int i = 0; i < 6; i++) {
+        Camera c; c.pos = pos; c.view = glm::lookAt(c.pos, c.pos + DIR[i], UP[i]); c.proj = glm::perspective(glm::radians(90.f), 1.f, 0.05f, 2000.f);
+        render(g, c, GI_FACE, GI_FACE, &giRT_);
+        glBindTexture(GL_TEXTURE_2D, post_.hdrTex); glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_FLOAT, px.data()); glBindTexture(GL_TEXTURE_2D, 0);
+        glm::mat3 inv = glm::transpose(glm::mat3(c.view));   // view space -> world
+        for (int y = 0; y < GI_FACE; y++) for (int x = 0; x < GI_FACE; x++) { float u = (x + 0.5f) / GI_FACE * 2 - 1, v = (y + 0.5f) / GI_FACE * 2 - 1, r2 = 1 + u * u + v * v;
+          glm::vec3 dir = glm::normalize(inv * glm::vec3(u, v, -1)); float dw = 1.f / (r2 * std::sqrt(r2)); const float* q = &px[((size_t)y * GI_FACE + x) * 4];
+          glm::vec3 L(std::min(q[0], 64.f), std::min(q[1], 64.f), std::min(q[2], 64.f)); if (!std::isfinite(L.x + L.y + L.z)) continue;
+          for (int a = 0; a < 6; a++) { float cs = glm::dot(dir, AX[a]); if (cs > 0) { E[a] += L * cs * dw; W[a] += dw; } } } }
+      // irradiance: the light from each direction by its cosine over the half sphere (sum of cos * solid angle = pi)
+      float hemis = 0; for (int a = 0; a < 6; a++) hemis = std::max(hemis, W[a]);
+      for (int a = 0; a < 6; a++) giData_[(size_t)k * 6 + a] = W[a] > 0 ? E[a] / W[a] * 2.f * 3.14159265f : glm::vec3(0);
+      giValid_[k] = 1; (void)hemis; }
+    else giValid_[k] = 0;
+    done++; if (++giNext_ >= tot) {   // a pass done: probes inside things take their neighbours' light
+      for (int it = 0; it < 6; it++) { std::vector<uint8_t> nv = giValid_;
+        for (int z = 0; z < giN_.z; z++) for (int y = 0; y < giN_.y; y++) for (int x = 0; x < giN_.x; x++) { int kk = (z * giN_.y + y) * giN_.x + x; if (giValid_[kk]) continue; glm::vec3 acc[6] = {}; int cn = 0;
+          for (int a = 0; a < 6; a++) { glm::ivec3 o(x, y, z); o[a % 3] += a < 3 ? 1 : -1; if (o.x < 0 || o.y < 0 || o.z < 0 || o.x >= giN_.x || o.y >= giN_.y || o.z >= giN_.z) continue; int j = (o.z * giN_.y + o.y) * giN_.x + o.x;
+            if (!giValid_[j]) continue; for (int d = 0; d < 6; d++) acc[d] += giData_[(size_t)j * 6 + d]; cn++; }
+          if (cn) { for (int d = 0; d < 6; d++) giData_[(size_t)kk * 6 + d] = acc[d] / (float)cn; nv[kk] = 2; } }
+        giValid_ = nv; }
+      for (auto& v : giValid_) if (v == 2) v = 0;
+      giNext_ = 0; giPass_++; }
+    if (std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() > 6) break; }
+  std::swap(post_, capPost_); capturing_ = false; giCapturing_ = false; cascN_ = 0; quality = keepQ; drawCalls = keepDc; triangles = keepTr; lodDraws = keepLod; occluded = keepOcc;
+  giUpload();
 }
 }

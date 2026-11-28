@@ -97,7 +97,8 @@ static GpuMesh uploadModel(const std::vector<MVert>& v, const std::vector<unsign
   glEnableVertexAttribArray(3); glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(MVert), (void*)32);
   glEnableVertexAttribArray(4); glVertexAttribIPointer(4, 4, GL_UNSIGNED_SHORT, sizeof(MVert), (void*)36);
   glEnableVertexAttribArray(5); glVertexAttribPointer(5, 4, GL_FLOAT, GL_FALSE, sizeof(MVert), (void*)44);
-  glGenBuffers(1, &g.ebo); glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, g.ebo); glBufferData(GL_ELEMENT_ARRAY_BUFFER, idx.size() * 4, idx.data(), GL_STATIC_DRAW);
+  std::vector<unsigned> all = withLods(g, v.data(), sizeof(MVert), 0, 12, v.size(), idx);   // far away: fewer triangles
+  glGenBuffers(1, &g.ebo); glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, g.ebo); glBufferData(GL_ELEMENT_ARRAY_BUFFER, all.size() * 4, all.data(), GL_STATIC_DRAW);
   glBindVertexArray(0); return g;
 }
 

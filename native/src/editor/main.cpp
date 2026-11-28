@@ -255,7 +255,7 @@ int main(int argc, char** argv) {
           check(ed.game->decalCount() == 20, "…decals (blood, bullet holes, scorch) drawn"); ed.shotFile = mtest + "/vehicle-play.bmp"; }
         if (carDone && frame == carDone + 4) ed.stopPlay();
         // Foliage painted with the mouse, a flag of cloth, a wall that breaks: placed from Place Actors, then played
-        static std::string folId, wallId, flagId; static int worldAt = 0, painted = 0;
+        static std::string folId, wallId, flagId; static int worldAt = 0, painted = 0; static int rendAt = 0, giWait = 0, tris1 = 0;
         if (carDone && frame == carDone + 8) { worldAt = frame; ed.sel.clear();
           glm::vec3 at(0, 0, -6); pge::Actor& fo = ed.addActor("Foliage", "", &at); folId = fo.id; check(fo.fol && fo.fol->types.size() == 1, "Place Actors > Foliage: a Foliage actor with one kind");
           fo.fol->types[0].mesh = "Cone"; fo.fol->types[0].density = 0.8f; fo.fol->types[0].wind = 0.6f; ed.folType = 0; ed.folTool = 0; ed.folRadius = 4; ed.sel = folId;
@@ -278,6 +278,39 @@ int main(int argc, char** argv) {
           check(b.is_array() && b[1].get<float>() < 3.5f - 1.0f, "Play: the flag hangs and moves in the wind"); (void)pieces; ed.shotFile = mtest + "/world-play.bmp"; }
         if (worldAt && frame == worldAt + 58) ed.stopPlay();
         if (worldAt && frame == worldAt + 62) { pge::Actor* fo = ed.actor(folId); check(fo && fo->fol && fo->fol->count() == painted, "after Play the painted foliage is still there");
+          rendAt = frame + 2; }
+        // the renderer: far meshes with fewer triangles (LOD), what a wall hides not drawn (occlusion), light bounced off walls (GI)
+        auto cube = [&](glm::vec3 p, glm::vec3 sc, const std::string& mat = "") { pge::Actor& c = ed.addActor("StaticMesh", "Cube", &p); c.p = p; c.s = sc; if (!mat.empty()) c.material = mat; return c.id; };
+        if (rendAt && frame == rendAt) { auto& A = ed.L().actors; for (auto it = A.begin(); it != A.end();) { if (it->type != "DirectionalLight" && it->type != "PlayerStart") it = A.erase(it); else ++it; }
+          ed.sel.clear(); cube({0, -0.5f, -60}, {30, 1, 140}); for (int i = 0; i < 40; i++) { glm::vec3 at(0, 1, -6.f - i * 5.f); pge::Actor& b = ed.addActor("StaticMesh", "Sphere", &at); b.p = at; b.s = glm::vec3(2); }
+          ed.R.quality.occlusion = false; ed.camPos = {0, 2, 5}; ed.camYaw = 0; ed.camPitch = 0; ed.touch(); }
+        if (rendAt && frame == rendAt + 4) { check(ed.R.lodDraws >= 20, "LOD: far spheres are drawn with fewer triangles (" + std::to_string(ed.R.lodDraws) + " of 40)"); tris1 = ed.R.triangles; ed.R.quality.lod = false; ed.shotFile = mtest + "/lod-on.bmp"; }
+        if (rendAt && frame == rendAt + 6) { check(ed.R.triangles > tris1 * 1.5, "…far fewer triangles drawn (" + std::to_string(tris1) + " instead of " + std::to_string(ed.R.triangles) + ")"); ed.shotFile = mtest + "/lod-off.bmp"; }
+        if (rendAt && frame == rendAt + 8) { double dd = 0; cornerLum(mtest + "/lod-on.bmp", &dd, mtest + "/lod-off.bmp"); check(dd < 2.5, "…and it looks the same (" + std::to_string(dd) + " per pixel)"); ed.R.quality.lod = true;
+          cube({0, 10, -3}, {60, 30, 1}); ed.R.quality.occlusion = true; ed.touch(); }
+        if (rendAt && frame == rendAt + 16) { check(ed.R.occluded >= 30, "Occlusion: what is behind a wall isn't drawn (" + std::to_string(ed.R.occluded) + " of 40)"); ed.shotFile = mtest + "/occ-on.bmp"; }
+        if (rendAt && frame == rendAt + 17) ed.R.quality.occlusion = false;
+        if (rendAt && frame == rendAt + 19) ed.shotFile = mtest + "/occ-off.bmp";
+        if (rendAt && frame == rendAt + 21) { double dd = 0; cornerLum(mtest + "/occ-on.bmp", &dd, mtest + "/occ-off.bmp"); check(dd < 0.5, "…the picture is the same (" + std::to_string(dd) + " per pixel)"); ed.R.quality.occlusion = true;
+          ed.camPos = {0, 4, -4.6f}; }   // past the wall: they are in view again
+        if (rendAt && frame == rendAt + 25) check(ed.R.occluded == 0, "…the wall behind the camera: all drawn again (" + std::to_string(ed.R.occluded) + " hidden)");
+        static glm::vec3 roomC(0);
+        if (rendAt && frame == rendAt + 27) { auto& A = ed.L().actors; for (auto it = A.begin(); it != A.end();) { if (it->type != "DirectionalLight" && it->type != "PlayerStart") it = A.erase(it); else ++it; }
+          std::string red = ed.newMaterial("M_RedWall"); ed.P.materials[red].color = {0.9f, 0.05f, 0.05f}; ed.P.materials[red].roughness = 0.9f;
+          cube({0, -0.5f, 0}, {24, 1, 24}); cube({3, 2, 0}, {0.4f, 4, 10}, red);
+          roomC = {-6, 1.6f, 0}; cube(roomC + glm::vec3(0, 1.75f, 0), {5.6f, 0.3f, 5.6f}); cube(roomC + glm::vec3(2.65f, 0, 0), {0.3f, 3.5f, 5.6f}); cube(roomC + glm::vec3(-2.65f, 0, 0), {0.3f, 3.5f, 5.6f});
+          cube(roomC + glm::vec3(0, 0, 2.65f), {5.6f, 3.5f, 0.3f}); cube(roomC + glm::vec3(0, 0, -2.65f), {5.6f, 3.5f, 0.3f});
+          ed.L().world.gi = false; ed.camPos = {-1, 5, 12}; ed.camYaw = 0; ed.camPitch = -0.35f; ed.touch(); }
+        if (rendAt && frame == rendAt + 30) ed.shotFile = mtest + "/gi-off.bmp";
+        if (rendAt && frame == rendAt + 32) { ed.L().world.gi = true; giWait = frame; }
+        if (giWait && frame > giWait && (ed.R.giFinished() || frame > giWait + 4000) && giWait > 0) {
+          check(ed.R.giFinished(), "Global Illumination: worked out (" + std::to_string(ed.R.giDone()) + " of " + std::to_string(ed.R.giTotal()) + " probes, " + std::to_string(frame - giWait) + " frames)");
+          glm::vec3 byRed = ed.R.giAt({2.2f, 0.4f, 0}, {1, 0, 0}), open = ed.R.giAt({-1, 0.4f, 6}, {1, 0, 0}), inRoom = ed.R.giAt(roomC, {0, 1, 0}), outside = ed.R.giAt({-1, 1.6f, 6}, {0, 1, 0});
+          auto f3 = [](glm::vec3 v) { char b[64]; std::snprintf(b, sizeof b, "%.2f %.2f %.2f", v.x, v.y, v.z); return std::string(b); };
+          check(byRed.r > byRed.g * 1.6f && byRed.r > open.r * 0.5f, "…a red wall lights what is by it red (" + f3(byRed) + ", in the open " + f3(open) + ")");
+          check(glm::length(inRoom) < glm::length(outside) * 0.35f, "…inside a closed room it is dark (" + f3(inRoom) + ", outside " + f3(outside) + ")");
+          ed.shotFile = mtest + "/gi-on.bmp"; giWait = -frame; }
+        if (giWait < 0 && frame == -giWait + 3) { double dd = 0; cornerLum(mtest + "/gi-on.bmp", &dd, mtest + "/gi-off.bmp"); check(dd > 1.0, "…and the picture shows it (" + std::to_string(dd) + " per pixel)");
           check(glGetError() == GL_NO_ERROR, "no OpenGL errors");
           std::ofstream o(fs::u8path(mtest + "/model-result.txt")); o << (code == 0 ? "PASS\n" : "FAIL\n") << log; for (auto& l : pge::logLines()) o << "[" << l.time << "] " << l.text << "\n"; break; }
         if (landCheckAt && frame > landCheckAt + 6000) { check(false, "the gameplay part finished in time"); std::ofstream o(fs::u8path(mtest + "/model-result.txt")); o << "FAIL\n" << log; break; }

@@ -1,6 +1,9 @@
 #include "mesh.h"
 #include "gl.h"
 #include <map>
+#include <unordered_map>
+#include <cstring>
+#include <algorithm>
 #include <cmath>
 
 namespace pge {
@@ -59,14 +62,41 @@ MeshData makePrimitive(const std::string& name) {
   bounds(m); return m;
 }
 
-GpuMesh upload(const MeshData& d, bool lines) {
+std::vector<unsigned> simplifyIndices(const void* verts, size_t stride, size_t posOff, size_t nrmOff, size_t nv, const std::vector<unsigned>& idx, float keep, glm::vec3 bmin, glm::vec3 bmax) {
+  const char* base = (const char*)verts; size_t nt = idx.size() / 3; if (nt < 4 || nv == 0) return idx;
+  auto P = [&](size_t v) { glm::vec3 p; std::memcpy(&p, base + v * stride + posOff, 12); return p; };
+  auto N = [&](size_t v) { glm::vec3 n; std::memcpy(&n, base + v * stride + nrmOff, 12); return n; };
+  std::vector<uint8_t> face(nv); for (size_t v = 0; v < nv; v++) { glm::vec3 n = N(v), a = glm::abs(n); int ax = a.x >= a.y && a.x >= a.z ? 0 : a.y >= a.z ? 1 : 2; face[v] = (uint8_t)(ax * 2 + (n[ax] < 0)); }
+  glm::vec3 ext = glm::max(bmax - bmin, glm::vec3(1e-4f)); float size = std::max({ext.x, ext.y, ext.z});
+  std::vector<unsigned> best = idx, out, map(nv); std::unordered_map<uint64_t, unsigned> rep; rep.reserve(nv);
+  auto run = [&](float cell) { rep.clear(); out.clear();
+    for (size_t v = 0; v < nv; v++) { glm::vec3 q = glm::floor((P(v) - bmin) / cell); uint64_t key = ((uint64_t)(uint32_t)(int)q.x * 73856093ull) ^ ((uint64_t)(uint32_t)(int)q.y * 19349663ull << 20) ^ ((uint64_t)(uint32_t)(int)q.z * 83492791ull << 40) ^ ((uint64_t)face[v] << 61);
+      auto it = rep.find(key); if (it == rep.end()) { rep.emplace(key, (unsigned)v); map[v] = (unsigned)v; } else map[v] = it->second; }
+    for (size_t t = 0; t + 2 < idx.size(); t += 3) { unsigned a = map[idx[t]], b = map[idx[t + 1]], c = map[idx[t + 2]]; if (a == b || b == c || a == c) continue; out.push_back(a); out.push_back(b); out.push_back(c); } };
+  // the cell size for about `keep` of the triangles: halve the range a few times
+  float lo = size / 1024, hi = size / 2; size_t want = (size_t)(nt * keep);
+  for (int it = 0; it < 10; it++) { float mid = std::sqrt(lo * hi); run(mid); if (out.size() / 3 > want) lo = mid; else { hi = mid; if (out.size() >= 12) best = out; } }
+  return best;
+}
+std::vector<unsigned> withLods(GpuMesh& g, const void* verts, size_t stride, size_t posOff, size_t nrmOff, size_t nv, const std::vector<unsigned>& idx) {
+  g.lodCount[0] = g.lodCount[1] = 0; std::vector<unsigned> all = idx; size_t nt = idx.size() / 3; if (nt < 300) return all;
+  glm::vec3 mn(1e9f), mx(-1e9f); for (size_t v = 0; v < nv; v++) { glm::vec3 p; std::memcpy(&p, (const char*)verts + v * stride + posOff, 12); mn = glm::min(mn, p); mx = glm::max(mx, p); }
+  const float keep[2] = {0.45f, 0.15f}; size_t prev = nt;
+  for (int l = 0; l < 2; l++) { std::vector<unsigned> s = simplifyIndices(verts, stride, posOff, nrmOff, nv, idx, keep[l], mn, mx); size_t st = s.size() / 3;
+    if (st == 0 || st > prev * 0.8) break;   // it didn't get much simpler (already low poly)
+    g.lodFirst[l] = (unsigned)all.size(); g.lodCount[l] = (int)s.size(); all.insert(all.end(), s.begin(), s.end()); prev = st; }
+  if (g.lodCount[0] && !g.lodCount[1]) { g.lodCount[1] = g.lodCount[0]; g.lodFirst[1] = g.lodFirst[0]; }
+  return all;
+}
+GpuMesh upload(const MeshData& d, bool lines, bool lods) {
   GpuMesh g; g.lines = lines; g.bmin = d.bmin; g.bmax = d.bmax;
   glGenVertexArrays(1, &g.vao); glBindVertexArray(g.vao);
   glGenBuffers(1, &g.vbo); glBindBuffer(GL_ARRAY_BUFFER, g.vbo); glBufferData(GL_ARRAY_BUFFER, d.v.size() * sizeof(Vertex), d.v.data(), GL_STATIC_DRAW);
   glEnableVertexAttribArray(0); glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
   glEnableVertexAttribArray(1); glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)12);
   glEnableVertexAttribArray(2); glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)24);
-  if (!d.i.empty()) { glGenBuffers(1, &g.ebo); glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, g.ebo); glBufferData(GL_ELEMENT_ARRAY_BUFFER, d.i.size() * 4, d.i.data(), GL_STATIC_DRAW); g.count = (int)d.i.size(); }
+  if (!d.i.empty()) { std::vector<unsigned> all = lods && !lines ? withLods(g, d.v.data(), sizeof(Vertex), 0, 12, d.v.size(), d.i) : d.i;
+    glGenBuffers(1, &g.ebo); glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, g.ebo); glBufferData(GL_ELEMENT_ARRAY_BUFFER, all.size() * 4, all.data(), GL_STATIC_DRAW); g.count = (int)d.i.size(); }
   else g.count = (int)d.v.size();
   glBindVertexArray(0); return g;
 }
@@ -91,7 +121,7 @@ GpuMesh& dynamicMesh(const std::string& name, const MeshData& m) {
     glBindBuffer(GL_ARRAY_BUFFER, it->second.vbo); glBufferSubData(GL_ARRAY_BUFFER, 0, m.v.size() * sizeof(Vertex), m.v.data()); glBindBuffer(GL_ARRAY_BUFFER, 0);
     it->second.bmin = m.bmin; it->second.bmax = m.bmax; return it->second; }
   if (it != g_prims.end()) destroy(it->second);
-  return g_prims[name] = upload(m);
+  return g_prims[name] = upload(m, false, false);
 }
 void releasePrimitives() { for (auto& [n, m] : g_prims) destroy(m); g_prims.clear(); }
 }

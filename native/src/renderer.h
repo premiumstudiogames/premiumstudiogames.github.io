@@ -1,4 +1,5 @@
 #pragma once
+#include <unordered_map>
 #include <vector>
 #include <string>
 #include <glm/glm.hpp>
@@ -53,7 +54,15 @@ public:
   const GpuMesh& gridMesh() const { return grid_; }
   int drawCalls = 0, triangles = 0;
   // picture quality (the console can lower it): MSAA samples (0 = off), ambient occlusion, bloom, how far sun shadows reach
-  struct Quality { int msaa = 4; bool ssao = true, bloom = true; float aoAmount = 0.8f, aoRadius = 0.6f, bloomAmount = 0.07f, bloomThreshold = 1.0f, shadowDistance = 160.f; } quality;
+  // lod: far meshes with fewer triangles; occlusion: what is hidden behind other things isn't drawn (tested on the GPU, a frame late)
+  struct Quality { int msaa = 4; bool ssao = true, bloom = true, lod = true, occlusion = true; float aoAmount = 0.8f, aoRadius = 0.6f, bloomAmount = 0.07f, bloomThreshold = 1.0f, shadowDistance = 160.f, lodScale = 1; } quality;
+  int lodDraws = 0, occluded = 0;   // this frame: draws with fewer triangles, things not drawn because something hides them
+  // global illumination (World Settings): light bounced off surfaces, from a grid of probes around the level (each sees the scene
+  // around it, a few a frame; twice: the second time with the light the first time gave, two bounces). How far it has got: done / total
+  int giDone() const { return giPass_ >= 2 ? giTotal() : (giPass_ * giTotal() + giNext_) / 2; } int giTotal() const { return giN_.x * giN_.y * giN_.z; }
+  bool giFinished() const { return giTotal() > 0 && giPass_ >= 2; }
+  glm::vec3 giAt(const glm::vec3& p, const glm::vec3& n) const;   // the bounced light at a place facing a way (tests)
+  static int lodOf(const DrawItem& it, const glm::vec3& eye, float projY, const Quality& q);
 private:
   static constexpr int SHADOW_SIZE = 2048;   // one cascade; the shadow texture holds 2 x 2
   struct Post { int w = 0, h = 0, samples = 0, want = -1; unsigned msFbo = 0, msColor = 0, msDepth = 0, hdrFbo = 0, hdrTex = 0, depthTex = 0, aoFbo[2] = {0, 0}, aoTex[2] = {0, 0};
@@ -68,6 +77,13 @@ private:
   // reflection captures: a cube picture of the scene around each one (mip levels = rougher), made once (one a frame)
   struct Probe { unsigned tex = 0; bool ready = false; size_t version = 0; }; std::map<std::string, Probe> probes_; RenderTarget capRT_; unsigned capFbo_ = 0; bool capturing_ = false;
   void captureProbes(const Frame& f);
+  Post capPost_;   // captures draw at their own size without remaking the screen's buffers
+  // occlusion queries, kept by what is drawn (its actor, mesh, which one): hidden = the last test saw no pixel of its box
+  struct Occ { unsigned q = 0; bool pending = false, hidden = false; glm::vec3 c{0}; int seen = 0; }; std::unordered_map<uint64_t, Occ> occ_; unsigned occProg_ = 0; int occFrame_ = 0;
+  // global illumination: the grid, its light (6 directions a probe: +x +y +z then -x -y -z), the textures, where the baking is
+  glm::vec3 giMin_{0}, giMax_{0}; glm::ivec3 giN_{0}; std::vector<glm::vec3> giData_; std::vector<uint8_t> giValid_; unsigned giTex_[2] = {0, 0};
+  int giNext_ = 0, giPass_ = 0; size_t giVersion_ = (size_t)-1; bool giCapturing_ = false; bool giOn_ = false; RenderTarget giRT_;
+  void bakeGI(const Frame& f); void giShadow(const Frame& f); void giUpload();
   static std::string probeKey(const ProbeItem& p);
 public:
   int probesReady() const { int n = 0; for (auto& [k, p] : probes_) n += p.ready; return n; }
