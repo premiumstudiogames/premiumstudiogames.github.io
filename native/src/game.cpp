@@ -290,7 +290,7 @@ void Game::rumble(float lo, float hi, float sec) { if (pad_) SDL_GameControllerR
 void Game::update(float dt) {
   if (!started_) return;
   dt = std::min(dt, 0.05f);
-  netPump();
+  netPump(); netFrame(dt);   // online: others' actors and characters, ours sent
   // the game's menus: animations, then what the player did in them goes to the scripts' handlers
   if (ui_) { ui_->update(dt); auto ev = ui_->takeEvents();
     if (!ev.empty()) { json a = json::array(); for (auto& e : ev) a.push_back({{"id", e.id}, {"type", e.type}, {"data", e.data}, {"path", e.path}}); scripts_->uiDispatch(a.dump()); scripts_->runJobs(); }
@@ -490,6 +490,8 @@ void Game::lookAt(const std::string& id, const glm::vec3& t) {   // like three.j
 glm::vec3 Game::worldPos(const std::string& id) { Obj* o = get(id); return o ? glm::vec3(world(*o)[3]) : glm::vec3(0); }
 void Game::destroyRec(const std::string& id) {
   Obj* o = get(id); if (!o) return;
+  if (netOn() && !fromNet_ && replicated(*o)) netSend({{"k", "x"}, {"i", id}, {"f", netMe()}});   // gone for everyone
+  for (auto it = avatars_.begin(); it != avatars_.end(); ++it) if (it->second == id) { avatars_.erase(it); break; }
   if (driving_ == id) exitVehicle();
   o->alive = false;
   if (o->vehicle != NO_BODY) { phys_->removeVehicle(o->vehicle); o->vehicle = NO_BODY; }
@@ -516,6 +518,8 @@ std::string Game::spawn(const std::string& mesh, const std::string& opts) {
   json o = json::object(); try { o = json::parse(opts); } catch (...) {}
   bool known = isModelFile(mesh); for (int i = 0; i < MESH_COUNT; i++) known |= mesh == MESHES[i];
   Actor a = newActor("StaticMesh", o.value("name", mesh)); a.mesh = known ? mesh : "Cube"; if (isModelFile(mesh)) a.material.clear();
+  if (o.contains("id") && o["id"].is_string() && !get(o["id"].get<std::string>())) a.id = o["id"];
+  a.physics.replicates = o.value("replicate", false);
   if (o.contains("animation") && o["animation"].is_string()) a.anim = o["animation"];
   a.p = jv(o.value("position", json()), {0, 1, 0}); a.s = jv(o.value("scale", json()), glm::vec3(1)); glm::vec3 rot = jv(o.value("rotation", json()), glm::vec3(0));
   if (o.contains("material") && o["material"].is_string()) a.material = o["material"];
@@ -526,6 +530,9 @@ std::string Game::spawn(const std::string& mesh, const std::string& opts) {
   if (!a.anim.empty()) { ModelRef m = model(a.mesh); int ai = m ? m->anim(a.anim) : -1; if (ai >= 0) ref.anim.play(ai, true, 1, 0); }
   if (o.contains("vehicle") && (o["vehicle"].is_object() || (o["vehicle"].is_boolean() && o["vehicle"].get<bool>()))) gameplay("vehicleMake", a.id, o["vehicle"].is_object() ? o["vehicle"].dump() : "{}");
   if (o.contains("parent") && o["parent"].is_string()) { json at = {{"to", o["parent"]}, {"keepWorld", true}}; if (o.contains("bone")) at["bone"] = o["bone"]; gameplay("attach", a.id, at.dump()); }
+  if (netOn() && !fromNet_ && (a.physics.simulate || a.physics.replicates || ref.a.vehicle.enabled)) {   // online: it appears for everyone, moved by whoever spawned it
+    ref.repl = true; ref.owner = netMe(); json sp = {{"k", "sp"}, {"i", a.id}, {"mesh", a.mesh}, {"mat", a.material}, {"s", {a.s.x, a.s.y, a.s.z}}, {"p", {a.p.x, a.p.y, a.p.z}}, {"n", a.name}, {"ph", a.physics.simulate}, {"veh", ref.a.vehicle.enabled}, {"own", netMe()}, {"f", netMe()}};
+    if (o.contains("color") && o["color"].is_string()) sp["col"] = o["color"]; netSend(sp); }
   if (o.contains("script") && o["script"].is_string()) { auto it = project_.scripts.find(o["script"]); if (it != project_.scripts.end()) { ref.a.script = it->first; ref.beh = scripts_->attach(a.id, a.name, it->second.name, it->second.code); scripts_->call(ref.beh, EV_Start); } }
   return a.id;
 }
@@ -696,7 +703,7 @@ std::string Game::net(const std::string& op, const std::string& a, const std::st
   if (op == "stop") { n.stop(); return ""; }
   if (op == "send") return n.send(a, b.empty() ? -1 : std::atoi(b.c_str())) ? "1" : "0";
   if (op == "kick") { n.kick(std::atoi(a.c_str())); return ""; }
-  if (op == "take") { json r = json::array(); for (auto& e : n.take()) r.push_back({{"type", e.type}, {"id", e.id}, {"data", e.data}}); return r.dump(); }
+  if (op == "take") { netDrain(); json r = json::array(); auto ev = std::move(netInbox_); netInbox_.clear(); for (auto& e : ev) r.push_back({{"type", e.type}, {"id", e.id}, {"data", e.data}}); return r.dump(); }
   if (op == "lan") { n.lanSearch(a == "1"); return ""; }
   if (op == "list") { json r = json::array(); for (auto& g : n.lan(wallClock())) r.push_back({{"name", g.name}, {"address", g.address}, {"port", g.port}, {"players", g.players}, {"max", g.max}, {"info", g.info}}); return r.dump(); }
   if (op == "info") { n.setInfo(a, std::atoi(b.c_str())); return ""; }

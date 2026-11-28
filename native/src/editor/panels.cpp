@@ -402,6 +402,7 @@ void Editor::drawDetails() {
       rowLabel("Simulate Physics"); ch |= ImGui::Checkbox("##sim", &a->physics.simulate);
       rowLabel("Mass (kg)"); ImGui::BeginDisabled(!a->physics.simulate); ch |= ImGui::DragFloat("##mass", &a->physics.mass, 0.1f, 0.01f, 10000.f, "%.2f"); ImGui::EndDisabled();
       rowLabel("Collision"); ch |= ImGui::Checkbox("##col", &a->physics.collision);
+      rowLabel("Replicates"); ch |= ImGui::Checkbox("##repl", &a->physics.replicates); if (ImGui::IsItemHovered()) ImGui::SetTooltip("Online: kept the same for every player (moved by the host's scripts).\nPhysics actors and cars always are.");
       if (isModelFile(a->mesh) && a->physics.simulate) { ModelRef md = model(a->mesh); if (md && !md->skins.empty()) { rowLabel(""); ImGui::TextDisabled("A character model: it falls as a ragdoll."); } }
       ImGui::EndTable(); }
     // a car: Unreal's Wheeled Vehicle (the player gets in with E)

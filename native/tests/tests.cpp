@@ -471,6 +471,55 @@ int main(int argc, char** argv) {
     for (auto& a : q.levels[0].second.actors) if (a.name == "Flat") a.script = "SC_AnimApi";
     Game g2(q, "Main"); g2.start(); std::string hv; for (auto& x : g2.hudLines()) if (x.first == "a") hv = x.second; CHECK(hv == "true,true,true,true,false,true", ("the script API: " + hv).c_str());
   }
+  {   // online: two games on this computer kept the same (physics, cars, ragdolls, spawned actors, players, damage, decals)
+    std::printf("online sync\n");
+    Project q = makeTemplate("Blank", "Online"); Level& L = q.levels[0].second; L.actors.clear(); L.world.gameMode = "FirstPerson";
+    Actor fl = newActor("StaticMesh", "Floor"); fl.p = {0, -0.5f, 0}; fl.s = {200, 1, 200}; L.actors.push_back(fl);
+    Actor crate = newActor("StaticMesh", "Crate"); crate.p = {4, 0.5f, -4}; crate.physics.simulate = true; crate.physics.mass = 20; L.actors.push_back(crate);
+    Actor car = newActor("StaticMesh", "Car"); car.p = {-10, 1.2f, 0}; car.s = {1.9f, 0.75f, 4.2f}; car.physics.simulate = true; car.physics.mass = 1300; car.vehicle.enabled = true; L.actors.push_back(car);
+    Actor npc = newActor("StaticMesh", "Npc"); npc.mesh = "Characters/Mannequin.glb"; npc.material.clear(); npc.p = {8, 0, 4}; npc.physics.collision = false; npc.anim = "Idle"; L.actors.push_back(npc);
+    Actor door = newActor("StaticMesh", "Door"); door.p = {0, 1, -15}; door.s = {2, 2, 0.2f}; door.physics.replicates = true; L.actors.push_back(door);
+    Actor ps = newActor("PlayerStart", "Start"); ps.p = {0, 0.1f, 4}; L.actors.push_back(ps);
+    Game H(q, "Main"), C(q, "Main"); CHECK(H.start() && C.start(), "two copies of a game start");
+    CHECK(H.net("host", "{\"port\":46677,\"name\":\"Sync\"}", "") == "1" && C.net("join", "127.0.0.1", "46677") == "1", "one hosts, the other joins");
+    auto both = [&](float sec) { for (int i = 0; i < (int)(sec * 60); i++) { H.update(1.f / 60); C.update(1.f / 60); std::this_thread::sleep_for(std::chrono::milliseconds(1)); } };
+    both(1.0f); json cs = json::parse(C.net("state", "", "")); CHECK(cs["connected"].get<bool>() && cs["id"].get<int>() > 0, "the player is in");
+    C.playerTeleport({3, 1, 6}); both(1.0f);
+    std::string av = H.find("Player " + std::to_string(cs["id"].get<int>() + 1)); CHECK(!av.empty() && glm::length(H.worldPos(av) - glm::vec3(3, 0.1f, 6)) < 0.4f, "the host sees the other player as a character, where they are");
+    CHECK(!C.find("Player 1").empty(), "…and the player sees the host");
+    // the host's physics: the client's copy follows
+    H.addForce(H.find("Crate"), {0, 0, -150}); both(1.5f); glm::vec3 hc = H.worldPos(H.find("Crate")), cc = C.worldPos(C.find("Crate"));
+    CHECK(hc.z < -6 && glm::length(hc - cc) < 0.3f, ("a box the host pushes moves the same for the player (" + std::to_string(glm::length(hc - cc)) + " m apart)").c_str());
+    H.setVec(H.find("Door"), 'p', {0, 4, -15}); both(0.5f); CHECK(std::abs(C.worldPos(C.find("Door")).y - 4) < 0.05f, "an actor marked Replicates moved by the host's script moves for the player");
+    // the player picks the box up: it becomes theirs, the host's copy follows
+    std::string gh = C.gameplay("grab", json{{"actor", C.find("Crate")}}.dump(), ""); CHECK(!gh.empty(), "the player grabs the host's box");
+    for (int i = 0; i < 120; i++) { C.gameplay("grabMove", gh, json{{"target", {cc.x, 2.5, cc.z}}}.dump()); H.update(1.f / 60); C.update(1.f / 60); std::this_thread::sleep_for(std::chrono::milliseconds(1)); }
+    CHECK(H.worldPos(H.find("Crate")).y > 1.8f, ("…carries it, and the host sees it lifted (" + std::to_string(H.worldPos(H.find("Crate")).y) + " m)").c_str());
+    C.gameplay("release", gh, "{}"); both(0.5f);
+    // the player drives the car
+    C.playerTeleport(C.worldPos(C.find("Car")) + glm::vec3(-2.2f, 0.3f, 0)); both(0.5f);
+    CHECK(C.gameplay("vehicle", C.find("Car"), "{\"enter\":true}") == "1", "the player gets in the host's car"); both(0.5f); CHECK(C.driving() == C.find("Car"), "…it is theirs, they drive it");
+    glm::vec3 c0 = H.worldPos(H.find("Car")); SDL_Event k{}; k.type = SDL_KEYDOWN; k.key.keysym.scancode = SDL_SCANCODE_W; C.event(k); both(3.0f); k.type = SDL_KEYUP; C.event(k);
+    k.type = SDL_KEYDOWN; k.key.keysym.scancode = SDL_SCANCODE_SPACE; C.event(k); both(2.5f); k.type = SDL_KEYUP; C.event(k); both(0.5f);
+    glm::vec3 c1 = H.worldPos(H.find("Car")); CHECK(glm::length(c1 - c0) > 8 && glm::length(c1 - C.worldPos(C.find("Car"))) < 1.0f, ("…the host sees it drive (" + std::to_string(glm::length(c1 - c0)) + " m)").c_str());
+    CHECK(H.gameplay("vehicle", H.find("Car"), "{\"enter\":true}") != "1" || H.driving().empty(), "the host can't take a car someone drives");
+    // the host's ragdoll falls for the player too
+    H.gameplay("ragdoll", H.find("Npc"), json{{"impulse", {0, 0, -200}}}.dump()); both(2.5f);
+    json hb = json::parse(C.animation(C.find("Npc"), "bone", "Head")); CHECK(hb.is_object() && hb["p"][1].get<float>() < 0.7f, "a ragdoll falls the same for the player");
+    // spawned with physics: everyone has it; destroyed: gone for everyone
+    std::string ball = H.spawn("Sphere", "{\"position\":[0,3,0],\"physics\":true,\"color\":\"#ff0000\"}"); both(1.0f);
+    CHECK(C.find("Sphere") == ball && glm::length(C.worldPos(ball) - H.worldPos(ball)) < 0.2f, "a ball the host spawns appears for the player where it falls");
+    C.destroyActor(ball); both(0.5f); CHECK(H.find("Sphere").empty(), "…the player destroys it: gone for the host too");
+    // damage to another player, decals for everyone
+    float hp = H.playerHealth(); C.gameplay("damage", json(C.find("Player 1")).dump(), json{{"amount", 30}, {"type", "bullet"}}.dump()); both(0.5f);
+    CHECK(std::abs(H.playerHealth() - (hp - 30)) < 0.01f, "the player shoots the host: the host loses health");
+    int d0 = H.decalCount(); C.gameplay("decal", json{{"position", {0, 0, 0}}, {"normal", {0, 1, 0}}, {"type", "blood"}}.dump(), ""); both(0.3f); CHECK(H.decalCount() == d0 + 1, "a decal the player makes shows for the host");
+    // scripts' messages still reach scripts; the engine's never do
+    C.net("send", "{\"hello\":1}", ""); both(0.3f); json in = json::parse(H.net("take", "", "")); int msgs = 0; for (auto& e : in) if (e["type"] == "msg") { msgs++; CHECK(e["data"] == "{\"hello\":1}", "a script's message arrives whole"); }
+    CHECK(msgs == 1, "only the scripts' messages reach net.receive()");
+    C.net("stop", "", ""); both(1.0f); CHECK(H.find("Player " + std::to_string(cs["id"].get<int>() + 1)).empty(), "the player leaves: their character goes");
+    { json vs = json::parse(H.gameplay("vehicle", H.find("Car"), "{}"), nullptr, false); CHECK(vs.is_object() && !vs.contains("remote") && H.gameplay("vehicle", H.find("Car"), "{\"enter\":true}") == "1" && H.driving() == H.find("Car"), "…their car is the host's again: its physics runs on the host, the host can drive it"); }
+  }
   {   // playing together: a host and a player on this computer, messages both ways, the LAN beacon, leaving
     pge::Net h, c; double t = 0; CHECK(h.host(46655, "Test world", 4, "info"), "net: host a game");
     c.lanSearch(true); CHECK(c.join("127.0.0.1", 46655), "net: join it");

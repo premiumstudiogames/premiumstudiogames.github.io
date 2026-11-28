@@ -22,7 +22,7 @@ struct Material { std::string name = "M_Default"; glm::vec3 color{0.784f, 0.8f, 
 struct Script { std::string name, code; nlohmann::json graph; bool blueprint() const { return graph.is_object(); } };
 struct LightProps { glm::vec3 color{1}; float intensity = 1, range = 12, angle = 35; bool shadows = true; };
 struct TextProps { std::string value = "Text"; glm::vec3 color{1}; float size = 0.6f; };
-struct PhysicsProps { bool simulate = false, collision = true; float mass = 1; };
+struct PhysicsProps { bool simulate = false, collision = true; float mass = 1; bool replicates = false; };   // replicates: kept the same for every player of an online game (physics actors and cars always are)
 struct ProbeProps { float radius = 10, intensity = 1; };   // Sphere Reflection Capture: what it reflects, within radius m
 // a car (Unreal's Wheeled Vehicle): a Static Mesh with Simulate Physics drives on 4 wheels (placed from its size, or by wheel list)
 struct VehicleProps {

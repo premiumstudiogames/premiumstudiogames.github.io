@@ -76,6 +76,9 @@ world
   world.setPostProcess({ vignette: 0.5, grain: 0.3, vhs: 0.6, chromatic: 0.2, scanlines: 0.3, saturation: 0.8, contrast: 1.1, temperature: -0.3, bloom: 2, tint: '#ffeedd' })
                                  camera effects (0..1; saturation / contrast / bloom 1 = as is); only what you give changes; null = all off. world.postProcess = now
   world.vars                     an object to keep your own values (score, ...)
+  online (net.host / net.join): physics actors, cars, ragdolls and actors with Replicates are the same for every player by themselves;
+    whoever spawns one with physics (or replicate: true) moves it; a player who gets in a car or grabs a box moves it; each player sees
+    the others as characters (named 'Player 1', 'Player 2', tag 'player'); applyDamage to one reaches that player; decals show for all
   world.raycast(from, to, { ignore: [actors], ignorePlayer: true })   the first thing on the line (Line Trace): { position, normal, distance, actor, player, body, bone } or null
   world.applyDamage(actor | world.player, 20, { type, from, point, direction, impulse })
   world.applyRadialDamage(center, radius, 80, { impulse: 1500, type: 'explosion', from })   an explosion: less further away, walls shield; gives the actors it hurt

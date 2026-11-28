@@ -56,7 +56,8 @@ public:
   glm::vec3 angularVelocity(uint32_t id) const;
   void setAngularVelocity(uint32_t id, const glm::vec3& w);
   void addImpulseAt(uint32_t id, const glm::vec3& j, const glm::vec3& point);
-  void setEnabled(uint32_t id, bool on);                 // out of the world and back (the player sits in a car)
+  void setEnabled(uint32_t id, bool on);
+  void setMotion(uint32_t id, Motion m);                 // a moving body made kinematic (another player's computer moves it) and back                 // out of the world and back (the player sits in a car)
   // a moving (or still) body made of several shapes (an actor and the actors attached to it: welded, like Unreal)
   struct Part { std::string mesh; glm::vec3 scale{1}, pos{0}; glm::quat rot{1, 0, 0, 0}; };
   uint32_t addCompound(const std::vector<Part>& parts, const glm::vec3& pos, const glm::quat& rot, Motion m, float mass, uint64_t userData);

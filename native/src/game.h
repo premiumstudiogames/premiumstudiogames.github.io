@@ -17,6 +17,7 @@
 #include "audio.h"
 #include "models.h"
 #include "navigation.h"
+#include "net.h"
 #include "assets.h"
 #include <nlohmann/json.hpp>
 #include <SDL.h>
@@ -141,6 +142,10 @@ private:
     bool autoAnim = true, footIK = true; glm::vec3 prevP{0}; float moveSpeed = 0; bool autoOn = false;
     struct IkReq { std::string bone, actor; glm::vec3 target{0}; float weight = 1, maxAngle = 70; bool aim = false; };
     std::vector<IkReq> ikReq;
+    // online (netsync.cpp): who moves it (0 the host, else a player's id); what came for it from the one who does
+    int owner = 0; bool repl = false, netKin = false, netDriven = false; int remote = -1;   // remote: the avatar of that player
+    struct NetT { glm::vec3 p{0}, v{0}; glm::quat q{1, 0, 0, 0}; double at = -1; } nt; glm::vec3 sentP{1e9f}; glm::quat sentQ{1, 0, 0, 0}; double sentAt = -1;
+    std::vector<glm::mat4> netWheels;
     struct Walk { bool active = false; std::vector<glm::vec3> path; size_t i = 1; float speed = 3.5f, accept = 0.5f, foot = 0; bool turn = true, player = false; std::string goal, result; glm::vec3 goalAt{0}; double repath = 0; } walk;   // AI Move To
   };
   NavGrid nav_; bool navBuilt_ = false;
@@ -173,7 +178,14 @@ private:
   Obj* objOfBody(uint32_t body) const;
   // Third Person: the player's character, its animations chosen by how it moves (idle, walk, run, jump, fall), turning where it goes
   std::string pModel_, pAnimName_; AnimPlay pAnim_; float charYaw_ = 0; void playerAnimFrame(float dt);
-  std::vector<Obj::IkReq> pIk_;                                                // IK on the player's character
+  std::vector<Obj::IkReq> pIk_;
+  // online: actors kept the same on every player's computer, the other players as characters (netsync.cpp)
+  std::vector<NetEvent> netInbox_; double netSent_ = -1; std::string pendingEnter_; std::map<int, std::string> avatars_; bool netWas_ = false; bool fromNet_ = false;
+  bool netOn() const; int netMe() const; bool owns(const Obj& o) const; bool replicated(const Obj& o) const;
+  void netSend(const nlohmann::json& m, int to = -1, int except = -1);
+  void netFrame(float dt); void netDrain(); void netHandle(const nlohmann::json& m, int from); void netFull(int to);
+  nlohmann::json netSnap(const Obj& o) const; void netApply(Obj& o, const nlohmann::json& a);
+  void netOwnership(); std::string netAvatar(int id, const nlohmann::json& m);                                                // IK on the player's character
   std::string animOp(Obj& o, const Model& m, const std::string& op, const std::string& arg);
   void animFrame(float dt);                                                    // animation.cpp: every model's animation, auto locomotion, IK
   void solveIK(const Model& m, AnimPlay& an, const glm::mat4& W, const std::vector<Obj::IkReq>& req, bool feet, float floorY, std::vector<uint32_t> ignore);

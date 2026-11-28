@@ -228,6 +228,7 @@ void Physics::addImpulse(uint32_t id, const glm::vec3& j) { if (id != NO_BODY &&
 void Physics::teleport(uint32_t id, const glm::vec3& p, const glm::quat& q) { if (id == NO_BODY) return; BodyID b(id); d->bi().SetPositionAndRotation(b, RVec3(p.x, p.y, p.z), J(q), d->bi().IsAdded(b) ? EActivation::Activate : EActivation::DontActivate); }
 void Physics::moveKinematic(uint32_t id, const glm::vec3& p, const glm::quat& q) {
   if (id == NO_BODY || !d->bi().IsAdded(BodyID(id))) return; BodyID b(id);
+  if (d->bi().GetMotionType(b) == EMotionType::Static) { d->bi().SetPositionAndRotation(b, RVec3(p.x, p.y, p.z), J(q), EActivation::DontActivate); return; }   // a still body is put there
   for (auto& k : d->ktargets) if (k.id == b) { k.p = J(p); k.q = J(q); return; }
   d->ktargets.push_back({b, J(p), J(q)});
 }
@@ -299,6 +300,12 @@ void Physics::addImpulseAt(uint32_t id, const glm::vec3& j, const glm::vec3& p) 
 void Physics::setEnabled(uint32_t id, bool on) {
   if (id == NO_BODY || !d->sys) return; BodyID b(id); bool in = d->bi().IsAdded(b);
   if (on && !in) d->bi().AddBody(b, EActivation::Activate); else if (!on && in) d->bi().RemoveBody(b);
+}
+void Physics::setMotion(uint32_t id, Motion m) {
+  if (id == NO_BODY || !d->sys) return; BodyID b(id); EMotionType t = m == Motion::Dynamic ? EMotionType::Dynamic : m == Motion::Kinematic ? EMotionType::Kinematic : EMotionType::Static;
+  if (d->bi().GetMotionType(b) == t) return; if (t == EMotionType::Static) return;   // (bodies made moving stay moving)
+  d->bi().SetMotionType(b, t, d->bi().IsAdded(b) ? EActivation::Activate : EActivation::DontActivate);
+  if (t != EMotionType::Kinematic) for (auto it = d->ktargets.begin(); it != d->ktargets.end();) { if (it->id == b) it = d->ktargets.erase(it); else ++it; }
 }
 uint32_t Physics::addCompound(const std::vector<Part>& parts, const glm::vec3& pos, const glm::quat& rot, Motion m, float mass, uint64_t userData) {
   if (parts.empty() || !d->sys) return NO_BODY;

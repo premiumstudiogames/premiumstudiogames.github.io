@@ -232,7 +232,7 @@ static glm::vec3 col(const json& j, const char* k, glm::vec3 d) { auto it = j.fi
 
 static json actorJson(const Actor& a) {
   json j = {{"id", a.id}, {"name", a.name}, {"type", a.type}, {"parent", a.parent.empty() ? json() : json(a.parent)}, {"p", v3(a.p)}, {"r", v3(a.r)}, {"s", v3(a.s)}, {"visible", a.visible}, {"tags", a.tags}};
-  if (a.type == "StaticMesh") { j["mesh"] = a.mesh; j["material"] = a.material; j["physics"] = {{"simulate", a.physics.simulate}, {"mass", a.physics.mass}, {"collision", a.physics.collision}};
+  if (a.type == "StaticMesh") { j["mesh"] = a.mesh; j["material"] = a.material; j["physics"] = {{"simulate", a.physics.simulate}, {"mass", a.physics.mass}, {"collision", a.physics.collision}}; if (a.physics.replicates) j["physics"]["replicates"] = true;
     if (!a.anim.empty()) j["animation"] = {{"name", a.anim}, {"loop", a.animLoop}, {"speed", a.animSpeed}};
     if (!a.vehicle.isDefault()) { const VehicleProps& v = a.vehicle; j["vehicle"] = {{"enabled", v.enabled}, {"enterable", v.enterable}, {"torque", v.torque}, {"maxRpm", v.maxRpm}, {"maxSteer", v.maxSteer},
       {"wheelRadius", v.wheelRadius}, {"wheelWidth", v.wheelWidth}, {"travel", v.travel}, {"stiffness", v.stiffness}, {"axleInset", v.axleInset}, {"camDistance", v.camDistance}, {"drive", v.drive},
@@ -253,7 +253,7 @@ static Actor actorFrom(const json& j) {
   a.visible = get<bool>(j, "visible", true); if (j.contains("tags") && j["tags"].is_array()) for (auto& t : j["tags"]) if (t.is_string()) a.tags.push_back(t);
   a.mesh = get<std::string>(j, "mesh", "Cube"); a.material = get<std::string>(j, "material", "M_Default");
   if (j.contains("animation") && j["animation"].is_object()) { const json& an = j["animation"]; a.anim = get<std::string>(an, "name", ""); a.animLoop = get<bool>(an, "loop", true); a.animSpeed = get<float>(an, "speed", 1.f); } a.script = get<std::string>(j, "script", "");
-  if (j.contains("physics")) { auto& p = j["physics"]; a.physics.simulate = get<bool>(p, "simulate", false); a.physics.mass = get<float>(p, "mass", 1); a.physics.collision = get<bool>(p, "collision", true); }
+  if (j.contains("physics")) { auto& p = j["physics"]; a.physics.simulate = get<bool>(p, "simulate", false); a.physics.mass = get<float>(p, "mass", 1); a.physics.collision = get<bool>(p, "collision", true); a.physics.replicates = get<bool>(p, "replicates", false); }
   if (a.type == "Landscape") { a.land = std::make_shared<Landscape>(); if (j.contains("landscape")) a.land->fromJson(j["landscape"]); }
   if (j.contains("vehicle") && j["vehicle"].is_object()) { auto& q = j["vehicle"]; VehicleProps& v = a.vehicle; v.enabled = get<bool>(q, "enabled", false); v.enterable = get<bool>(q, "enterable", true);
     v.torque = get<float>(q, "torque", v.torque); v.maxRpm = get<float>(q, "maxRpm", v.maxRpm); v.maxSteer = get<float>(q, "maxSteer", v.maxSteer); v.wheelRadius = get<float>(q, "wheelRadius", v.wheelRadius);

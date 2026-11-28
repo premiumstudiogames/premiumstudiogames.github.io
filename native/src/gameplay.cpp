@@ -204,6 +204,7 @@ void Game::damage(const std::string& target, float amount, json info) {
       if (!handled) { message("You died", 2.5f); respawnAt_ = time_ + 3; } }   // no script decides: start again at the Player Start
     return; }
   Obj* o = get(target); if (!o) return;
+  if (o->remote >= 0) { if (netOn()) netSend({{"k", "dmg"}, {"to", o->remote}, {"amount", amount}, {"info", info}, {"f", netMe()}}, o->remote); return; }   // another player: it reaches them
   // a push where it was hit
   glm::vec3 imp(0); if (info.contains("impulse")) { if (info["impulse"].is_number() && glm::length(dir) > 1e-5f) imp = glm::normalize(dir) * info["impulse"].get<float>(); else v3(info["impulse"], imp); }
   if (glm::length(imp) > 0) {
@@ -218,6 +219,7 @@ bool Game::ragdoll(Obj& o, const glm::vec3& impulse, const glm::vec3& point, boo
   if (!o.rag.empty()) { if (glm::length(impulse) > 0) { uint32_t best = o.rag[0].body; float bd = 1e9f; for (auto& r : o.rag) { float dd = glm::length(phys_->position(r.body) - point); if (dd < bd) { bd = dd; best = r.body; } }
       if (hasPoint) phys_->addImpulseAt(best, impulse, point); else phys_->addImpulse(o.rag[0].body, impulse); } return true; }
   if (o.a.type != "StaticMesh" || !isModelFile(o.a.mesh)) return false; ModelRef m = model(o.a.mesh); if (!m || !m->ok() || m->skins.empty()) return false;
+  if (netOn() && !owns(o)) return true;   // online: its owner's computer makes it fall; here it follows
   if (!o.a.parent.empty()) detach(o, json{{"keepWorld", true}});
   glm::vec3 walkVel(0); if (o.walk.active && o.walk.i < o.walk.path.size()) { glm::vec3 d = o.walk.path[o.walk.i] - (o.p - glm::vec3(0, o.walk.foot, 0)); d.y = 0; if (glm::length(d) > 1e-3f) walkVel = glm::normalize(d) * o.walk.speed; }
   o.walk = Obj::Walk();
@@ -284,6 +286,7 @@ void Game::addVehicle(Obj& o) {
   o.vehicle = phys_->addVehicle(o.body, d); o.vin[0] = o.vin[1] = o.vin[2] = 0; o.vin[3] = 0;
 }
 bool Game::enterVehicle(Obj& v) {
+  if (netOn() && !owns(v) && v.a.vehicle.enabled && driving_.empty()) { if (v.netDriven) return false; pendingEnter_ = v.a.id; netSend({{"k", "req"}, {"i", v.a.id}, {"f", netMe()}}); return true; }   // online: it becomes ours first
   if (v.vehicle == NO_BODY || player_ == NO_BODY || !driving_.empty() || dead_) return false;
   driving_ = v.a.id; driveInside_ = false; phys_->setEnabled(player_, false);
   glm::vec3 f = glm::mat3(rigid(world(v))) * glm::vec3(0, 0, -1); yaw_ = std::atan2(-f.x, -f.z); pitch_ = -0.22f; v.vin[3] = 0;
@@ -306,7 +309,7 @@ void Game::exitVehicle() {
 
 /* ------------------------------------------------------------------ the level's joints and cars */
 void Game::startGameplay() {
-  decals_.clear(); grabs_.clear(); pIk_.clear(); jointOwner_.clear(); driving_.clear(); driveInside_ = false; health_ = maxHealth_ = 100; dead_ = false; respawnAt_ = -1; vehicleKey_ = "KeyE"; hint_.clear();
+  decals_.clear(); grabs_.clear(); pIk_.clear(); avatars_.clear(); netInbox_.clear(); pendingEnter_.clear(); netWas_ = false; jointOwner_.clear(); driving_.clear(); driveInside_ = false; health_ = maxHealth_ = 100; dead_ = false; respawnAt_ = -1; vehicleKey_ = "KeyE"; hint_.clear();
   for (auto& op : objs_) { Obj& o = *op; if (o.alive && o.a.type == "StaticMesh" && o.a.vehicle.enabled) addVehicle(o); }
   for (auto& op : objs_) { Obj& o = *op; if (!o.alive || o.a.type != "PhysicsConstraint") continue; const JointProps& c = o.a.joint;
     Obj* A = get(c.a); Obj* B = c.b.empty() ? nullptr : get(c.b);
@@ -331,7 +334,7 @@ void Game::gameplayFrame(float dt, bool post) {
       bool press = pressed_.count(vehicleKey_) || pressed_.count("PadY");
       if (!driving_.empty()) { if (press) exitVehicle(); }
       else { Obj* best = nullptr; float bd = 1e9f; glm::vec3 pp = phys_->position(player_);
-        for (auto& op : objs_) { Obj& o = *op; if (!o.alive || o.vehicle == NO_BODY || !o.a.vehicle.enterable) continue; const MeshData& md = meshShape(o.a.mesh); glm::vec3 h = (md.bmax - md.bmin) * 0.5f * glm::abs(o.s);
+        for (auto& op : objs_) { Obj& o = *op; if (!o.alive || !o.a.vehicle.enabled || (o.vehicle == NO_BODY && !o.netKin) || o.netDriven || !o.a.vehicle.enterable) continue; const MeshData& md = meshShape(o.a.mesh); glm::vec3 h = (md.bmax - md.bmin) * 0.5f * glm::abs(o.s);
           float d = glm::length(glm::vec3(rigid(world(o))[3]) - pp) - std::max(h.x, h.z); if (d < 2.2f && d < bd) { bd = d; best = &o; } }
         if (best) { hint_ = "[" + std::string(vehicleKey_ == "KeyE" ? "E" : vehicleKey_) + "] Drive " + best->a.name; if (press) enterVehicle(*best); } } }
     // the car the player drives: W / S (or RT / LT), A / D (or the left stick), Space hand brake, V the view
@@ -357,6 +360,7 @@ void Game::gameplayFrame(float dt, bool post) {
     for (auto& op : objs_) { Obj& o = *op; if (o.alive && o.vehicle != NO_BODY) phys_->vehicleInput(o.vehicle, o.vin[0], o.vin[1], o.vin[2], o.vin[3]); }
     // carried bodies follow their handle
     for (auto it = grabs_.begin(); it != grabs_.end();) { Grab& g = it->second;
+      if (Obj* go = objOfBody(g.body); go && !owns(*go)) { ++it; continue; }   // online: waiting for it to be ours
       if (!phys_->dynamic(g.body)) { it = grabs_.erase(it); continue; }
       if (g.targetSet) { glm::vec3 bp; glm::quat bq; phys_->transform(g.body, bp, bq); glm::vec3 at = bp + bq * g.local, want = (g.target - at) * 12.f * g.strength;
         float mx = 30.f; if (glm::length(want) > mx) want = glm::normalize(want) * mx; phys_->setVelocity(g.body, want); phys_->setAngularVelocity(g.body, phys_->angularVelocity(g.body) * 0.85f); }
@@ -381,8 +385,9 @@ void Game::gameplayFrame(float dt, bool post) {
   decals_.erase(std::remove_if(decals_.begin(), decals_.end(), [&](const Decal& d) { return (!d.actor.empty() && !get(d.actor)) || (d.life > 0 && time_ - d.born > d.life); }), decals_.end());
 }
 void Game::drawGameplay(Frame& f) const {
-  for (auto& op : objs_) { const Obj& o = *op; if (!o.alive || o.vehicle == NO_BODY || !o.visible || o.a.vehicle.wheelMesh.empty()) continue;
-    auto st = phys_->vehicleState(o.vehicle, isModelFile(o.a.vehicle.wheelMesh)); glm::mat4 B = rigid(world(o)); for (auto& w : st.wheels) addWheelDraw(f, project_, o.a, B, w, 0); }
+  for (auto& op : objs_) { const Obj& o = *op; if (!o.alive || !o.a.vehicle.enabled || !o.visible || o.a.vehicle.wheelMesh.empty()) continue; glm::mat4 B = rigid(world(o));
+    if (o.vehicle == NO_BODY) { for (auto& w : o.netWheels) addWheelDraw(f, project_, o.a, B, w, 0); continue; }   // another player's car: its wheels as they are there
+    auto st = phys_->vehicleState(o.vehicle, isModelFile(o.a.vehicle.wheelMesh)); for (auto& w : st.wheels) addWheelDraw(f, project_, o.a, B, w, 0); }
   const GpuMesh& plane = primitive("Plane");
   for (auto& d : decals_) { DrawItem it; it.mesh = &plane; glm::mat4 base(1);
     if (d.body != NO_BODY) { glm::vec3 bp; glm::quat bq; phys_->transform(d.body, bp, bq); base = glm::translate(glm::mat4(1), bp) * glm::mat4_cast(bq); }
@@ -416,7 +421,7 @@ std::string Game::gameplay(const std::string& op, const std::string& a, const st
         if (imp > 0) phys_->setVelocity(player_, phys_->velocity(player_) + d * imp * k / 70.f);
         if (amount != 0) { json info = {{"type", type}, {"point", ja(pp)}, {"direction", ja(d)}}; if (!from.empty()) info["from"] = from; damage("@player", amount * k, info); } hit.push_back("@player"); } }
     return hit.dump(); }
-  if (op == "decal") { addDecal(J(a)); return ""; }
+  if (op == "decal") { json d = J(a); addDecal(d); if (netOn()) netSend({{"k", "dec"}, {"d", d}, {"f", netMe()}}); return ""; }
   if (op == "decalsClear") { decals_.clear(); return ""; }
   if (op == "joint") { json j = J(a); Obj* A = get(j.value("a", std::string())); if (!A) return ""; uint32_t ba = A->body; if (!A->rag.empty()) ba = A->rag[0].body; if (ba == NO_BODY) return "";
     std::string bid = j.value("b", std::string()); Obj* B = bid.empty() || bid == "@world" ? nullptr : get(bid); uint32_t bb = B ? (B->rag.empty() ? B->body : B->rag[0].body) : NO_BODY;
@@ -436,7 +441,8 @@ std::string Game::gameplay(const std::string& op, const std::string& a, const st
   if (op == "grab") { json j = J(a); uint32_t body = NO_BODY; glm::vec3 p(0); bool hasP = v3(j.value("point", json()), p);
     if (j.contains("body") && j["body"].is_number()) body = j["body"].get<uint32_t>();
     else if (Obj* o = get(j.value("actor", std::string()))) { if (!o->rag.empty()) { body = o->rag[0].body; float bd = 1e9f; if (hasP) for (auto& r : o->rag) { float dd = glm::length(phys_->position(r.body) - p); if (dd < bd) { bd = dd; body = r.body; } } } else body = o->body; }
-    if (!phys_->dynamic(body)) return "";
+    if (Obj* go = objOfBody(body); go && netOn() && !owns(*go)) netSend({{"k", "req"}, {"i", go->a.id}, {"f", netMe()}});   // online: ask for it
+    else if (!phys_->dynamic(body)) return "";
     glm::vec3 bp; glm::quat bq; phys_->transform(body, bp, bq); if (!hasP) p = bp;
     Grab g; g.body = body; g.local = glm::inverse(bq) * (p - bp); g.strength = j.value("strength", 1.f); int id = nextGrab_++; grabs_[id] = g; return std::to_string(id); }
   if (op == "grabMove") { auto it = grabs_.find(std::atoi(a.c_str())); if (it == grabs_.end()) return ""; json j = J(b); glm::vec3 t; if (v3(j.value("target", json()), t)) { it->second.target = t; it->second.targetSet = true; }
@@ -463,8 +469,7 @@ std::string Game::gameplay(const std::string& op, const std::string& a, const st
     if (j.contains("mass") && j["mass"].is_number()) o->a.physics.mass = j["mass"].get<float>();
     if (o->vehicle != NO_BODY) { phys_->removeVehicle(o->vehicle); o->vehicle = NO_BODY; }
     o->a.physics.simulate = true; if (o->body != NO_BODY) { phys_->remove(o->body); o->body = NO_BODY; } addBody(*o); addVehicle(*o); return o->vehicle != NO_BODY ? "1" : "0"; }
-  if (op == "vehicle") { if (o->vehicle == NO_BODY) return ""; json j = J(b);
-    if (j.value("enter", false)) return enterVehicle(*o) ? "1" : "";
+  if (op == "vehicle") { json j = J(b); if (j.value("enter", false) && o->a.vehicle.enabled) return enterVehicle(*o) ? "1" : ""; if (o->vehicle == NO_BODY) { if (!o->a.vehicle.enabled || !o->netKin) return ""; return json{{"speed", glm::length(o->nt.v)}, {"rpm", 0}, {"gear", 0}, {"grounded", true}, {"driver", false}, {"remote", true}}.dump(); }
     if (j.value("exit", false)) { if (driving_ == o->a.id) exitVehicle(); return "1"; }
     if (j.contains("input") && j["input"].is_array() && j["input"].size() == 4) { if (driving_ != o->a.id) for (int i = 0; i < 4; i++) o->vin[i] = j["input"][i].is_number() ? j["input"][i].get<float>() : 0.f; return "1"; }
     auto st = phys_->vehicleState(o->vehicle); return json{{"speed", st.speed}, {"rpm", st.rpm}, {"gear", st.gear}, {"grounded", st.grounded}, {"driver", driving_ == o->a.id}}.dump(); }
