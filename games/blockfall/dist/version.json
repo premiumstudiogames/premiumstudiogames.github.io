@@ -1,10 +1,10 @@
 {
   "name": "BLOCKFALL 3001 · Premium Engine",
-  "version": "00.00.06",
-  "engine": "00.11.00",
+  "version": "00.00.07",
+  "engine": "00.16.02",
   "file": "BLOCKFALL3001-PremiumEngine-Windows.zip",
   "zipRoot": "BLOCKFALL 3001 - Premium Engine/",
   "exe": "BLOCKFALL 3001.exe",
-  "sha256": "c613feed9084c9f163ffd2f78e34def795349ec83fc775cddfb8d26debecc72a",
-  "size": 3792786
+  "sha256": "7baf03f9b3478e8b448d035498335619250650b32ddb4947c11bab09b0bcd3c1",
+  "size": 5483574
 }
