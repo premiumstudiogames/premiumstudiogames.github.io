@@ -86,7 +86,7 @@ world
   world.player                   .position, .teleport(x, y, z), .launch(x, y, z)
   world.player.fly = true        flying: no falling, Space goes up, the sneak key (or Shift) down
   world.player.set({ walkSpeed: 4.3, runSpeed: 5.6, sneakSpeed: 1.3, jumpSpeed: 8.4, gravity: -32, accel: 46, runKey: 'Control', sneakKey: 'Shift',
-                     doubleTapRun: true, flySpeed: 8, flyRun: 1.6, flyClimb: 6, yaw: 0, pitch: 0, mouseSensitivity: 1 })   how the player moves (any of them)
+                     doubleTapRun: true, flySpeed: 8, flyRun: 1.6, flyClimb: 6, yaw: 0, pitch: 0, mouseSensitivity: 1, locked: false })   how the player moves (any of them; locked: no walking, the scripts move the player)
   world.player.settings          all of them, and .grounded .running .sneaking .velocity .yaw .pitch
   storage.set('key', 'text')  storage.get('key')  storage.setJSON('key', obj)  storage.getJSON('key', default)  storage.remove('key')  storage.keys('prefix')
                                  the game's own saved values (settings, world list, inventories), in Documents\PremiumEngine\Saves\<game>\store
@@ -112,6 +112,9 @@ world
   world.setQuality({ msaa: 4, ssao: true, bloom: true, shadowDistance: 160 })   picture quality (a settings menu); shadowDistance 0 = no sun shadows
   world.setSky({ skyTop: '#3d8fd6', sunDisc: '#fff4c9', sunSize: 0.035, moon: 1, stars: 0.8 })   a sky drawn behind everything: top colour (sky = the horizon),
                                  the sun's disc and glow where the sun is, the moon opposite it, stars (0 .. 1)
+  voxels.solidAt(x, y, z)  voxels.boxSolid([x0, y0, z0], [x1, y1, z1])   is something solid there (a box: any of it)
+  files.read('data.json')  files.readJSON('data.json', default)   a text file shipped next to the game file (null if missing)
+  world.setCamera({ target: [x, y, z], distance: 6, height: 1 })   the camera behind a point, turned by the mouse (vehicles); world.setCamera(null): the player's eyes
 
 input
   input.key('w')                 held down?  ('space', 'shift', 'up', 'a'..'z', '0'..'9')

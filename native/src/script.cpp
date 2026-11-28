@@ -198,6 +198,8 @@ const world = { vars: {}, get voxels() { return voxels; },
   setPostProcess(o) { __n.setSky(JSON.stringify({ post: o === null ? 'reset' : (o || {}) })); },
   get postProcess() { return JSON.parse(__n.postGet()); },
   setQuality(o) { __n.setQuality(JSON.stringify(o || {})); },
+  // the camera behind a point (a vehicle the scripts drive), turned by the mouse: { target: [x, y, z], distance, height }; null: the player's eyes again
+  setCamera(o) { __n.setCamera(o ? JSON.stringify(o) : 'null'); },
   // the first thing on a line (Unreal's Line Trace): { position, normal, distance, actor, player, body, bone } or null; { ignore: [actors], ignorePlayer: true }
   raycast(from, to, o) { const r = __n.gp('raycast', JSON.stringify(__gpv(Object.assign({ from, to }, o || {}))), ''); if (!r) return null; const h = JSON.parse(r);
     return { position: new Vec3(h.p[0], h.p[1], h.p[2]), normal: new Vec3(h.n[0], h.n[1], h.n[2]), distance: h.d, actor: h.a ? __api(h.a) : null, player: !!h.pl, body: h.b, bone: h.bone || '' }; },
@@ -237,6 +239,8 @@ const voxels = { lastError: '',
   removeBlock(x, y, z) { return __n.voxRemove(...__xyz(x, y, z)); },
   carve(x, y, z, i, j, k, solid) { if (x !== null && typeof x === 'object') { solid = k; k = j; j = i; i = z; [x, y, z] = __xyz(x); } return __n.voxCarve(+x, +y, +z, i | 0, j | 0, k | 0, !!solid); },
   liquidAt(x, y, z) { return __n.voxLiquid(...__xyz(x, y, z)); },
+  solidAt(x, y, z) { return __n.voxSolid(...__xyz(x, y, z)); },
+  boxSolid(min, max) { const a = __xyz(min), b = __xyz(max); return __n.voxBoxSolid(a[0], a[1], a[2], b[0], b[1], b[2]); },
   raycast(from, dir, max = 8, o = {}) { const a = __xyz(from), b = __xyz(dir); const r = __n.voxRay(a[0], a[1], a[2], b[0], b[1], b[2], +max || 8, !!(o && o.liquids)); if (!r) return null;
     return { id: r[0], x: r[1], y: r[2], z: r[3], size: r[4], normal: new Vec3(r[5], r[6], r[7]), point: new Vec3(r[8], r[9], r[10]), distance: r[11], height: r[15],
       placePosition(size = 0.2, height = 0) { const p = __n.voxPlace(...r, +size, +height || 0); return new Vec3(p[0], p[1], p[2]); } }; },
@@ -360,6 +364,9 @@ const particles = {
   clear() { __n.ptClear(); },
   get count() { return __n.ptCount(); }
 };
+// files.read('name.json'): a text file shipped with the game (next to the game file), or null
+const files = { read(name) { const t = __n.fileRead(String(name)); return t == null ? null : t; }, readJSON(name, d = null) { const t = files.read(name); if (t == null) return d; try { return JSON.parse(t); } catch (e) { return d; } } };
+globalThis.files = files;
 globalThis.models = models; globalThis.particles = particles; globalThis.Model = Model;
 globalThis.__uiDispatch = function (json) {
   for (const e of JSON.parse(json)) {
@@ -427,7 +434,10 @@ static void bindNatives(JSContext* c) {
   FN("restart", 0, W(c)->restart(); return JS_UNDEFINED;);
   FN("net", 3, { std::string r = W(c)->net(S(c, a[0]), S(c, a[1]), S(c, a[2])); return JS_NewStringLen(c, r.data(), r.size()); });
   FN("setQuality", 1, W(c)->setQuality(S(c, a[0])); return JS_UNDEFINED;);
+  FN("fileRead", 1, { std::string n = S(c, a[0]); if (n.empty() || n.find("..") != std::string::npos || n[0] == '/' || n[0] == '\\' || n.find(':') != std::string::npos) return JS_NULL;
+    std::ifstream f(std::filesystem::u8path(W(c)->assetPath(n)), std::ios::binary); if (!f) return JS_NULL; std::string t((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()); return JS_NewStringLen(c, t.data(), t.size()); });
   FN("setSky", 1, W(c)->setSky(S(c, a[0])); return JS_UNDEFINED;);
+  FN("setCamera", 1, W(c)->setCamera(S(c, a[0])); return JS_UNDEFINED;);
   FN("gp", 3, { std::string s = W(c)->gameplay(S(c, a[0]), S(c, a[1]), S(c, a[2])); return JS_NewStringLen(c, s.data(), s.size()); });
   FN("postGet", 0, { std::string s = W(c)->postGet(); return JS_NewStringLen(c, s.data(), s.size()); });
   FN("setGravity", 1, W(c)->setGravity((float)D(c, a[0])); return JS_UNDEFINED;);
@@ -577,6 +587,12 @@ static void bindNatives(JSContext* c) {
   FN("voxCanPlace", 5, { VoxelWorld* v = W(c)->voxels(); return JS_NewBool(c, v && v->canPlace({(float)D(c, a[0]), (float)D(c, a[1]), (float)D(c, a[2])}, (float)D(c, a[3]), (float)D(c, a[4]))); });
   FN("voxRemove", 3, { VoxelWorld* v = W(c)->voxels(); return JS_NewInt32(c, v ? v->removeBlock({(float)D(c, a[0]), (float)D(c, a[1]), (float)D(c, a[2])}) : 0); });
   FN("voxCarve", 7, { VoxelWorld* v = W(c)->voxels(); return JS_NewBool(c, v && v->carve({(float)D(c, a[0]), (float)D(c, a[1]), (float)D(c, a[2])}, (int)D(c, a[3]), (int)D(c, a[4]), (int)D(c, a[5]), JS_ToBool(c, a[6]))); });
+  FN("voxSolid", 3, { VoxelWorld* v = W(c)->voxels(); return JS_NewBool(c, v && v->solidAt({(float)D(c, a[0]), (float)D(c, a[1]), (float)D(c, a[2])})); });
+  // any solid block in a box (its cells every 20 cm, the edges included): vehicles and moving things test where they go
+  FN("voxBoxSolid", 6, { VoxelWorld* v = W(c)->voxels(); if (!v) return JS_FALSE; glm::vec3 a0((float)D(c, a[0]), (float)D(c, a[1]), (float)D(c, a[2])), a1((float)D(c, a[3]), (float)D(c, a[4]), (float)D(c, a[5]));
+    glm::vec3 mn = glm::min(a0, a1), mx = glm::max(a0, a1), sz = mx - mn; if (sz.x * sz.y * sz.z > 4000) return JS_FALSE; int n[3]; for (int k = 0; k < 3; k++) n[k] = std::max(1, (int)std::ceil(sz[k] / 0.19f));
+    for (int i = 0; i <= n[0]; i++) for (int j = 0; j <= n[1]; j++) for (int k = 0; k <= n[2]; k++) if (v->solidAt(mn + sz * glm::vec3((float)i / n[0], (float)j / n[1], (float)k / n[2]))) return JS_TRUE;
+    return JS_FALSE; });
   FN("voxLiquid", 3, { VoxelWorld* v = W(c)->voxels(); return JS_NewInt32(c, v ? v->liquidAt({(float)D(c, a[0]), (float)D(c, a[1]), (float)D(c, a[2])}) : 0); });
   FN("voxRay", 8, { VoxelWorld* v = W(c)->voxels(); if (!v) return JS_NULL;
     VoxelHit h = v->raycast({(float)D(c, a[0]), (float)D(c, a[1]), (float)D(c, a[2])}, {(float)D(c, a[3]), (float)D(c, a[4]), (float)D(c, a[5])}, (float)D(c, a[6]), JS_ToBool(c, a[7])); if (!h.hit) return JS_NULL;

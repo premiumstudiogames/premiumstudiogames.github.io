@@ -114,7 +114,9 @@ public:
   const NavGrid& navigation() const { return nav_; }
   void setSky(const std::string& json) override;
   std::string postGet() override;
-  void setQuality(const std::string& json) override { quality_ = json; qualityVer_++; }   // world.setQuality: the player applies it to the renderer
+  void setQuality(const std::string& json) override { quality_ = json; qualityVer_++; }
+  void setCamera(const std::string& json) override;   // world.setCamera({ target, distance, height }): behind a point, turned by the mouse; null: back to the player
+  glm::vec3 followCam() const;
   const std::string& quality(int& ver) const { ver = qualityVer_; return quality_; }
   std::string net(const std::string& op, const std::string& a, const std::string& b) override;   // net.*: playing together (net.h)
   std::string gameplay(const std::string& op, const std::string& a, const std::string& b) override;   // gameplay.cpp
@@ -180,8 +182,9 @@ private:
   std::set<std::string> trophies_; std::unique_ptr<Ui> ui_; std::unique_ptr<Audio> audio_; std::unique_ptr<Models> models_; bool wasModal_ = false; std::unique_ptr<Net> net_;
   // player movement (scripts can change it: world.player.set); the defaults are the engine's usual ones
   std::string quality_; int qualityVer_ = 0; float mouseSens_ = 1;
+  bool camOn_ = false; glm::vec3 camTarget_{0}; float camDist_ = 6, camHeight_ = 0;
   bool sunSet_ = false; glm::vec3 sunDir_{0, -1, 0}, sunColor_{1}; float sunInt_ = 1;   // world.setSky({ sun })
-  struct Tune { bool fly = false, doubleTapRun = false; float walk = 5, run = 9, sneak = 2, jump = 5.2f, flySpeed = 10, flyRun = 1.6f, flyClimb = 6, gravity = 0, accel = 0;
+  struct Tune { bool fly = false, doubleTapRun = false, locked = false; float walk = 5, run = 9, sneak = 2, jump = 5.2f, flySpeed = 10, flyRun = 1.6f, flyClimb = 6, gravity = 0, accel = 0;
     std::string runKey = "Shift", sneakKey = ""; } tune_; bool grounded_ = false, running_ = false, sneaking_ = false, wHeld_ = false, tapRun_ = false; double wTap_ = -1;
   std::string msg_; double msgUntil_ = 0; std::vector<std::pair<std::string, std::string>> hud_;
   std::vector<std::pair<std::string, std::string>> pendingKeys_;

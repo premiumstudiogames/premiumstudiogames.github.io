@@ -163,7 +163,7 @@ bool Game::start() {
   clear();
   const Level* L = project_.level(levelName); if (!L) { logMsg("error: level \"" + levelName + "\" not found", LogKind::Error); return false; }
   setAssetRoot(project_.path.empty() ? std::string() : std::filesystem::u8path(project_.path).parent_path().u8string());
-  level_ = *L; time_ = 0; restartRequested_ = false; tune_ = Tune(); sunSet_ = false; mouseSens_ = 1; grounded_ = running_ = sneaking_ = tapRun_ = false;
+  level_ = *L; time_ = 0; restartRequested_ = false; tune_ = Tune(); sunSet_ = false; camOn_ = false; mouseSens_ = 1; grounded_ = running_ = sneaking_ = tapRun_ = false;
   for (auto& a : level_.actors) { auto o = std::make_unique<Obj>(); o->a = a; o->p = a.p; o->r = glm::radians(a.r); o->s = a.s; o->visible = a.visible; byId_[a.id] = o.get(); objs_.push_back(std::move(o)); }
   phys_.reset(new Physics()); phys_->init(level_.world.gravity); gravity_ = level_.world.gravity; swimming_ = false; nav_.clear(); navBuilt_ = false;
   // collision meshes attached to a moving one are part of its body (welded): a car with a cabin, a crate with a lid
@@ -323,6 +323,7 @@ void Game::update(float dt) {
   sneaking_ = !tune_.fly && (held(tune_.sneakKey) || padSneak); running_ = glm::dot(mv, mv) > 0 && !sneaking_ && (held(tune_.runKey) || tapRun_ || padRun_);
   float speed = tune_.fly ? tune_.flySpeed * (running_ ? tune_.flyRun : 1.f) : sneaking_ ? tune_.sneak : running_ ? tune_.run : tune_.walk; moveDir_ = mv;
   if (mode_ == "Spectator") { if (k("KeyE")) mv.y += 1; if (k("KeyQ")) mv.y -= 1; specPos_ += mv * speed * 1.6f * dt; }
+  else if (player_ != NO_BODY && driving_.empty() && tune_.locked) { phys_->setVelocity(player_, glm::vec3(0)); grounded_ = true; swimming_ = false; running_ = sneaking_ = false; }   // riding a script vehicle: the scripts move the player
   else if (player_ != NO_BODY && driving_.empty()) {
     glm::vec3 c = phys_->position(player_), v = phys_->velocity(player_);
     if (tune_.accel > 0) { float a = tune_.accel * dt; v.x += glm::clamp(mv.x * speed - v.x, -a, a); v.z += glm::clamp(mv.z * speed - v.z, -a, a); } else { v.x = mv.x * speed; v.z = mv.z * speed; }
@@ -644,7 +645,7 @@ glm::vec3 Game::playerPos() { return player_ != NO_BODY ? phys_->position(player
 void Game::playerTeleport(const glm::vec3& p) { if (player_ != NO_BODY) { phys_->teleport(player_, p, glm::quat(1, 0, 0, 0)); phys_->setVelocity(player_, glm::vec3(0)); } else specPos_ = p; }
 void Game::playerLaunch(const glm::vec3& v) { if (player_ != NO_BODY) phys_->setVelocity(player_, v); }
 std::string Game::playerGet() { const Tune& t = tune_; glm::vec3 v = player_ != NO_BODY && phys_ ? phys_->velocity(player_) : glm::vec3(0);
-  return json{{"fly", t.fly}, {"walkSpeed", t.walk}, {"runSpeed", t.run}, {"sneakSpeed", t.sneak}, {"jumpSpeed", t.jump}, {"flySpeed", t.flySpeed}, {"flyRun", t.flyRun}, {"flyClimb", t.flyClimb},
+  return json{{"fly", t.fly}, {"locked", t.locked}, {"walkSpeed", t.walk}, {"runSpeed", t.run}, {"sneakSpeed", t.sneak}, {"jumpSpeed", t.jump}, {"flySpeed", t.flySpeed}, {"flyRun", t.flyRun}, {"flyClimb", t.flyClimb},
     {"gravity", t.gravity}, {"accel", t.accel}, {"runKey", t.runKey}, {"sneakKey", t.sneakKey}, {"doubleTapRun", t.doubleTapRun}, {"yaw", yaw_}, {"pitch", pitch_},
     {"grounded", grounded_}, {"running", running_}, {"sneaking", sneaking_}, {"velocity", {v.x, v.y, v.z}}, {"health", health_}, {"maxHealth", maxHealth_}, {"dead", dead_},
     {"vehicle", driving_}, {"vehicleKey", vehicleKey_}}.dump(); }
@@ -653,7 +654,7 @@ void Game::playerSet(const std::string& js) { json o = json::parse(js, nullptr, 
   auto f = [&](const char* k, float& d) { if (o.contains(k) && o[k].is_number()) d = o[k].get<float>(); };
   auto b = [&](const char* k, bool& d) { if (o.contains(k) && o[k].is_boolean()) d = o[k].get<bool>(); };
   auto s = [&](const char* k, std::string& d) { if (o.contains(k) && o[k].is_string()) d = o[k].get<std::string>(); };
-  b("fly", t.fly); b("doubleTapRun", t.doubleTapRun); f("walkSpeed", t.walk); f("runSpeed", t.run); f("sneakSpeed", t.sneak); f("jumpSpeed", t.jump); f("flySpeed", t.flySpeed);
+  b("fly", t.fly); b("locked", t.locked); b("doubleTapRun", t.doubleTapRun); f("walkSpeed", t.walk); f("runSpeed", t.run); f("sneakSpeed", t.sneak); f("jumpSpeed", t.jump); f("flySpeed", t.flySpeed);
   f("flyRun", t.flyRun); f("flyClimb", t.flyClimb); f("gravity", t.gravity); f("accel", t.accel); s("runKey", t.runKey); s("sneakKey", t.sneakKey); s("vehicleKey", vehicleKey_);
   f("maxHealth", maxHealth_); maxHealth_ = std::max(1.f, maxHealth_);
   if (o.contains("health") && o["health"].is_number()) { health_ = glm::clamp(o["health"].get<float>(), 0.f, maxHealth_); if (health_ > 0 && dead_) { dead_ = false; respawnAt_ = -1; } }
@@ -689,6 +690,14 @@ std::string Game::net(const std::string& op, const std::string& a, const std::st
   if (op == "state") { json p = json::array(); for (int id : n.peers()) p.push_back(id); return json{{"role", n.role()}, {"id", n.id()}, {"peers", p}, {"connected", n.connected()}, {"error", n.error}}.dump(); }
   return ""; }
 // world.setSky({ sky, fogColor, fog, fogDensity, skyLight, groundLight, ambient, exposure, fov, sun: { dir: [x, y, z] (from the sun), color, intensity } })
+// world.setCamera: behind and above a point, turned by the mouse (yaw / pitch); it comes in front of blocks between
+glm::vec3 Game::followCam() const { glm::vec3 t = camTarget_ + glm::vec3(0, camHeight_, 0), dir(std::sin(yaw_) * std::cos(pitch_), -std::sin(pitch_), std::cos(yaw_) * std::cos(pitch_));
+  float d = camDist_; if (vox_) for (float s = 0.3f; s < camDist_; s += 0.1f) if (vox_->solidAt(t + dir * s)) { d = std::max(0.3f, s - 0.25f); break; }
+  return t + dir * d; }
+void Game::setCamera(const std::string& js) { json o = json::parse(js, nullptr, false); if (!o.is_object()) { camOn_ = false; return; }
+  auto v3 = [&](const char* k, glm::vec3& d) { if (o.contains(k) && o[k].is_array() && o[k].size() >= 3) for (int i = 0; i < 3; i++) d[i] = o[k][i].is_number() ? o[k][i].get<float>() : d[i]; };
+  v3("target", camTarget_); if (o.contains("distance") && o["distance"].is_number()) camDist_ = std::clamp(o["distance"].get<float>(), 0.5f, 60.f);
+  if (o.contains("height") && o["height"].is_number()) camHeight_ = o["height"].get<float>(); camOn_ = true; }
 void Game::setSky(const std::string& js) {
   json j = json::parse(js, nullptr, false); if (!j.is_object()) return; WorldSettings& w = level_.world;
   auto col = [&](const json& o, const char* k, glm::vec3& v) { if (!o.contains(k)) return; const json& c = o[k];
@@ -731,13 +740,13 @@ std::string Game::assetPath(const std::string& p) {
   for (auto& r : roots) { std::error_code ec; if (fs::exists(r / f, ec)) return (r / f).u8string(); if (fs::exists(r / "assets" / f, ec)) return (r / "assets" / f).u8string(); }
   return p;
 }
-glm::vec3 Game::cameraPos() { if (camSet_) return glm::vec3(camW_[3]); if (mode_ == "Spectator") return specPos_; return player_ != NO_BODY ? phys_->position(player_) + glm::vec3(0, 0.7f, 0) : specPos_; }
+glm::vec3 Game::cameraPos() { if (camOn_) return followCam(); if (camSet_) return glm::vec3(camW_[3]); if (mode_ == "Spectator") return specPos_; return player_ != NO_BODY ? phys_->position(player_) + glm::vec3(0, 0.7f, 0) : specPos_; }
 std::string Game::savePath(const std::string& name) {
   std::string game = project_.name.empty() ? "Game" : project_.name, n = name.empty() ? "world" : name;
   for (auto* s : {&game, &n}) for (char& ch : *s) if (ch == '/' || ch == '\\' || ch == ':' || ch == '*' || ch == '?' || ch == '"' || ch == '<' || ch == '>' || ch == '|') ch = '_';
   return (std::filesystem::u8path(documentsDir()) / "Saves" / std::filesystem::u8path(game) / std::filesystem::u8path(n + ".pgworld")).u8string();
 }
-glm::vec3 Game::cameraDir() { if (camSet_) return glm::normalize(-glm::vec3(camW_[2])); return quatYXZ({pitch_, yaw_, 0}) * glm::vec3(0, 0, -1); }
+glm::vec3 Game::cameraDir() { if (camOn_) { glm::vec3 d = camTarget_ + glm::vec3(0, camHeight_, 0) - followCam(); return glm::length(d) > 1e-4f ? glm::normalize(d) : glm::vec3(0, 0, -1); } if (camSet_) return glm::normalize(-glm::vec3(camW_[2])); return quatYXZ({pitch_, yaw_, 0}) * glm::vec3(0, 0, -1); }
 // A trophy: Premium Games (which started this game) reads the events file it named and puts the trophy on the player's account
 void Game::trophy(const std::string& id) {
   bool ok = !id.empty() && id.size() <= 40; for (char ch : id) ok = ok && (std::isalnum((unsigned char)ch) || ch == '_' || ch == '-');

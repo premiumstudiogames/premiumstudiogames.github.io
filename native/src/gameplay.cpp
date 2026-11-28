@@ -81,6 +81,7 @@ glm::mat4 Game::playerBone(const std::string& bone) const {
 }
 void Game::cameraCompute(glm::vec3& camPos, glm::mat4& view) const {
   glm::vec3 eye = mode_ == "Spectator" || player_ == NO_BODY ? specPos_ : phys_->position(player_) + glm::vec3(0, 0.7f, 0);
+  if (camOn_) { glm::vec3 t = camTarget_ + glm::vec3(0, camHeight_, 0); camPos = followCam(); view = glm::lookAt(camPos, t, AY); return; }   // world.setCamera
   if (Obj* v = driving_.empty() ? nullptr : get(driving_)) {   // in a car: behind it (the mouse looks around it), or in the driver's seat (V)
     glm::mat4 VW = rigid(world(*v)); const MeshData& md = meshShape(v->a.mesh); glm::vec3 s = glm::abs(v->s), mn = md.bmin * s, mx = md.bmax * s, h = (mx - mn) * 0.5f, c = (mn + mx) * 0.5f;
     if (driveInside_) { glm::vec3 seat = glm::vec3(VW * glm::vec4(c.x - h.x * 0.38f, c.y + h.y * 0.55f, c.z - h.z * 0.05f, 1));

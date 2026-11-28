@@ -62,6 +62,7 @@ public:
   virtual void setSky(const std::string& json) { (void)json; }
   virtual std::string postGet() { return "{}"; }   // the camera effects now (JSON)
   virtual void setQuality(const std::string& json) { (void)json; }
+  virtual void setCamera(const std::string& json) { (void)json; }
   virtual std::string net(const std::string& op, const std::string& a, const std::string& b) { (void)op; (void)a; (void)b; return ""; }
   // the game's own small saved values (settings, world list, inventories): op = get / set / remove / keys; get gives "\x01" when missing
   virtual std::string storage(const std::string& op, const std::string& key, const std::string& val) { (void)op; (void)key; (void)val; return "\x01"; }
