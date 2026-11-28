@@ -166,7 +166,7 @@ void Editor::drawConsole() {
         bool lit = r == 4 && c == OSK_SHIFT && oskShift_;
         dl->AddRectFilled(a, b, on ? IM_COL32(0, 112, 224, 255) : lit ? IM_COL32(60, 90, 140, 255) : IM_COL32(44, 48, 58, 255), 6 * s);
         if (on) dl->AddRect({a.x - 2 * s, a.y - 2 * s}, {b.x + 2 * s, b.y + 2 * s}, IM_COL32_WHITE, 7 * s, 0, 2.5f * s);
-        char t[2] = {r < 4 ? OSK_ROWS[oskShift_][r][c] : 0, 0}; const char* label = r < 4 ? t : OSK_ACT[c];
+        char t[2] = {r < 4 ? (char)OSK_ROWS[oskShift_][r][c] : (char)0, 0}; const char* label = r < 4 ? t : OSK_ACT[c];
         float ls = r < 4 ? fs * 1.5f : fs; ImVec2 ts = font->CalcTextSizeA(ls, 1e9f, 0, label);
         dl->AddText(font, ls, {(a.x + b.x - ts.x) / 2, (a.y + b.y - ts.y) / 2}, IM_COL32_WHITE, label);
       }
