@@ -70,21 +70,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Configure
-        run: cmake -S native -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+        run: |
+          brew list ninja > /dev/null 2>&1 || brew install ninja
+          cmake -S native -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
       - name: Build
-        run: cmake --build build --config Release --parallel -- -quiet
+        run: cmake --build build --parallel
       - name: Engine tests
-        run: build/Release/PremiumEngineTests
+        run: build/PremiumEngineTests
       - name: A game played by the player program (Third Person template, walks forward)
         timeout-minutes: 10
         run: |
-          mkdir -p st && build/Release/PremiumEngineTests --write-template ThirdPerson "$PWD/st/game.pge.json"
-          cp -r build/Release/assets st/ 2>/dev/null || true
-          build/Release/PremiumEnginePlayer --game "$PWD/st/game.pge.json" --selftest "$PWD/st" || { cat st/player-result.txt; exit 1; }
+          mkdir -p st && build/PremiumEngineTests --write-template ThirdPerson "$PWD/st/game.pge.json"
+          cp -r build/assets st/ 2>/dev/null || true
+          build/PremiumEnginePlayer --game "$PWD/st/game.pge.json" --selftest "$PWD/st" || { cat st/player-result.txt; exit 1; }
           cat st/player-result.txt
       - name: Keep the programs
         run: |
-          mkdir -p out && cp build/Release/PremiumEngine build/Release/PremiumEnginePlayer out/ && cp -r build/Release/assets out/
+          mkdir -p out && cp build/PremiumEngine build/PremiumEnginePlayer out/ && cp -r build/assets out/
       - uses: actions/upload-artifact@v4
         with:
           name: engine-macos-${{ matrix.arch }}
