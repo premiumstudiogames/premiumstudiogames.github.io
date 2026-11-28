@@ -55,6 +55,18 @@ struct AnimPlay {
   int from = -1; float fromTime = 0, blend = 0, blendTime = 0; bool fromLoop = true;
   void play(int a, bool loopIt, float spd, float blendSeconds);   // blendSeconds 0 = at once
   bool advance(const Model& m, float dt);     // true when it reached the end this step (not looping)
+  // blend space (Unreal's 1D Blend Space): animations along a value (speed: idle 0, walk 1.5, run 5); the two either side
+  // of the value are mixed, their steps kept in time (their cycles stretched to one length)
+  std::vector<std::pair<int, float>> space; float spaceValue = 0, phase = 0;
+  void setSpace(const std::vector<std::pair<int, float>>& s, float value, float blendSeconds);
+  void spaceAt(const Model& m, int& a, int& b, float& w) const;   // the two animations and how much of the second
+  // a layer on part of the body (Layered blend per bone): from a bone down (shooting, waving while walking)
+  int layer = -1, layerBone = -1; float layerTime = 0, layerSpeed = 1, layerWeight = 0, layerTarget = 0, layerFade = 0.15f; bool layerLoop = false, layerEnded = false;
+  void playLayer(int a, int bone, bool loopIt, float spd, float weight, float fade);
+  void stopLayer(float fade) { layerTarget = 0; layerFade = std::max(0.f, fade); }
+  // IK (the model's own space): two bones reaching for a place (a hand on a gun, a foot on a step), or a bone turned to look at one
+  struct Ik { int end = -1, mid = -1, root = -1; glm::vec3 target{0}, pole{0}; float weight = 1; bool aim = false, hasPole = false; float maxAngle = 70; };
+  std::vector<Ik> ik; int hip = -1; float hipDrop = 0;   // hip: lowered by hipDrop (feet on uneven ground)
   std::vector<std::pair<int, glm::mat4>> fixed;   // nodes held where something else puts them (ragdoll parts): node → its place in the model
   std::vector<std::pair<int, glm::vec3>> scaled;  // nodes made bigger / smaller with what hangs on them (0 = gone: a limb shot off)
 };

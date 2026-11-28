@@ -308,6 +308,26 @@ static std::vector<BpNodeDef> buildLibrary() {
   add("Animation.BoneLocation", "Animation", U, "Get Bone Location", "موقع العظمة", "Where a bone (joint) of the model is in the world: hold a sword in Hand_R, shoot from Muzzle...",
       "مكان عظمة (مفصل) من المجسم في العالم: تمسك سيف في Hand_R، تطلق من Muzzle...", {T, ">Bone:string=\"Hand_R\"", "<ReturnValue:vector@__bp.bone($in(Target), $in(Bone))"});
 
+  add("Animation.SetBlendSpace", "Animation", X, "Set Blend Space", "مزج الحركات (Blend Space)", "Mixes animations by a value (speed): Idle at 0, Walk at 1.5, Run at 5 - the two either side of Value play mixed, in step. Then Set Blend Value every frame.",
+      "يمزج الحركات حسب قيمة (السرعة): Idle عند 0، Walk عند 1.5، Run عند 5 - الحركتين اللي حول القيمة تشتغل ممزوجة بنفس الخطوة. بعدها Set Blend Value كل إطار.",
+      {">exec", T, ">Anim1:string=\"Idle\"", ">At1:number=0", ">Anim2:string=\"Walk\"", ">At2:number=1.5", ">Anim3:string=\"Run\"", ">At3:number=5", ">Value:number=0", "<then"},
+      "{ const __t = $in(Target); const __l = [[$in(Anim1), +$in(At1)], [$in(Anim2), +$in(At2)], [$in(Anim3), +$in(At3)]].filter(x => x[0]); if (__t && __t.setBlendSpace) __t.setBlendSpace(__l, +$in(Value)); }\n$exec(then)");
+  add("Animation.SetBlendValue", "Animation", X, "Set Blend Value", "قيمة المزج", "The value of the blend space (the speed): which animations play, mixed how much.", "قيمة المزج (السرعة): أي حركات تشتغل وبأي نسبة.",
+      {">exec", T, ">Value:number=0", "<then"}, "{ const __t = $in(Target); if (__t) __t.blendValue = +$in(Value); }\n$exec(then)");
+  add("Animation.PlayLayer", "Animation", X, "Play Animation On Bone", "حركة على جزء من الجسم", "Plays an animation from a bone down (Spine: the upper body shoots or waves while the legs keep walking). Event Animation End when it ends.",
+      "يشغّل حركة من عظمة ونازل (Spine: الجزء العلوي يطلق أو يأشر والرجول تكمل مشي). حدث Animation End لما تخلص.",
+      {">exec", T, ">Animation:string", ">Bone:string=\"Spine\"", ">Loop:bool=false", ">Weight:number=1", "<then"},
+      "{ const __t = $in(Target); if (__t && __t.playLayer) __t.playLayer($in(Animation), { bone: __bp.str($in(Bone)), loop: !!$in(Loop), weight: +$in(Weight) }); }\n$exec(then)");
+  add("Animation.StopLayer", "Animation", X, "Stop Animation On Bone", "أوقف حركة الجزء", "The part of the body goes back to the rest of the animation.", "الجزء يرجع لباقي الحركة.", {">exec", T, "<then"}, "{ const __t = $in(Target); if (__t && __t.stopLayer) __t.stopLayer(); }\n$exec(then)");
+  add("Animation.SetIK", "Animation", X, "Set IK Target", "مد العظمة لمكان (IK)", "A hand (or foot) reaches for a place or an actor - the arm bends to get there (a hand on a door, on a gun). Weight 0 = let go.",
+      "اليد (أو الرجل) تمتد لمكان أو ممثل - الذراع ينثني عشان يوصل (يد على باب، على سلاح). Weight صفر = يتركه.",
+      {">exec", T, ">Bone:string=\"Hand_R\"", ">Location:vector", ">ToActor:actor", ">Weight:number=1", "<then"},
+      "{ const __t = $in(Target); if (__t && __t.setIK) { const __a = $in(ToActor); __t.setIK(__bp.str($in(Bone)), +$in(Weight) <= 0 ? null : (__a || __bp.vec($in(Location))), { weight: +$in(Weight) }); } }\n$exec(then)");
+  add("Animation.LookAt", "Animation", X, "Look At", "خله يطالع", "The head turns to look at a place or an actor (the player), up to Max Angle. Nothing = looks ahead again.", "الراس يلف ويطالع مكان أو ممثل (اللاعب)، لين Max Angle. لا شيء = يرجع يطالع قدام.",
+      {">exec", T, ">ToActor:actor=\"player\"", ">Location:vector", ">MaxAngle:number=70", "<then"},
+      "{ const __t = $in(Target); if (__t && __t.lookAt) { const __a = $in(ToActor); const __v = __bp.pt($in(Location)); __t.lookAt(__a || __v || null, { maxAngle: +$in(MaxAngle) }); } }\n$exec(then)");
+  add("Animation.AutoAnimate", "Animation", X, "Set Auto Animate", "حركة تلقائية", "On: idle / walk / run by itself from how fast the character moves (Move To). Playing an animation turns it off.",
+      "شغّال: يوقف / يمشي / يركض لحاله حسب سرعة الشخصية (Move To). تشغيل حركة يطفيه.", {">exec", T, ">On:bool=true", "<then"}, "{ const __t = $in(Target); if (__t) __t.autoAnimate = !!$in(On); }\n$exec(then)");
   add("Animation.SetBoneScale", "Animation", X, "Set Bone Scale", "حجم العظمة", "Makes a bone (and what hangs on it) bigger or smaller; 0 = gone (a limb or head shot off - add blood with Spawn Decal).",
       "يكبّر أو يصغّر عظمة (واللي معلّق فيها)؛ 0 = تختفي (يد أو راس انقطع - حط دم بـ Spawn Decal).", {">exec", T, ">Bone:string=\"Head\"", ">Scale:number=0", "<then"},
       "{ const __t = $in(Target); if (__t && __t.setBoneScale) __t.setBoneScale($in(Bone), +$in(Scale)); }\n$exec(then)");

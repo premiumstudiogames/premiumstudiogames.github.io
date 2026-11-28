@@ -137,6 +137,10 @@ private:
     struct RagPart { int node; uint32_t body; glm::mat4 offset; };
     std::vector<RagPart> rag; glm::vec3 ragFrom{0};   // a ragdoll: a body per bone; where the actor is from its first part
     uint32_t joint = NO_BODY;         // a Physics Constraint's joint
+    // animation: idle / walk / run by itself from how fast it moves (off once a script plays an animation), feet on the ground (IK)
+    bool autoAnim = true, footIK = true; glm::vec3 prevP{0}; float moveSpeed = 0; bool autoOn = false;
+    struct IkReq { std::string bone, actor; glm::vec3 target{0}; float weight = 1, maxAngle = 70; bool aim = false; };
+    std::vector<IkReq> ikReq;
     struct Walk { bool active = false; std::vector<glm::vec3> path; size_t i = 1; float speed = 3.5f, accept = 0.5f, foot = 0; bool turn = true, player = false; std::string goal, result; glm::vec3 goalAt{0}; double repath = 0; } walk;   // AI Move To
   };
   NavGrid nav_; bool navBuilt_ = false;
@@ -169,6 +173,10 @@ private:
   Obj* objOfBody(uint32_t body) const;
   // Third Person: the player's character, its animations chosen by how it moves (idle, walk, run, jump, fall), turning where it goes
   std::string pModel_, pAnimName_; AnimPlay pAnim_; float charYaw_ = 0; void playerAnimFrame(float dt);
+  std::vector<Obj::IkReq> pIk_;                                                // IK on the player's character
+  std::string animOp(Obj& o, const Model& m, const std::string& op, const std::string& arg);
+  void animFrame(float dt);                                                    // animation.cpp: every model's animation, auto locomotion, IK
+  void solveIK(const Model& m, AnimPlay& an, const glm::mat4& W, const std::vector<Obj::IkReq>& req, bool feet, float floorY, std::vector<uint32_t> ignore);
   void ensureNav();
   bool walkPath(Obj& o, const glm::vec3& goalFeet);
   void walkFinish(Obj& o, bool ok);

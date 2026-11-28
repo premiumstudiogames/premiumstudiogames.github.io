@@ -260,12 +260,42 @@ void releaseAssets() { g_texFront.clear(); g_shapeKeep.clear(); g_models.clear()
 
 /* ------------------------------------------------------------------ animation */
 void AnimPlay::play(int a, bool loopIt, float spd, float blendSeconds) {
-  if (a == anim && playing && loopIt == loop) { speed = spd; return; }   // already playing it
+  if (a == anim && playing && loopIt == loop && space.empty()) { speed = spd; return; }   // already playing it
+  if (!space.empty()) { space.clear(); time = 0; anim = -1; playing = false; from = -1; }
   if (blendSeconds > 0 && anim >= 0 && playing) { from = anim; fromTime = time; fromLoop = loop; blendTime = blendSeconds; blend = 0; } else { from = -1; blend = 1; }
   anim = a; time = spd < 0 ? 1e30f : 0; loop = loopIt; speed = spd; playing = a >= 0;
 }
+void AnimPlay::setSpace(const std::vector<std::pair<int, float>>& s, float value, float blendSeconds) {
+  spaceValue = value; if (s == space && playing) return;
+  bool was = !space.empty(); auto sorted = s; std::sort(sorted.begin(), sorted.end(), [](auto& x, auto& y) { return x.second < y.second; });
+  if (!was && blendSeconds > 0 && anim >= 0 && playing) { from = anim; fromTime = time; fromLoop = loop; blendTime = blendSeconds; blend = 0; } else if (!was) { from = -1; blend = 1; }
+  space = sorted; if (!was) phase = 0; anim = space.empty() ? -1 : space[0].first; loop = true; playing = !space.empty(); time = 0;
+}
+void AnimPlay::spaceAt(const Model& m, int& a, int& b, float& w) const {
+  a = b = -1; w = 0; if (space.empty()) return; size_t n = space.size();
+  if (spaceValue <= space[0].second || n == 1) { a = b = space[0].first; return; }
+  if (spaceValue >= space[n - 1].second) { a = b = space[n - 1].first; return; }
+  for (size_t i = 0; i + 1 < n; i++) if (spaceValue <= space[i + 1].second) { a = space[i].first; b = space[i + 1].first; float r = space[i + 1].second - space[i].second; w = r > 1e-6f ? (spaceValue - space[i].second) / r : 0; break; }
+  if (a >= (int)m.anims.size()) a = -1; if (b >= (int)m.anims.size()) b = -1;
+}
+void AnimPlay::playLayer(int a, int bone, bool loopIt, float spd, float weight, float fade) {
+  if (a < 0) { stopLayer(fade); return; }
+  if (a != layer || !loopIt) layerTime = spd < 0 ? 1e30f : 0; if (layer < 0) layerWeight = fade > 0 ? 0 : weight;
+  layer = a; layerBone = bone; layerLoop = loopIt; layerSpeed = spd; layerTarget = glm::clamp(weight, 0.f, 1.f); layerFade = std::max(0.f, fade); layerEnded = false;
+}
 bool AnimPlay::advance(const Model& m, float dt) {
   bool ended = false;
+  if (!space.empty()) { int a, b; float w; spaceAt(m, a, b, w);   // one cycle for both: the walk and the run keep their feet in step
+    float da = a >= 0 ? m.anims[a].duration : 0, db = b >= 0 ? m.anims[b].duration : da, d = glm::mix(da, db, w);
+    if (d > 0) { phase += dt * speed / d; phase -= std::floor(phase); } anim = w < 0.5f ? a : b; playing = true; }
+  if (layer >= (int)m.anims.size()) layer = -1;
+  if (layer >= 0) { float d = m.anims[layer].duration; layerTime += dt * layerSpeed;
+    if (d > 0 && layerLoop) { layerTime = std::fmod(layerTime, d); if (layerTime < 0) layerTime += d; }
+    else if (d > 0 && (layerTime >= d || layerTime < 0)) { layerTime = std::clamp(layerTime, 0.f, d); if (layerTarget > 0) { layerTarget = 0; layerEnded = true; } }
+    float step = layerFade > 0 ? dt / layerFade : 1; layerWeight += glm::clamp(layerTarget - layerWeight, -step, step);
+    if (layerWeight <= 0 && layerTarget <= 0) layer = -1; }
+  if (!space.empty()) { if (from >= 0) { float d = m.anims[from].duration; fromTime += dt * speed; if (d > 0) fromTime = fromLoop ? std::fmod(fromTime, d) : std::min(fromTime, d);
+      blend += blendTime > 0 ? dt / blendTime : 1; if (blend >= 1) { from = -1; blend = 1; } } return false; }
   if (anim >= (int)m.anims.size()) { anim = -1; playing = false; } if (from >= (int)m.anims.size()) from = -1;
   if (anim >= 0 && playing) { float d = m.anims[anim].duration; time += dt * speed;
     if (d <= 0) time = 0;
@@ -291,13 +321,37 @@ static void applyAnim(const ModelAnim& a, float t, std::vector<Trs>& L) {
   for (auto& c : a.ch) { if (c.node < 0 || c.node >= (int)L.size()) continue; glm::vec4 v = sample(c, t);
     if (c.path == 0) L[c.node].t = glm::vec3(v); else if (c.path == 1) L[c.node].r = glm::normalize(glm::quat(v.w, v.x, v.y, v.z)); else L[c.node].s = glm::vec3(v); }
 }
+static void mixTrs(std::vector<Trs>& L, const std::vector<Trs>& B, float w, const std::vector<char>* only = nullptr) {   // L toward B by w
+  for (size_t i = 0; i < L.size(); i++) { if (only && !(*only)[i]) continue; L[i].t = glm::mix(L[i].t, B[i].t, w); L[i].s = glm::mix(L[i].s, B[i].s, w);
+    glm::quat q = B[i].r; if (glm::dot(L[i].r, q) < 0) q = -q; L[i].r = glm::normalize(glm::slerp(L[i].r, q, w)); }
+}
+static glm::quat turnFromTo(glm::vec3 a, glm::vec3 b) {
+  float c = glm::dot(a, b); if (c > 0.99999f) return glm::quat(1, 0, 0, 0);
+  if (c < -0.99999f) { glm::vec3 ax = std::abs(a.x) < 0.9f ? glm::cross(a, glm::vec3(1, 0, 0)) : glm::cross(a, glm::vec3(0, 1, 0)); return glm::angleAxis(3.14159265f, glm::normalize(ax)); }
+  glm::vec3 x = glm::cross(a, b); return glm::normalize(glm::quat(1 + c, x.x, x.y, x.z));
+}
+static void moveSubtree(const Model& m, std::vector<glm::mat4>& W, int node, const glm::mat4& D) {   // node and all under it
+  std::vector<int> st{node}; while (!st.empty()) { int i = st.back(); st.pop_back(); if (i < 0 || i >= (int)W.size()) continue; W[i] = D * W[i]; for (int c : m.nodes[i].children) st.push_back(c); }
+}
+static glm::mat4 turnAbout(const glm::vec3& p, const glm::quat& q) { return glm::translate(glm::mat4(1), p) * glm::mat4_cast(q) * glm::translate(glm::mat4(1), -p); }
+static bool restOf(const Model& m, int node, glm::mat4& rest) {   // a joint's place in the bind pose (from its inverse bind matrix)
+  for (auto& s : m.skins) for (size_t j = 0; j < s.joints.size(); j++) if (s.joints[j] == node) { rest = glm::inverse(s.inverseBind[j]); return true; } return false;
+}
 void poseModel(const Model& m, const AnimPlay* a, ModelPose& out) {
   size_t n = m.nodes.size(); std::vector<Trs> L(n); for (size_t i = 0; i < n; i++) L[i] = {m.nodes[i].t, m.nodes[i].s, m.nodes[i].r};
-  if (a && a->anim >= 0 && a->anim < (int)m.anims.size()) {
-    if (a->from >= 0 && a->from < (int)m.anims.size() && a->blend < 1) { std::vector<Trs> F = L; applyAnim(m.anims[a->from], a->fromTime, F); applyAnim(m.anims[a->anim], a->time, L);
-      float w = glm::clamp(a->blend, 0.f, 1.f); w = w * w * (3 - 2 * w);
-      for (size_t i = 0; i < n; i++) { L[i].t = glm::mix(F[i].t, L[i].t, w); L[i].s = glm::mix(F[i].s, L[i].s, w); L[i].r = glm::slerp(F[i].r, L[i].r, w); } }
-    else applyAnim(m.anims[a->anim], a->time, L); }
+  auto current = [&](std::vector<Trs>& P) {   // the pose now (a blend space, or one animation)
+    if (!a->space.empty()) { int x, y; float w; a->spaceAt(m, x, y, w);
+      if (x >= 0) applyAnim(m.anims[x], a->phase * m.anims[x].duration, P);
+      if (y >= 0 && y != x && w > 0) { std::vector<Trs> B = L; applyAnim(m.anims[y], a->phase * m.anims[y].duration, B); mixTrs(P, B, w); } }
+    else applyAnim(m.anims[a->anim], a->time, P); };
+  if (a && ((a->anim >= 0 && a->anim < (int)m.anims.size()) || !a->space.empty())) {
+    if (a->from >= 0 && a->from < (int)m.anims.size() && a->blend < 1) { std::vector<Trs> F = L; applyAnim(m.anims[a->from], a->fromTime, F); current(L);
+      float w = glm::clamp(a->blend, 0.f, 1.f); w = w * w * (3 - 2 * w); std::vector<Trs> C = L; L = F; mixTrs(L, C, w); }
+    else current(L); }
+  if (a && a->layer >= 0 && a->layer < (int)m.anims.size() && a->layerWeight > 0) {   // the layer: from its bone down
+    std::vector<Trs> B = L; applyAnim(m.anims[a->layer], a->layerTime, B); std::vector<char> in(n, a->layerBone < 0 ? 1 : 0);
+    if (a->layerBone >= 0) for (size_t i = 0; i < n; i++) for (int p = (int)i; p >= 0; p = m.nodes[p].parent) if (p == a->layerBone) { in[i] = 1; break; }
+    float w = glm::clamp(a->layerWeight, 0.f, 1.f); mixTrs(L, B, w * w * (3 - 2 * w), &in); }
   std::vector<glm::vec3> grow; if (a && !a->scaled.empty()) { grow.assign(n, glm::vec3(1)); for (auto& sc : a->scaled) if (sc.first >= 0 && sc.first < (int)n) { L[sc.first].s *= glm::max(sc.second, glm::vec3(1e-4f)); grow[sc.first] = glm::max(sc.second, glm::vec3(1e-4f)); } }
   out.world.assign(n, glm::mat4(1)); std::vector<char> done(n, 0);
   std::vector<const glm::mat4*> held; if (a && !a->fixed.empty()) { held.assign(n, nullptr); for (auto& f : a->fixed) if (f.first >= 0 && f.first < (int)n) held[f.first] = &f.second; }
@@ -307,6 +361,22 @@ void poseModel(const Model& m, const AnimPlay* a, ModelPose& out) {
     glm::mat4 local = glm::translate(glm::mat4(1), L[i].t) * glm::mat4_cast(L[i].r) * glm::scale(glm::mat4(1), L[i].s);
     int p = m.nodes[i].parent; if (!grow.empty() && p >= 0 && done[p]) grow[i] *= grow[p];   // what hangs on a scaled bone goes with it (a held ragdoll part too)
     out.world[i] = !held.empty() && held[i] ? (grow.empty() ? *held[i] : *held[i] * glm::scale(glm::mat4(1), grow[i])) : p >= 0 && done[p] ? out.world[p] * local : local; for (int c : m.nodes[i].children) stack.push_back(c); }
+  // IK: hips lowered, then each chain reaches for its place; a bone turned to look (not on a ragdoll: its bodies decide)
+  if (a && held.empty() && (!a->ik.empty() || (a->hip >= 0 && a->hipDrop != 0))) {
+    if (a->hip >= 0 && a->hip < (int)n && a->hipDrop != 0) moveSubtree(m, out.world, a->hip, glm::translate(glm::mat4(1), glm::vec3(0, a->hipDrop, 0)));
+    for (auto& k : a->ik) { if (k.end < 0 || k.end >= (int)n || k.weight <= 0) continue; float wgt = std::min(1.f, k.weight);
+      if (k.aim) { glm::mat4 rest; if (!restOf(m, k.end, rest)) continue; glm::vec3 h(out.world[k.end][3]);
+        glm::vec3 cur = glm::normalize(glm::mat3(out.world[k.end]) * glm::inverse(glm::mat3(rest)) * glm::vec3(0, 0, 1)), want = k.target - h; if (glm::length(want) < 1e-4f) continue; want = glm::normalize(want);
+        float ang = std::acos(glm::clamp(glm::dot(cur, want), -1.f, 1.f)), mx = glm::radians(k.maxAngle); glm::quat q = turnFromTo(cur, want);
+        if (ang > mx && ang > 1e-4f) q = glm::slerp(glm::quat(1, 0, 0, 0), q, mx / ang); q = glm::slerp(glm::quat(1, 0, 0, 0), q, wgt); moveSubtree(m, out.world, k.end, turnAbout(h, q)); continue; }
+      if (k.mid < 0 || k.root < 0 || k.mid >= (int)n || k.root >= (int)n) continue;
+      glm::vec3 A(out.world[k.root][3]), B(out.world[k.mid][3]), C(out.world[k.end][3]); float l1 = glm::length(B - A), l2 = glm::length(C - B); if (l1 < 1e-5f || l2 < 1e-5f) continue;
+      glm::vec3 T = glm::mix(C, k.target, wgt), at = T - A; float d = glm::clamp(glm::length(at), std::abs(l1 - l2) + 1e-4f, l1 + l2 - 1e-4f); glm::vec3 dir = glm::length(at) > 1e-6f ? glm::normalize(at) : glm::normalize(C - A);
+      glm::vec3 bend = (k.hasPole ? k.pole : B) - A; bend -= dir * glm::dot(bend, dir); if (glm::length(bend) < 1e-5f) { bend = (B - A) - dir * glm::dot(B - A, dir); if (glm::length(bend) < 1e-5f) bend = glm::abs(dir.y) < 0.9f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0); bend -= dir * glm::dot(bend, dir); }
+      bend = glm::normalize(bend); float ca = glm::clamp((l1 * l1 + d * d - l2 * l2) / (2 * l1 * d), -1.f, 1.f), sa = std::sqrt(1 - ca * ca);
+      glm::vec3 B2 = A + dir * ca * l1 + bend * sa * l1, C2 = A + dir * d;
+      moveSubtree(m, out.world, k.root, turnAbout(A, turnFromTo(glm::normalize(B - A), glm::normalize(B2 - A))));
+      glm::vec3 B1(out.world[k.mid][3]), C1(out.world[k.end][3]); moveSubtree(m, out.world, k.mid, turnAbout(B1, turnFromTo(glm::normalize(C1 - B1), glm::normalize(C2 - B1)))); } }
   out.joints.clear(); out.skinAt.clear();
   for (auto& s : m.skins) { out.skinAt.push_back((int)out.joints.size()); for (size_t j = 0; j < s.joints.size(); j++) out.joints.push_back((s.joints[j] >= 0 && s.joints[j] < (int)n ? out.world[s.joints[j]] : glm::mat4(1)) * s.inverseBind[j]); }
 }

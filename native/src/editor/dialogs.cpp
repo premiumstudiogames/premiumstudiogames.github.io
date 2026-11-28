@@ -50,6 +50,10 @@ self  - the actor the script is on
   self.animations                ['Idle', 'Walk', 'Run', ...]
   self.animationSpeed = 2        twice as fast (-1 = backwards)
   self.bone('Hand_R')            { position, rotation } of a bone (joint) in the world: hold things, shoot from a muzzle
+  a character that moves (moveTo, or moved by a script) is idle / walks / runs by itself, its feet on the ground; self.autoAnimate = false / self.footIK = false to stop
+  self.setBlendSpace([['Idle', 0], ['Walk', 1.5], ['Run', 5]], speed)   self.blendValue = speed   (mixed by the value, in step)
+  self.playLayer('Shoot', { bone: 'Spine', loop: false, weight: 1 })   self.stopLayer()   an animation on part of the body
+  self.setIK('Hand_L', place | actor | null, { weight })   self.lookAt(actor | place | null, { maxAngle: 70 })   self.clearIK()   (world.player.setIK / lookAt too)
   self.setBoneScale('Head', 0)   a bone and what hangs on it bigger / smaller; 0 = gone (gore: a limb shot off)
   walking (AI) on the level's floors, round walls, up ramps and stairs:
   self.moveTo([x, y, z] | actor | world.player, { speed: 3.5, acceptance: 0.5, turn: true })   false if there's no way; an actor is followed

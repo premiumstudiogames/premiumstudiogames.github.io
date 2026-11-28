@@ -422,6 +422,55 @@ int main(int argc, char** argv) {
     CHECK(errs == 0 && code.find("function onDamage(amount, info)") != std::string::npos && code.find("function onPlayerDeath()") != std::string::npos, ("the gameplay Blueprint nodes compile " + all).c_str());
     CHECK(ScriptHost::check(code).empty(), ("…to code that runs: " + ScriptHost::check(code)).c_str());
   }
+  {   // animation: idle / walk / run by itself, blend spaces, layers, IK (hands, head, feet)
+    std::printf("animation\n");
+    Project q = makeTemplate("Blank", "Anim"); Level& L = q.levels[0].second; L.actors.clear(); L.world.gameMode = "Spectator";
+    Actor fl = newActor("StaticMesh", "Floor"); fl.p = {0, -0.5f, 0}; fl.s = {80, 1, 80}; L.actors.push_back(fl);
+    Actor step = newActor("StaticMesh", "Step"); step.p = {8.12f, 0.1f, 0}; step.s = {0.25f, 0.2f, 1}; L.actors.push_back(step);
+    auto man = [&](const char* n, glm::vec3 p) { Actor a = newActor("StaticMesh", n); a.mesh = "Characters/Mannequin.glb"; a.material.clear(); a.p = p; a.physics.collision = false; a.anim = "Idle"; L.actors.push_back(a); };
+    man("Walker", {0, 0, 0}); man("Mixer", {4, 0, 0}); man("OnStep", {8, 0, 0}); man("Flat", {12, 0, 0});
+    Game g(q, "Main"); CHECK(g.start(), "a level with characters starts");
+    auto J = [](const std::string& s) { return json::parse(s.empty() ? "null" : s); };
+    auto bone = [&](const char* a, const char* b) { json j = J(g.animation(g.find(a), "bone", b)); return j.is_object() ? glm::vec3(j["p"][0].get<float>(), j["p"][1].get<float>(), j["p"][2].get<float>()) : glm::vec3(-99); };
+    auto st = [&](const char* a) { return J(g.animation(g.find(a), "spaceState", "")); };
+    // a character that walks (moveTo) walks by itself, then stands
+    g.nav(g.find("Walker"), "move", json{{"x", 0}, {"y", 0}, {"z", -8}, {"speed", 1.4}}.dump()); run(g, 1.0f);
+    json s = st("Walker"); CHECK(s["auto"].get<bool>() && (s["a"] == "Walk" || s["b"] == "Walk"), ("moving: it walks by itself (" + s.dump() + ")").c_str());
+    g.nav(g.find("Walker"), "move", json{{"x", 0}, {"y", 0}, {"z", 8}, {"speed", 4.5}}.dump()); run(g, 1.0f); s = st("Walker"); CHECK(s["a"] == "Run" || s["b"] == "Run", ("faster: it runs (" + s.dump() + ")").c_str());
+    run(g, 6.0f); s = st("Walker"); CHECK(!s["auto"].get<bool>() && J(g.animation(g.find("Walker"), "state", ""))["name"] == "Idle", "there: it stands (Idle)");
+    // a blend space set by a script
+    CHECK(g.animation(g.find("Mixer"), "space", json{{"anims", json::array({json::array({"Idle", 0}), json::array({"Walk", 1.5}), json::array({"Run", 5})})}, {"value", 3.25}}.dump()) == "1", "setBlendSpace");
+    run(g, 0.2f); s = st("Mixer"); CHECK(s["a"] == "Walk" && s["b"] == "Run" && std::abs(s["w"].get<float>() - 0.5f) < 0.01f, ("…the value mixes the two either side (" + s.dump() + ")").c_str());
+    // a layer: the upper body plays another animation, the legs don't change
+    glm::vec3 foot0 = bone("Mixer", "Foot_L"), hand0 = bone("Mixer", "Hand_R");
+    CHECK(g.animation(g.find("Mixer"), "layer", json{{"name", "Jump"}, {"bone", "Spine"}, {"blend", 0}}.dump()) == "1", "playLayer on the Spine");
+    glm::vec3 foot1 = bone("Mixer", "Foot_L"), hand1 = bone("Mixer", "Hand_R");
+    CHECK(glm::length(foot1 - foot0) < 0.02f && glm::length(hand1 - hand0) > 0.02f, ("…the arms move, the legs don't (hand " + std::to_string(glm::length(hand1 - hand0)) + ")").c_str());
+    g.animation(g.find("Mixer"), "layerStop", "{\"blend\":0}"); run(g, 0.1f);
+    // IK: the right hand reaches for a place; the head looks at one
+    glm::vec3 sh = bone("Mixer", "UpperArm_R"), want = sh + glm::vec3(0.1f, 0.15f, 0.35f);
+    CHECK(g.animation(g.find("Mixer"), "ik", json{{"bone", "Hand_R"}, {"target", {want.x, want.y, want.z}}}.dump()) == "1", "setIK on a hand"); run(g, 0.05f);
+    CHECK(glm::length(bone("Mixer", "Hand_R") - want) < 0.03f, ("…the hand is there (" + std::to_string(glm::length(bone("Mixer", "Hand_R") - want)) + " m off)").c_str());
+    glm::vec3 far = sh + glm::vec3(0, 0, 5); g.animation(g.find("Mixer"), "ik", json{{"bone", "Hand_R"}, {"target", {far.x, far.y, far.z}}}.dump()); run(g, 0.05f);
+    glm::vec3 h = bone("Mixer", "Hand_R"); CHECK(glm::length(h - sh) < 0.75f && h.z > sh.z + 0.4f, "…out of reach: the arm points there, straight");
+    glm::vec3 headA = bone("Mixer", "Head"); json r0 = J(g.animation(g.find("Mixer"), "bone", "Head"));
+    g.animation(g.find("Mixer"), "look", json{{"target", {headA.x + 5, headA.y, headA.z + 2}}}.dump()); run(g, 0.05f); json r1 = J(g.animation(g.find("Mixer"), "bone", "Head"));
+    CHECK(std::abs(r1["r"][1].get<float>() - r0["r"][1].get<float>()) > 0.5f, ("lookAt: the head turns (" + std::to_string(r1["r"][1].get<float>() - r0["r"][1].get<float>()) + " rad)").c_str());
+    g.animation(g.find("Mixer"), "ikClear", ""); run(g, 0.05f); CHECK(std::abs(J(g.animation(g.find("Mixer"), "bone", "Head"))["r"][1].get<float>() - r0["r"][1].get<float>()) < 0.05f, "clearIK: as the animation has it");
+    // feet: one on a step, one on the floor
+    glm::vec3 fl1 = bone("OnStep", "Foot_L"), fr1 = bone("OnStep", "Foot_R"), fl2 = bone("Flat", "Foot_L"), fr2 = bone("Flat", "Foot_R");
+    CHECK(fl1.y - fl2.y > 0.15f && std::abs(fr1.y - fr2.y) < 0.03f, ("foot IK: the foot on the step stands on it (" + std::to_string(fl1.y - fl2.y) + " m up), the other on the floor").c_str());
+    g.animation(g.find("OnStep"), "footIK", "0"); run(g, 0.05f); CHECK(std::abs(bone("OnStep", "Foot_L").y - fl2.y) < 0.02f, "…footIK off: as the animation has it");
+    // the script API and the Blueprint nodes
+    Blueprint ab; int id = 1; auto node = [&](const std::string& type, json v = json::object()) { BpNode n; n.id = id++; n.type = type; n.values = v; ab.nodes.push_back(n); return n.id; };
+    int ev = node("Event.BeginPlay"), n1 = node("Animation.SetBlendSpace"), n2 = node("Animation.SetBlendValue"), n3 = node("Animation.PlayLayer", {{"Animation", "Jump"}}), n4 = node("Animation.StopLayer"), n5 = node("Animation.SetIK"), n6 = node("Animation.LookAt"), n7 = node("Animation.AutoAnimate");
+    ab.links = {{ev, "then", n1, "exec"}, {n1, "then", n2, "exec"}, {n2, "then", n3, "exec"}, {n3, "then", n4, "exec"}, {n4, "then", n5, "exec"}, {n5, "then", n6, "exec"}, {n6, "then", n7, "exec"}};
+    std::vector<BpMessage> ms; std::string code = bpCompile(ab, "BP_Anim", ms); int errs = 0; for (auto& x : ms) errs += x.error;
+    CHECK(errs == 0 && ScriptHost::check(code).empty(), "the animation Blueprint nodes compile to code that runs");
+    q.scripts["SC_AnimApi"] = {"SC_AnimApi", "function onStart() { world.hud('a', [self.setBlendSpace([['Idle', 0], ['Walk', 1.5]], 1), self.playLayer('Jump', { bone: 'Spine' }), self.setIK('Hand_L', [0, 1.5, 1]), self.lookAt(world.player), self.autoAnimate, self.footIK].join(',')); self.blendValue = 0.5; }"};
+    for (auto& a : q.levels[0].second.actors) if (a.name == "Flat") a.script = "SC_AnimApi";
+    Game g2(q, "Main"); g2.start(); std::string hv; for (auto& x : g2.hudLines()) if (x.first == "a") hv = x.second; CHECK(hv == "true,true,true,true,false,true", ("the script API: " + hv).c_str());
+  }
   {   // playing together: a host and a player on this computer, messages both ways, the LAN beacon, leaving
     pge::Net h, c; double t = 0; CHECK(h.host(46655, "Test world", 4, "info"), "net: host a game");
     c.lanSearch(true); CHECK(c.join("127.0.0.1", 46655), "net: join it");

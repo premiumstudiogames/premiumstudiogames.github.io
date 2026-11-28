@@ -96,7 +96,11 @@ const __player = { name: 'Player', isPlayer: true, tags: [],
   damage(amount, o) { world.applyDamage(this, amount, o); }, heal(amount) { this.set({ health: this.settings.health + (+amount || 0) }); },
   // cars: the one the player drives (or null); enterVehicle(car), exitVehicle(); E (or the controller's Y) gets in and out by itself
   get vehicle() { const v = this.settings.vehicle; return v ? __api(v) : null; },
+  setIK(bone, target, o) { return __n.anim('@player', 'ik', JSON.stringify(__ikArg(bone, target, o))) === '1'; },   // the Third Person character's hands
+  lookAt(target, o) { return __n.anim('@player', 'look', JSON.stringify(__ikArg((o && o.bone) || 'Head', target, o))) === '1'; }, clearIK() { __n.anim('@player', 'ikClear', ''); },
   enterVehicle(v) { return !!v && __n.gp('vehicle', v.id, JSON.stringify({ enter: true })) !== ''; }, exitVehicle() { const v = this.settings.vehicle; if (v) __n.gp('vehicle', v, JSON.stringify({ exit: true })); } };
+const __ikArg = (bone, target, o) => { const r = Object.assign({ bone: String(bone) }, o || {}); if (target === null || target === undefined) r.off = true;
+  else if (target.isPlayer) r.actor = '@player'; else if (typeof target.id === 'string' && 'position' in target) r.actor = target.id; else r.target = [+target.x || +target[0] || 0, +target.y || +target[1] || 0, +target.z || +target[2] || 0]; return r; };
 // values for the gameplay calls: vectors → [x, y, z], actors → their id, the player → '@player'
 const __gpv = v => { if (v === null || v === undefined) return v; if (Array.isArray(v)) return v.map(__gpv);
   if (typeof v === 'object') { if (v.isPlayer) return '@player'; if (typeof v.id === 'string' && 'position' in v) return v.id; if ('x' in v && 'y' in v && 'z' in v) return [+v.x || 0, +v.y || 0, +v.z || 0];
@@ -149,6 +153,18 @@ function __api(id) {
     get animation() { const r = __n.anim(id, 'state', ''); return r ? JSON.parse(r) : null; },
     get animations() { const r = __n.anim(id, 'list', ''); return r ? JSON.parse(r) : []; },
     set animationSpeed(v) { __n.anim(id, 'speed', String(+v)); },
+    // blend space: self.setBlendSpace([['Idle', 0], ['Walk', 1.5], ['Run', 5]], speed) then self.blendValue = speed every frame
+    setBlendSpace(list, value, o) { return __n.anim(id, 'space', JSON.stringify(Object.assign({ anims: list, value: +value || 0 }, o || {}))) === '1'; },
+    get blendValue() { const r = __n.anim(id, 'spaceState', ''); return r ? JSON.parse(r).value : 0; }, set blendValue(v) { __n.anim(id, 'spaceValue', String(+v || 0)); },
+    // a layer on part of the body: self.playLayer('Shoot', { bone: 'Spine', loop: false, weight: 1, blend: 0.15 }); stopLayer()
+    playLayer(name, o) { return __n.anim(id, 'layer', JSON.stringify(Object.assign({ name: String(name) }, o || {}))) === '1'; },
+    stopLayer(blend) { __n.anim(id, 'layerStop', JSON.stringify({ blend: blend === undefined ? 0.2 : +blend })); },
+    // IK: a hand reaches for a place or an actor (null = let go); the head (or any bone) looks at one
+    setIK(bone, target, o) { return __n.anim(id, 'ik', JSON.stringify(__ikArg(bone, target, o))) === '1'; },
+    lookAt(target, o) { return __n.anim(id, 'look', JSON.stringify(__ikArg((o && o.bone) || 'Head', target, o))) === '1'; },
+    clearIK() { __n.anim(id, 'ikClear', ''); },
+    get autoAnimate() { return __n.anim(id, 'auto', '') === '1'; }, set autoAnimate(v) { __n.anim(id, 'auto', v ? '1' : '0'); },
+    get footIK() { return __n.anim(id, 'footIK', '') === '1'; }, set footIK(v) { __n.anim(id, 'footIK', v ? '1' : '0'); },
     setBoneScale(name, s) { return __n.anim(id, 'boneScale', JSON.stringify({ name: String(name), scale: +s })) === '1'; },   // 0 = gone with what hangs on it (gore: a limb shot off)
     bone(name) { const r = __n.anim(id, 'bone', String(name)); if (!r) return null; const b = JSON.parse(r);
       return { position: new Vec3(b.p[0], b.p[1], b.p[2]), rotation: new Vec3(b.r[0], b.r[1], b.r[2]) }; },

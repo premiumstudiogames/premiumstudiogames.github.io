@@ -386,9 +386,7 @@ void Game::update(float dt) {
     if (o.motion == Motion::Kinematic) phys_->moveKinematic(o.body, pos, q); else phys_->teleport(o.body, pos, q);
     o.lastWorld = W; }
   walkFrame(dt); playerAnimFrame(dt);
-  // models' animations move on; a script hears when one that doesn't loop reaches its end
-  for (size_t i = 0; i < objs_.size(); i++) { Obj& o = *objs_[i]; if (!o.alive || o.anim.anim < 0) continue; ModelRef m = model(o.a.mesh); if (!m) continue;
-    if (o.anim.advance(*m, dt) && o.anim.anim >= 0 && o.anim.anim < (int)m->anims.size()) scripts_->call(o.beh, EV_AnimEnd, 0, m->anims[o.anim.anim].name); }
+  animFrame(dt);   // models' animations move on (a script hears when one that doesn't loop reaches its end), feet on the ground
   soundFrame();
   if (models_) models_->update(dt);   // particles
   pressed_.clear(); scripts_->runJobs();
@@ -555,7 +553,14 @@ void Game::playerAnimFrame(float dt) {
   int a = want == "run" ? find({"run", "sprint", "jog", "walk"}) : want == "walk" ? find({"walk", "jog", "run"}) : want == "jump" ? find({"jump", "air", "fall"}) : want == "fall" ? find({"fall", "air", "jump"}) : find({"idle", "stand", "breath"});
   if (a < 0) a = want == "idle" ? 0 : find({"idle"}); if (a < 0) a = 0;
   float speed = want == "walk" ? glm::clamp(hs / 1.6f, 0.5f, 2.5f) : want == "run" ? glm::clamp(hs / 5.5f, 0.6f, 2.f) : 1.f;
-  pAnim_.play(a, want != "jump", speed, 0.15f); pAnim_.speed = speed; pAnim_.advance(*m, dt); pAnimName_ = m->anims[a].name;
+  // on the ground a blend space (idle, walk, run mixed by speed: no pop between them); in the air jump / fall
+  int ai = find({"idle", "stand", "breath"}), wi = find({"walk", "jog"}), ri = find({"run", "sprint", "jog"});
+  if (!air && wi >= 0 && want != "jump") { std::vector<std::pair<int, float>> sp; if (ai >= 0) sp.push_back({ai, 0.f}); sp.push_back({wi, std::max(0.5f, tune_.walk * 0.8f)}); if (ri >= 0 && ri != wi) sp.push_back({ri, std::max(tune_.walk + 0.5f, tune_.run * 0.9f)});
+    pAnim_.setSpace(sp, hs, 0.15f); float top = sp.back().second; pAnim_.speed = hs > top ? glm::clamp(hs / top, 1.f, 2.f) : 1.f; pAnim_.advance(*m, dt); pAnimName_ = m->anims[a].name; }
+  else { pAnim_.play(a, want != "jump", speed, 0.15f); pAnim_.speed = speed; pAnim_.advance(*m, dt); pAnimName_ = m->anims[a].name; }
+  { float hgt = m->shape.bmax.y - m->shape.bmin.y, k = hgt > 1.0f && hgt < 2.6f ? 1.f : 1.8f / std::max(hgt, 1e-3f); glm::vec3 c = phys_->position(player_);
+    glm::mat4 W = glm::scale(glm::rotate(glm::translate(glm::mat4(1), c - glm::vec3(0, 0.9f, 0)), charYaw_, glm::vec3(0, 1, 0)), glm::vec3(k)) * glm::translate(glm::mat4(1), glm::vec3(0, -m->shape.bmin.y, 0));
+    solveIK(*m, pAnim_, W, pIk_, grounded_ && !air, c.y - 0.9f, {player_}); }
   if (hs > 0.2f) { float tgt = std::atan2(v.x, v.z), d = std::remainder(tgt - charYaw_, 6.2831853f), mx = 12.f * dt; charYaw_ += glm::clamp(d, -mx, mx); }
 }
 static float footOf(const Actor& a, const glm::vec3& scale) { if (a.type != "StaticMesh") return 0; return -meshShape(a.mesh).bmin.y * std::abs(scale.y); }   // the actor's origin above its feet
@@ -615,14 +620,22 @@ std::string Game::nav(const std::string& id, const std::string& op, const std::s
   return "";
 }
 std::string Game::animation(const std::string& id, const std::string& op, const std::string& arg) {
+  if (id == "@player") {   // the player's character: hands and head (its feet stand on the ground by themselves)
+    if (op == "ikClear") { pIk_.clear(); return "1"; }
+    if (op != "ik" && op != "look") return ""; json j = json::parse(arg.empty() ? "{}" : arg, nullptr, false); if (!j.is_object()) return "0";
+    std::string bone = j.value("bone", std::string(op == "look" ? "Head" : "")); pIk_.erase(std::remove_if(pIk_.begin(), pIk_.end(), [&](auto& r) { return r.bone == bone; }), pIk_.end());
+    if (j.value("off", false)) return "1"; Obj::IkReq r; r.bone = bone; r.aim = op == "look"; r.weight = j.value("weight", 1.f); r.maxAngle = j.value("maxAngle", 70.f);
+    if (j.contains("actor") && j["actor"].is_string()) r.actor = j["actor"]; else if (j.contains("target") && j["target"].is_array() && j["target"].size() == 3) r.target = {j["target"][0].get<float>(), j["target"][1].get<float>(), j["target"][2].get<float>()}; else return "0";
+    pIk_.push_back(r); return "1"; }
   Obj* o = get(id); if (!o || o->a.type != "StaticMesh" || !isModelFile(o->a.mesh)) return ""; ModelRef m = model(o->a.mesh); if (!m || !m->ok()) return "";
   AnimPlay& an = o->anim;
   if (op == "list") { json a = json::array(); for (auto& x : m->anims) a.push_back(x.name); return a.dump(); }
   if (op == "state") { json s = {{"name", an.anim >= 0 && an.anim < (int)m->anims.size() ? m->anims[an.anim].name : ""}, {"time", an.time}, {"playing", an.playing}, {"loop", an.loop}, {"speed", an.speed},
       {"duration", an.anim >= 0 && an.anim < (int)m->anims.size() ? m->anims[an.anim].duration : 0.f}}; return s.dump(); }
-  if (op == "stop") { auto keepF = an.fixed; auto keepS = an.scaled; an = AnimPlay(); an.fixed = keepF; an.scaled = keepS; return "1"; }
+  if (op == "stop") { o->autoAnim = false; auto keepF = an.fixed; auto keepS = an.scaled; an = AnimPlay(); an.fixed = keepF; an.scaled = keepS; return "1"; }
   if (op == "speed") { an.speed = (float)std::atof(arg.c_str()); return "1"; }
-  if (op == "play") { json j = json::object(); try { j = json::parse(arg); } catch (...) {}
+  { std::string r = animOp(*o, *m, op, arg); if (!r.empty()) return r == "-" ? "" : r; }
+  if (op == "play") { o->autoAnim = false; json j = json::object(); try { j = json::parse(arg); } catch (...) {}
     std::string n = j.value("name", ""); int ai = m->anim(n);
     if (ai < 0) { std::string names; for (auto& x : m->anims) names += (names.empty() ? "" : ", ") + x.name; logMsg("warning: " + o->a.name + ": no animation \"" + n + "\" in " + o->a.mesh + (names.empty() ? " (it has none)" : " - it has: " + names), LogKind::Warn); return "0"; }
     float blend = j.contains("blend") && j["blend"].is_number() ? j["blend"].get<float>() : 0.2f, speed = j.contains("speed") && j["speed"].is_number() ? j["speed"].get<float>() : 1.f;

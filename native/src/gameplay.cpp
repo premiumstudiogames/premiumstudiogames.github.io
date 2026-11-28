@@ -306,7 +306,7 @@ void Game::exitVehicle() {
 
 /* ------------------------------------------------------------------ the level's joints and cars */
 void Game::startGameplay() {
-  decals_.clear(); grabs_.clear(); jointOwner_.clear(); driving_.clear(); driveInside_ = false; health_ = maxHealth_ = 100; dead_ = false; respawnAt_ = -1; vehicleKey_ = "KeyE"; hint_.clear();
+  decals_.clear(); grabs_.clear(); pIk_.clear(); jointOwner_.clear(); driving_.clear(); driveInside_ = false; health_ = maxHealth_ = 100; dead_ = false; respawnAt_ = -1; vehicleKey_ = "KeyE"; hint_.clear();
   for (auto& op : objs_) { Obj& o = *op; if (o.alive && o.a.type == "StaticMesh" && o.a.vehicle.enabled) addVehicle(o); }
   for (auto& op : objs_) { Obj& o = *op; if (!o.alive || o.a.type != "PhysicsConstraint") continue; const JointProps& c = o.a.joint;
     Obj* A = get(c.a); Obj* B = c.b.empty() ? nullptr : get(c.b);
