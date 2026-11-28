@@ -20,6 +20,14 @@
   X(PFNGLGETINTEGERVPROC, glGetIntegerv) \
   X(PFNGLDRAWARRAYSPROC, glDrawArrays) \
   X(PFNGLDRAWELEMENTSPROC, glDrawElements) \
+  X(PFNGLTEXSUBIMAGE3DPROC, glTexSubImage3D) \
+  X(PFNGLTEXIMAGE3DPROC, glTexImage3D) \
+  X(PFNGLGETQUERYOBJECTUIVPROC, glGetQueryObjectuiv) \
+  X(PFNGLENDQUERYPROC, glEndQuery) \
+  X(PFNGLBEGINQUERYPROC, glBeginQuery) \
+  X(PFNGLDELETEQUERIESPROC, glDeleteQueries) \
+  X(PFNGLGENQUERIESPROC, glGenQueries) \
+  X(PFNGLDRAWELEMENTSINSTANCEDPROC, glDrawElementsInstanced) \
   X(PFNGLGENVERTEXARRAYSPROC, glGenVertexArrays) \
   X(PFNGLBINDVERTEXARRAYPROC, glBindVertexArray) \
   X(PFNGLDELETEVERTEXARRAYSPROC, glDeleteVertexArrays) \
@@ -104,6 +112,14 @@ PGE_GL_FUNCS(PGE_GL_DECL)
 #define glGetIntegerv pge_glGetIntegerv
 #define glDrawArrays pge_glDrawArrays
 #define glDrawElements pge_glDrawElements
+#define glTexSubImage3D pge_glTexSubImage3D
+#define glTexImage3D pge_glTexImage3D
+#define glGetQueryObjectuiv pge_glGetQueryObjectuiv
+#define glEndQuery pge_glEndQuery
+#define glBeginQuery pge_glBeginQuery
+#define glDeleteQueries pge_glDeleteQueries
+#define glGenQueries pge_glGenQueries
+#define glDrawElementsInstanced pge_glDrawElementsInstanced
 #define glGenVertexArrays pge_glGenVertexArrays
 #define glBindVertexArray pge_glBindVertexArray
 #define glDeleteVertexArrays pge_glDeleteVertexArrays

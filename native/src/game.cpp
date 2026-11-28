@@ -84,7 +84,24 @@ static void addModelDraws(Frame& f, const Project& P, const Actor& a, const glm:
     f.draws.push_back(d); }
 }
 
+// a Foliage actor's copies: per kind its mesh's draws once, then each cell near enough as instances of them
+void addFoliageDraws(Frame& f, const Project& P, const Actor& a, const glm::vec3& cam, unsigned id) {
+  if (!a.fol) return; const Foliage& F = *a.fol; const auto& cells = foliageCells(F); if (cells.empty()) return;
+  std::vector<std::vector<DrawItem>> tmpl(F.types.size()); std::vector<float> reach(F.types.size(), 1);
+  for (size_t t = 0; t < F.types.size(); t++) { const FoliageType& ty = F.types[t]; Actor x = newActor("StaticMesh", "f"); x.mesh = ty.mesh; x.material = ty.material; if (isModelFile(ty.mesh) && ty.material.empty()) x.material.clear();
+    Frame tf; addActorVisual(tf, P, x, glm::mat4(1), false, 0); for (auto& k : tf.keep) f.keep.push_back(k); for (auto& b : tf.bones) f.bones.push_back(b);
+    for (auto& d : tf.draws) { if (d.bones) continue; DrawItem c = d; c.castShadow = d.castShadow && ty.castShadow; if (ty.material.empty() && !isModelFile(ty.mesh)) { c.color = glm::vec3(0.28f, 0.52f, 0.16f); c.rough = 0.9f; }   /* no material: plant green */ c.wind = ty.wind; c.id = id; tmpl[t].push_back(c); }
+    const MeshData& md = meshShape(ty.mesh); reach[t] = glm::length(glm::max(glm::abs(md.bmin), glm::abs(md.bmax))) * std::max(ty.scaleMax, 0.01f); }
+  for (auto& c : cells) { const FoliageType& ty = F.types[c.type]; float dx = std::max({c.mn.x - cam.x, 0.f, cam.x - c.mx.x}), dz = std::max({c.mn.z - cam.z, 0.f, cam.z - c.mx.z});
+    if (dx * dx + dz * dz > ty.cullDistance * ty.cullDistance) continue;   // too far away
+    for (auto& d : tmpl[c.type]) { DrawItem it = d; std::shared_ptr<std::vector<glm::mat4>> mats = c.mats;
+      if (d.model != glm::mat4(1)) { auto m2 = std::make_shared<std::vector<glm::mat4>>(*c.mats); for (auto& m : *m2) m = m * d.model; mats = m2; }   // a model's part: its place in the model
+      it.model = glm::mat4(1); it.inst = mats.get(); f.bones.push_back(mats); it.instMin = c.mn - glm::vec3(reach[c.type]); it.instMax = c.mx + glm::vec3(reach[c.type]); f.draws.push_back(it); } }
+}
 void addActorVisual(Frame& f, const Project& P, const Actor& a, const glm::mat4& W, bool editor, unsigned id, const glm::vec3* colorOverride, const std::string* textOverride, const Renderer* r, const AnimPlay* anim) {
+  if (a.type == "Foliage") { addFoliageDraws(f, P, a, f.eye, id); if (!editor) return; }
+  if (a.type == "Cloth" && editor) { MeshData m; clothRestMesh(a.cloth, m); const GpuMesh& g = dynamicMesh("@clothrest:" + a.id, m); DrawItem d; d.mesh = &g; d.model = W; d.id = id;
+    auto it = P.materials.find(a.cloth.material); if (it != P.materials.end()) applyMaterial(d, it->second); else { d.color = glm::vec3(0.62f, 0.12f, 0.12f); d.rough = 0.85f; } if (colorOverride) d.color = *colorOverride; f.draws.push_back(d); }
   glm::vec3 pos(W[3]); glm::vec3 fwd = glm::normalize(glm::mat3(W) * glm::vec3(0, 0, -1) + glm::vec3(1e-7f));
   glm::mat4 at = glm::translate(glm::mat4(1), pos);                       // icon placed at the actor, no scale
   glm::mat4 rotOnly = at * glm::mat4(glm::mat3(glm::normalize(glm::vec3(W[0])), glm::normalize(glm::vec3(W[1])), glm::normalize(glm::vec3(W[2]))));
@@ -135,6 +152,7 @@ Game::~Game() { clear(); padClose(); }
 
 void Game::clear() {
   if (audio_) audio_->stopAll();
+  forgetMeshes("@frag:"); forgetMeshes("@cloth:"); foliageBodies_.clear();
   if (models_) { models_->setBlocks(nullptr); models_->clear(); }
   if (scripts_ && started_) for (int b = 0; b < scripts_->count(); b++) scripts_->call(b, EV_Stop);   // last chance to save
   if (net_) { net_->stop(); net_->lanSearch(false); net_->take(); }
@@ -180,7 +198,7 @@ bool Game::start() {
   if (mode_ == "Spectator") specPos_ = ps + glm::vec3(0, 1.6f, 0); else player_ = phys_->addPlayer(ps);
   { const std::string& pm = level_.world.playerModel; pModel_ = mode_ != "ThirdPerson" || pm == "Capsule" ? "" : pm.empty() ? "Characters/Mannequin.glb" : pm; pAnim_ = AnimPlay(); pAnimName_.clear(); charYaw_ = yaw_ + 3.14159265f; }
   // scripts
-  frameNo_ = 0; camSet_ = false; startGameplay();
+  frameNo_ = 0; camSet_ = false; startGameplay(); foliageStart();
   if (!models_) models_.reset(new Models()); models_->clear(); models_->setBlocks(vox_.get());
   if (!ui_) ui_.reset(new Ui()); ui_->setConsole(console_); ui_->reset(); ui_->setAssets([this](const std::string& p) { return assetPath(p); });
   scripts_.reset(new ScriptHost()); scripts_->init(this);
@@ -399,7 +417,7 @@ void Game::respawnPlayer() { glm::vec3 p = playerStart(nullptr); if (!driving_.e
 
 void Game::buildFrame(Frame& f, Camera& cam, float aspect) const {
   f = Frame(); f.world = level_.world; f.fog = level_.world.fog; f.probeVersion = 1;
-  { glm::vec3 cp; glm::mat4 cv; cameraCompute(cp, cv); camW_ = glm::inverse(cv); camSet_ = true; }   // first: actors on the camera are drawn where it is now
+  { glm::vec3 cp; glm::mat4 cv; cameraCompute(cp, cv); camW_ = glm::inverse(cv); camSet_ = true; f.eye = cp; }   // first: actors on the camera are drawn where it is now
   for (auto& op : objs_) { const Obj& o = *op; if (!o.alive) continue;
     bool vis = o.visible; int guard = 0; for (Obj* p = get(o.a.parent); p && vis && guard < 64; p = get(p->a.parent), guard++) vis = p->visible;
     if (!vis) continue;
@@ -418,7 +436,7 @@ void Game::buildFrame(Frame& f, Camera& cam, float aspect) const {
       d.model = glm::rotate(glm::translate(glm::mat4(1), c), face, AY); d.color = glm::vec3(0.227f, 0.482f, 1.f); d.rough = 0.5f; f.draws.push_back(d); }
   }
   cameraCompute(cam.pos, cam.view);
-  drawGameplay(f);
+  drawGameplay(f); clothDraws(f);
   cam.proj = glm::perspective(glm::radians(glm::clamp(level_.world.fov, 20.f, 150.f)), std::max(aspect, 0.01f), 0.05f, 2000.f);
   { glm::vec3 fw = -glm::vec3(glm::inverse(cam.view)[2]); fw.y = 0; f.shadowCenter = eye + (glm::length(fw) > 1e-3f ? glm::normalize(fw) * 25.f : glm::vec3(0)); }   // the shadow box covers what is in front of the camera
   if (models_) models_->draw(f);

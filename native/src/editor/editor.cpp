@@ -111,6 +111,7 @@ glm::vec3 Editor::dropPoint(float mx, float my) {
 }
 Actor& Editor::addActor(const std::string& type0, const std::string& mesh, const glm::vec3* at) {
   // ready-made actors: a car (a body on 4 wheels), a box that falls and can be pushed
+  if (type0 == "DestructibleWall") { Actor& a = addActor("StaticMesh", "Cube", at); a.name = uniqueName("Wall"); a.s = {4, 3, 0.3f}; a.p.y = std::max(a.p.y, 1.5f); a.destructible.enabled = true; a.destructible.pieces = 16; a.destructible.health = 40; touch(); return a; }
   if (type0 == "Vehicle" || type0 == "PhysicsBox") { Actor& a = addActor("StaticMesh", "Cube", at);
     if (type0 == "Vehicle") { a.name = uniqueName("Car"); a.s = {1.9f, 0.75f, 4.2f}; a.p.y = std::max(a.p.y, 1.1f); a.physics.simulate = true; a.physics.mass = 1300; a.vehicle.enabled = true;
       if (!P.materials.count("M_CarPaint")) { Material m; m.name = "M_CarPaint"; m.color = {0.75f, 0.08f, 0.06f}; m.metalness = 0.6f; m.roughness = 0.25f; P.materials["M_CarPaint"] = m; }
@@ -212,6 +213,45 @@ bool Editor::landscapeBrush(const Camera& C, ImVec2 pos, ImVec2 size, ImDrawList
   if (landDown && ImGui::IsMouseDown(ImGuiMouseButton_Left)) { Landscape::Tool tl = (Landscape::Tool)landTool; if (ImGui::GetIO().KeyShift && tl == Landscape::Raise) tl = Landscape::Lower;   // Shift: the other way, like Unreal
     L.brush(tl, hp.x, hp.z, landRadius, landStrength, std::min(dt_, 0.05f), landLayer, landFlat); dirty = true; }
   if (landDown && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) { landDown = false; touch(); }
+  return true;
+}
+// the first surface on a line: landscapes (their heights) and meshes with collision (their triangles)
+bool Editor::raySurface(const glm::vec3& o, const glm::vec3& d, float maxT, glm::vec3& hit, glm::vec3& nrm) const {
+  float best = maxT; bool any = false;
+  for (auto& a : const_cast<Editor*>(this)->L().actors) {
+    glm::mat4 W = const_cast<Editor*>(this)->worldOf(a), IW = glm::inverse(W); glm::vec3 lo = glm::vec3(IW * glm::vec4(o, 1)), le = glm::vec3(IW * glm::vec4(o + d * best, 1)); glm::vec3 ld = le - lo; float L = glm::length(ld); if (L < 1e-6f) continue; ld /= L;
+    if (a.type == "Landscape" && a.land) { float t = 0; if (a.land->raycast(lo, ld, L, t)) { glm::vec3 lp = lo + ld * t, w = glm::vec3(W * glm::vec4(lp, 1)); float dist = glm::length(w - o);
+        if (dist < best) { best = dist; hit = w; nrm = glm::normalize(glm::mat3(glm::transpose(IW)) * a.land->normalAt(lp.x, lp.z)); any = true; } } continue; }
+    if (a.type != "StaticMesh" || !a.physics.collision || a.physics.simulate || a.vehicle.enabled) continue;   /* not on things that move */
+    { bool moves = false; std::string up = a.parent; for (int d = 0; d < 32 && !up.empty() && !moves; d++) { const Actor* pa = const_cast<Editor*>(this)->actor(up); if (!pa) break; moves = pa->physics.simulate || pa->vehicle.enabled; up = pa->parent; } if (moves) continue; } const MeshData& m = meshShape(a.mesh); if (m.v.empty()) continue;
+    // the box first
+    glm::vec3 inv = 1.f / (ld + glm::vec3(1e-9f)), t0 = (m.bmin - lo) * inv, t1 = (m.bmax - lo) * inv; glm::vec3 tn = glm::min(t0, t1), tf = glm::max(t0, t1);
+    float tin = std::max({tn.x, tn.y, tn.z, 0.f}), tout = std::min({tf.x, tf.y, tf.z, L}); if (tin > tout) continue;
+    float bt = L; glm::vec3 bn(0, 1, 0); bool h = false; auto tri = [&](const glm::vec3& A, const glm::vec3& B, const glm::vec3& C) {
+      glm::vec3 e1 = B - A, e2 = C - A, p = glm::cross(ld, e2); float det = glm::dot(e1, p); if (std::abs(det) < 1e-9f) return; float f = 1 / det; glm::vec3 s = lo - A; float u = f * glm::dot(s, p); if (u < 0 || u > 1) return;
+      glm::vec3 q = glm::cross(s, e1); float v = f * glm::dot(ld, q); if (v < 0 || u + v > 1) return; float t = f * glm::dot(e2, q); if (t > 1e-5f && t < bt) { bt = t; bn = glm::normalize(glm::cross(e1, e2)); h = true; } };
+    if (!m.i.empty()) for (size_t k = 0; k + 2 < m.i.size(); k += 3) tri(m.v[m.i[k]].p, m.v[m.i[k + 1]].p, m.v[m.i[k + 2]].p); else for (size_t k = 0; k + 2 < m.v.size(); k += 3) tri(m.v[k].p, m.v[k + 1].p, m.v[k + 2].p);
+    if (!h) continue; glm::vec3 w = glm::vec3(W * glm::vec4(lo + ld * bt, 1)); float dist = glm::length(w - o);
+    if (dist < best) { best = dist; hit = w; glm::vec3 n = glm::normalize(glm::mat3(glm::transpose(IW)) * bn); if (glm::dot(n, d) > 0) n = -n; nrm = n; any = true; } }
+  return any;
+}
+// painting foliage with the selected Foliage actor: a circle on the ground under the mouse, held left button paints (Shift erases)
+bool Editor::foliageBrush(const Camera& C, ImVec2 pos, ImVec2 size, ImDrawList* dl) {
+  Actor* a = actor(sel); if (!a || a->type != "Foliage" || !a->fol || folTool < 0) { folDown = false; return false; }
+  ImVec2 m = ImGui::GetMousePos(); bool in = m.x >= pos.x && m.y >= pos.y && m.x < pos.x + size.x && m.y < pos.y + size.y;
+  glm::mat4 VP = C.proj * C.view, IVP = glm::inverse(VP); float nx = (m.x - pos.x) / size.x * 2 - 1, ny = 1 - (m.y - pos.y) / size.y * 2;
+  glm::vec4 p0 = IVP * glm::vec4(nx, ny, -1, 1), p1 = IVP * glm::vec4(nx, ny, 1, 1); glm::vec3 o = glm::vec3(p0) / p0.w, e = glm::vec3(p1) / p1.w;
+  glm::vec3 hp, hn; bool hit = in && raySurface(o, glm::normalize(e - o), std::min(glm::length(e - o), 3000.f), hp, hn);
+  if (!hit) { if (ImGui::IsMouseReleased(ImGuiMouseButton_Left) && folDown) { folDown = false; touch(); } return folDown; }
+  std::vector<ImVec2> pts; for (int k = 0; k <= 40; k++) { float ang = k / 40.f * 6.2831853f; glm::vec4 c = VP * glm::vec4(hp.x + std::cos(ang) * folRadius, hp.y + 0.05f, hp.z + std::sin(ang) * folRadius, 1);
+    if (c.w > 0) pts.push_back({pos.x + (c.x / c.w * 0.5f + 0.5f) * size.x, pos.y + (0.5f - c.y / c.w * 0.5f) * size.y}); }
+  bool erase = folTool == 1 || ImGui::GetIO().KeyShift; if (pts.size() > 2) dl->AddPolyline(pts.data(), (int)pts.size(), erase ? IM_COL32(255, 120, 90, 230) : IM_COL32(120, 255, 140, 230), 0, 2.f);
+  bool alt = ImGui::GetIO().KeyAlt; if (ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows) && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !alt) folDown = true;
+  if (folDown && ImGui::IsMouseDown(ImGuiMouseButton_Left)) { static uint32_t seed = 12345;
+    if (erase) a->fol->erase(folType, hp, folRadius);
+    else a->fol->paint(folType, hp, folRadius, std::min(dt_, 0.05f), [&](float px, float pz, glm::vec3& p, glm::vec3& nr) { return raySurface({px, hp.y + 50, pz}, {0, -1, 0}, 120, p, nr); }, foliageRand(seed));
+    dirty = true; }
+  if (folDown && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) { folDown = false; touch(); }
   return true;
 }
 void Editor::snapToFloor() {
@@ -562,7 +602,7 @@ void Editor::defaultLayout(unsigned dockId) {
 
 /* ------------------------------------------------------------------ viewport */
 void Editor::buildFrame(Frame& f, Camera& cam, float aspect) {
-  f = Frame(); f.world = L().world; f.fog = L().world.fog; f.viewMode = viewMode; f.grid = showGrid; f.time = animClock;
+  f = Frame(); f.world = L().world; f.fog = L().world.fog; f.viewMode = viewMode; f.grid = showGrid; f.time = animClock; f.eye = camPos;
   { double t = SDL_GetTicks() / 1000.0; if (t - levelHashAt_ > 0.5) { levelHashAt_ = t; levelHash_ = std::hash<std::string>()(levelToJson(L())); } f.probeVersion = levelHash_ + probeBump_; }
   unsigned idx = 0;
   for (auto& a : L().actors) { idx++;

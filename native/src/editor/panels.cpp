@@ -118,6 +118,7 @@ void Editor::addMenuItems(const glm::vec3* at) {
   const char* basic[][2] = {{"Landscape", "Landscape"}, {"Empty Actor", "Empty"}, {"Player Start", "PlayerStart"}, {"Trigger Box", "TriggerBox"}, {"Camera Actor", "CameraActor"}, {"Text Render", "TextRender"}};
   for (auto& b : basic) if (ImGui::MenuItem(b[0])) addActor(b[1], "", at);
   section("PHYSICS"); if (ImGui::MenuItem("Vehicle (Car)")) addActor("Vehicle", "", at); if (ImGui::MenuItem("Physics Constraint")) addActor("PhysicsConstraint", "", at); if (ImGui::MenuItem("Physics Box")) addActor("PhysicsBox", "", at);
+  if (ImGui::MenuItem("Destructible Wall")) addActor("DestructibleWall", "", at); if (ImGui::MenuItem("Cloth")) addActor("Cloth", "", at); if (ImGui::MenuItem("Foliage")) addActor("Foliage", "", at);
   section("SHAPES"); for (int i = 0; i < MESH_COUNT; i++) if (ImGui::MenuItem(MESHES[i])) addActor("StaticMesh", MESHES[i], at);
   section("LIGHTS"); for (const char* t : {"DirectionalLight", "PointLight", "SpotLight", "ReflectionCapture"}) if (ImGui::MenuItem(actorTypeLabel(t))) addActor(t, "", at);
 }
@@ -233,7 +234,7 @@ void Editor::drawViewport() {
   } else {
     // gizmo (not while sculpting a landscape: the mouse is the brush)
     Actor* s = actor(sel); bool gizmoOver = false;
-    bool brush = landscapeBrush(C, pos, size, dl); if (brush) gizmoOver = true;
+    bool brush = landscapeBrush(C, pos, size, dl) || foliageBrush(C, pos, size, dl); if (brush) gizmoOver = true;
     if (s && !brush) {
       ImGuizmo::SetOrthographic(view != View::Perspective); ImGuizmo::SetDrawlist(dl); ImGuizmo::SetRect(pos.x, pos.y, size.x, size.y);
       glm::mat4 W = worldOf(*s); float snap[3]; float* snapPtr = nullptr;
@@ -405,6 +406,14 @@ void Editor::drawDetails() {
       rowLabel("Replicates"); ch |= ImGui::Checkbox("##repl", &a->physics.replicates); if (ImGui::IsItemHovered()) ImGui::SetTooltip("Online: kept the same for every player (moved by the host's scripts).\nPhysics actors and cars always are.");
       if (isModelFile(a->mesh) && a->physics.simulate) { ModelRef md = model(a->mesh); if (md && !md->skins.empty()) { rowLabel(""); ImGui::TextDisabled("A character model: it falls as a ragdoll."); } }
       ImGui::EndTable(); }
+    // breaks into pieces: Unreal's Geometry Collection
+    if (ImGui::CollapsingHeader("Destructible", a->destructible.enabled ? ImGuiTreeNodeFlags_DefaultOpen : 0) && beginProps("ds")) { propCols(); DestructibleProps& d = a->destructible;
+      rowLabel("Breaks"); ch |= ImGui::Checkbox("##den", &d.enabled); if (ImGui::IsItemHovered()) ImGui::SetTooltip("Enough damage (a shot, an explosion, applyDamage) breaks it into pieces that fly and fall.");
+      ImGui::BeginDisabled(!d.enabled);
+      rowLabel("Pieces"); ch |= ImGui::SliderInt("##dp", &d.pieces, 2, 40);
+      rowLabel("Health"); ch |= ImGui::DragFloat("##dh", &d.health, 1, 1, 100000, "%.0f damage");
+      rowLabel("Pieces Last"); ch |= ImGui::DragFloat("##dl", &d.debrisLife, 0.5f, 0, 3600, d.debrisLife > 0 ? "%.0f s" : "Forever");
+      ImGui::EndDisabled(); ImGui::EndTable(); }
     // a car: Unreal's Wheeled Vehicle (the player gets in with E)
     if (ImGui::CollapsingHeader("Vehicle", a->vehicle.enabled ? ImGuiTreeNodeFlags_DefaultOpen : 0) && beginProps("vh")) { propCols(); VehicleProps& v = a->vehicle;
       rowLabel("Is a Car"); if (ImGui::Checkbox("##ven", &v.enabled)) { ch = true; if (v.enabled && a->physics.mass < 100) a->physics.mass = 1300; if (v.enabled) a->physics.simulate = true; }
@@ -482,6 +491,52 @@ void Editor::drawDetails() {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Points along each side (more = finer detail). Changing it starts flat.");
         if (rs != L.res) { L.resize(rs, L.size); ch = true; } else if (c1 && sz != L.size) { L.size = sz; L.changed(); ch = true; } }
       ImGui::EndTable(); } }
+  if (a->type == "Foliage" && a->fol && ImGui::CollapsingHeader("Foliage", ImGuiTreeNodeFlags_DefaultOpen)) { Foliage& F = *a->fol;
+    // like Unreal's Foliage mode: kinds of mesh, painted on the ground (landscapes and meshes with collision)
+    ImGui::TextDisabled("Paint: hold the left mouse button on the ground. Shift: erase. Alt: move the camera.");
+    for (int k = 0; k < 2; k++) { if (k) ImGui::SameLine(); bool on = folTool == k; if (on) ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(40, 110, 230, 255)); if (ImGui::Button(k ? "Erase" : "Paint")) folTool = on ? -1 : k; if (on) ImGui::PopStyleColor(); }
+    ImGui::SameLine(); ImGui::TextDisabled("%d copies", F.count());
+    if (beginProps("fo")) { propCols();
+      rowLabel("Brush Size"); ImGui::SliderFloat("##fbr", &folRadius, 0.5f, 60, "%.1f m", ImGuiSliderFlags_Logarithmic);
+      if (folType >= (int)F.types.size()) folType = 0;
+      for (int t = 0; t < (int)F.types.size(); t++) { FoliageType& T = F.types[t]; ImGui::PushID(t); char lb[32]; std::snprintf(lb, sizeof lb, "Kind %d", t + 1); rowLabel(lb);
+        if (ImGui::RadioButton("##ft", folType == t)) folType = t; if (ImGui::IsItemHovered()) ImGui::SetTooltip("Paint this kind"); ImGui::SameLine(); ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 70);
+        if (ImGui::BeginCombo("##fm", T.mesh.c_str())) { for (int m = 0; m < MESH_COUNT; m++) if (ImGui::Selectable(MESHES[m], T.mesh == MESHES[m])) { T.mesh = MESHES[m]; F.changed(); ch = true; }
+          scanFiles(); for (auto& m : projModels) if (ImGui::Selectable(m.c_str(), T.mesh == m)) { T.mesh = m; F.changed(); ch = true; } ImGui::EndCombo(); }
+        ImGui::SameLine(); ImGui::TextDisabled("%d", (int)T.inst.size()); ImGui::SameLine(); if (ImGui::SmallButton("x")) { F.types.erase(F.types.begin() + t); F.changed(); ch = true; ImGui::PopID(); break; }
+        if (folType == t) {
+          rowLabel("  Material"); if (ImGui::BeginCombo("##fmat", T.material.empty() ? "Default" : T.material.c_str())) { if (ImGui::Selectable("Default", T.material.empty())) { T.material.clear(); F.changed(); ch = true; }
+            for (auto& [mid, m] : P.materials) if (ImGui::Selectable(mid.c_str(), T.material == mid)) { T.material = mid; F.changed(); ch = true; } ImGui::EndCombo(); }
+          rowLabel("  Density"); ch |= ImGui::DragFloat("##fd", &T.density, 0.01f, 0.001f, 50, "%.3f per m2", ImGuiSliderFlags_Logarithmic);
+          rowLabel("  Scale"); { float r[2] = {T.scaleMin, T.scaleMax}; if (ImGui::DragFloat2("##fs", r, 0.01f, 0.01f, 50, "%.2f")) { T.scaleMin = r[0]; T.scaleMax = std::max(r[0], r[1]); } if (ImGui::IsItemDeactivatedAfterEdit()) ch = true; }
+          rowLabel("  Wind"); if (ImGui::SliderFloat("##fw", &T.wind, 0, 2, "%.2f")) F.changed(); if (ImGui::IsItemDeactivatedAfterEdit()) ch = true; if (ImGui::IsItemHovered()) ImGui::SetTooltip("How much it sways (grass, leaves)");
+          rowLabel("  Cull Distance"); ch |= ImGui::DragFloat("##fc", &T.cullDistance, 1, 5, 5000, "%.0f m"); if (ImGui::IsItemHovered()) ImGui::SetTooltip("Farther than this it isn't drawn");
+          rowLabel("  Sink"); ch |= ImGui::DragFloat("##fk", &T.sink, 0.01f, -5, 5, "%.2f m");
+          rowLabel("  Align to Slope"); if (ImGui::Checkbox("##fa", &T.alignToNormal)) { F.changed(); ch = true; }
+          rowLabel("  Random Turn"); ch |= ImGui::Checkbox("##fy", &T.randomYaw);
+          rowLabel("  Collision"); ch |= ImGui::Checkbox("##fcol", &T.collision); if (ImGui::IsItemHovered()) ImGui::SetTooltip("Players and bodies hit it (trees, rocks)");
+          rowLabel("  Cast Shadow"); if (ImGui::Checkbox("##fsh", &T.castShadow)) { F.changed(); ch = true; }
+          rowLabel(""); if (ImGui::Button("Fill Landscapes")) {   // scatter it over every landscape at its density
+            uint32_t s = (uint32_t)SDL_GetTicks() | 1; int n = 0; for (auto& x : L().actors) if (x.type == "Landscape" && x.land) { glm::mat4 W = worldOf(x); float hs = x.land->size * 0.5f;
+              for (float zz = -hs; zz < hs; zz += 8) for (float xx = -hs; xx < hs; xx += 8) { glm::vec3 c = glm::vec3(W * glm::vec4(xx + 4, 0, zz + 4, 1));
+                n += F.paint(t, c, 5.7f, 0.1f, [&](float px, float pz, glm::vec3& p, glm::vec3& nr) { return raySurface({px, 5000, pz}, {0, -1, 0}, 10000, p, nr); }, foliageRand(s)); } }
+            ch = true; logMsg("Foliage: " + std::to_string(n) + " copies"); }
+          ImGui::SameLine(); if (ImGui::Button("Clear Kind")) { T.inst.clear(); F.changed(); ch = true; } }
+        ImGui::PopID(); }
+      rowLabel(""); if (ImGui::Button("+ Kind")) { FoliageType T; T.mesh = "Sphere"; T.density = 0.05f; F.types.push_back(T); folType = (int)F.types.size() - 1; F.changed(); ch = true; }
+      ImGui::EndTable(); } }
+  if (a->type == "Cloth" && ImGui::CollapsingHeader("Cloth", ImGuiTreeNodeFlags_DefaultOpen) && beginProps("cl")) { propCols(); ClothProps& c = a->cloth;
+    rowLabel("Size"); { float v[2] = {c.width, c.height}; if (ImGui::DragFloat2("##csz", v, 0.01f, 0.1f, 50, "%.2f m")) { c.width = v[0]; c.height = v[1]; } if (ImGui::IsItemDeactivatedAfterEdit()) ch = true; }
+    rowLabel("Detail"); ch |= ImGui::SliderInt("##cres", &c.res, 4, 48, "%d points a side");
+    rowLabel("Held At"); { const char* pins[] = {"top", "corners", "left", "none", "all"}; const char* names[] = {"Top Edge", "Top Corners", "Left Edge", "Nothing (falls)", "Everywhere (still)"}; int cur = 0; for (int k = 0; k < 5; k++) if (c.pin == pins[k]) cur = k;
+      if (ImGui::Combo("##cpin", &cur, names, 5)) { c.pin = pins[cur]; ch = true; } }
+    rowLabel("Stiffness"); ch |= ImGui::SliderFloat("##cst", &c.stiffness, 0, 2, "%.2f");
+    rowLabel("Wind"); ch |= ImGui::SliderFloat("##cw", &c.wind, 0, 3, "%.2f"); rowLabel("Wind Direction"); ch |= ImGui::DragFloat3("##cwd", &c.windDir.x, 0.01f, -1, 1, "%.2f");
+    rowLabel("Weight"); ch |= ImGui::DragFloat("##cm", &c.mass, 0.01f, 0.1f, 10, "%.2f");
+    rowLabel("Material"); if (ImGui::BeginCombo("##cmat", c.material.empty() ? "Default (red)" : c.material.c_str())) { if (ImGui::Selectable("Default (red)", c.material.empty())) { c.material.clear(); ch = true; }
+      for (auto& [mid, m] : P.materials) if (ImGui::Selectable(mid.c_str(), c.material == mid)) { c.material = mid; ch = true; } ImGui::EndCombo(); }
+    rowLabel(""); ImGui::TextDisabled("It hangs down from here. Attach it to a bone for a cape.");
+    ImGui::EndTable(); }
   if (a->type == "ReflectionCapture" && ImGui::CollapsingHeader("Reflection Capture", ImGuiTreeNodeFlags_DefaultOpen) && beginProps("rc")) { propCols();
     rowLabel("Influence Radius"); ch |= ImGui::DragFloat("##rcr", &a->probe.radius, 0.1f, 0.5f, 500, "%.1f m"); if (ImGui::IsItemHovered()) ImGui::SetTooltip("Shiny surfaces within this distance reflect what the capture sees from here (floors, metal, glass, water).");
     rowLabel("Brightness"); ch |= ImGui::DragFloat("##rci", &a->probe.intensity, 0.01f, 0, 10, "%.2f");
@@ -591,7 +646,8 @@ void Editor::drawPlaceActors() {
     drawIcon(dl, {p.x + h / 2, p.y + h / 2}, h * 0.32f, icon, IM_COL32(190, 190, 190, 255)); dl->AddText({p.x + h + 8, p.y + (h - ImGui::GetFontSize()) / 2}, ImGui::GetColorU32(ImGuiCol_Text), label);
     ImGui::PopID(); };
   if (ImGui::CollapsingHeader("Basic", ImGuiTreeNodeFlags_DefaultOpen)) { entry("Landscape", "Landscape", IC_Cube); entry("Empty Actor", "Empty", IC_Select); entry("Player Start", "PlayerStart", IC_Play); entry("Trigger Box", "TriggerBox", IC_Window); entry("Camera Actor", "CameraActor", IC_Window); entry("Text Render", "TextRender", IC_Script); }
-  if (ImGui::CollapsingHeader("Physics", ImGuiTreeNodeFlags_DefaultOpen)) { entry("Vehicle (Car)", "Vehicle", IC_Play); entry("Physics Constraint", "PhysicsConstraint", IC_Gear); entry("Physics Box", "PhysicsBox", IC_Cube); }
+  if (ImGui::CollapsingHeader("Physics", ImGuiTreeNodeFlags_DefaultOpen)) { entry("Vehicle (Car)", "Vehicle", IC_Play); entry("Physics Constraint", "PhysicsConstraint", IC_Gear); entry("Physics Box", "PhysicsBox", IC_Cube); entry("Destructible Wall", "DestructibleWall", IC_Cube); entry("Cloth", "Cloth", IC_Window); }
+  if (ImGui::CollapsingHeader("World", ImGuiTreeNodeFlags_DefaultOpen)) { entry("Foliage", "Foliage", IC_Cube); }
   if (ImGui::CollapsingHeader("Lights", ImGuiTreeNodeFlags_DefaultOpen)) for (const char* t : {"DirectionalLight", "PointLight", "SpotLight", "ReflectionCapture"}) entry(actorTypeLabel(t), t, IC_Gear);
   if (ImGui::CollapsingHeader("Shapes", ImGuiTreeNodeFlags_DefaultOpen)) for (int i = 0; i < MESH_COUNT; i++) entry(MESHES[i], std::string("StaticMesh|") + MESHES[i], IC_Cube);
   ImGui::End();

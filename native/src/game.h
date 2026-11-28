@@ -36,6 +36,10 @@ void applyMaterial(DrawItem& d, const Material& m);
 // a car's 4 wheels from its size and Vehicle settings (body space, m); one wheel's look (local: a Y cylinder → body space)
 void vehicleWheels(const Actor& a, const glm::vec3& scale, std::vector<Physics::WheelDesc>& out);
 void addWheelDraw(Frame& f, const Project& P, const Actor& a, const glm::mat4& bodyW, const glm::mat4& local, unsigned id);
+// a Foliage actor's copies near the camera (instanced, in cells); cloth at rest (the editor)
+void addFoliageDraws(Frame& f, const Project& P, const Actor& a, const glm::vec3& cam, unsigned id);
+void clothRestMesh(const ClothProps& c, MeshData& m);
+void fractureMesh(const MeshData& src, const glm::vec3& scale, int pieces, uint32_t seed, std::vector<MeshData>& out, std::vector<glm::vec3>& centers);
 std::string keyCode(SDL_Scancode sc);              // SDL scancode → "KeyW", "Space", ...
 
 class Game : public ScriptWorld {
@@ -146,6 +150,8 @@ private:
     int owner = 0; bool repl = false, netKin = false, netDriven = false; int remote = -1;   // remote: the avatar of that player
     struct NetT { glm::vec3 p{0}, v{0}; glm::quat q{1, 0, 0, 0}; double at = -1; } nt; glm::vec3 sentP{1e9f}; glm::quat sentQ{1, 0, 0, 0}; double sentAt = -1;
     std::vector<glm::mat4> netWheels;
+    double dieAt = -1; float dmgTaken = 0;   // goes at this time (pieces of something broken); damage so far (Destructible)
+    struct Cloth { bool on = false; int n = 0; std::vector<glm::vec3> p, prev; std::vector<char> pin; struct L { int a, b; float rest; }; std::vector<L> links; int version = 0; } cloth;
     struct Walk { bool active = false; std::vector<glm::vec3> path; size_t i = 1; float speed = 3.5f, accept = 0.5f, foot = 0; bool turn = true, player = false; std::string goal, result; glm::vec3 goalAt{0}; double repath = 0; } walk;   // AI Move To
   };
   NavGrid nav_; bool navBuilt_ = false;
@@ -179,6 +185,9 @@ private:
   // Third Person: the player's character, its animations chosen by how it moves (idle, walk, run, jump, fall), turning where it goes
   std::string pModel_, pAnimName_; AnimPlay pAnim_; float charYaw_ = 0; void playerAnimFrame(float dt);
   std::vector<Obj::IkReq> pIk_;
+  bool fracture(Obj& o, uint32_t seed, const glm::vec3& point, float impulse, bool hasPoint);   // fracture.cpp
+  void clothStart(Obj& o); void clothFrame(float dt); void clothDraws(Frame& f) const;         // cloth.cpp
+  std::vector<uint32_t> foliageBodies_; void foliageStart();
   // online: actors kept the same on every player's computer, the other players as characters (netsync.cpp)
   std::vector<NetEvent> netInbox_; double netSent_ = -1; std::string pendingEnter_; std::map<int, std::string> avatars_; bool netWas_ = false; bool fromNet_ = false;
   bool netOn() const; int netMe() const; bool owns(const Obj& o) const; bool replicated(const Obj& o) const;

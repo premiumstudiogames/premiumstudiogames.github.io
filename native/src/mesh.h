@@ -12,6 +12,11 @@ MeshData makePrimitive(const std::string& name);   // Cube, Sphere, Cylinder, Co
 GpuMesh upload(const MeshData& m, bool lines = false);
 GpuMesh uploadLines(const std::vector<glm::vec3>& pts);   // pairs of points
 void destroy(GpuMesh& m);
-const GpuMesh& primitive(const std::string& name);       // cached GPU meshes
+const GpuMesh& primitive(const std::string& name);       // cached GPU meshes (also meshes made at run time, below)
+// meshes made by the engine while a game runs (the pieces of something broken, cloth): "@name"; drawn, collided, and gone with forgetMeshes
+void registerMesh(const std::string& name, const MeshData& m);
+const MeshData* registeredMesh(const std::string& name);
+void forgetMeshes(const std::string& prefix);
+GpuMesh& dynamicMesh(const std::string& name, const MeshData& m);   // made or updated in place (cloth moves every frame)
 void releasePrimitives();
 }

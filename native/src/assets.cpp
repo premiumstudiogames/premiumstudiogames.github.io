@@ -385,6 +385,7 @@ void poseModel(const Model& m, const AnimPlay* a, ModelPose& out) {
 const MeshData& meshShape(const std::string& mesh) {
   static std::map<std::string, MeshData> prims; static MeshData empty;
   if (isModelFile(mesh)) { ModelRef m = model(mesh); g_shapeKeep[g_root + "|" + mesh] = m; return m ? m->shape : empty; }
+  if (!mesh.empty() && mesh[0] == '@') { if (auto r = registeredMesh(mesh)) return *r; return empty; }   // made while the game runs
   auto it = prims.find(mesh); if (it != prims.end()) return it->second;
   return prims[mesh] = makePrimitive(mesh);
 }

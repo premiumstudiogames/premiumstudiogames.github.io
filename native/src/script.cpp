@@ -165,6 +165,11 @@ function __api(id) {
     clearIK() { __n.anim(id, 'ikClear', ''); },
     get autoAnimate() { return __n.anim(id, 'auto', '') === '1'; }, set autoAnimate(v) { __n.anim(id, 'auto', v ? '1' : '0'); },
     get footIK() { return __n.anim(id, 'footIK', '') === '1'; }, set footIK(v) { __n.anim(id, 'footIK', v ? '1' : '0'); },
+    // breaks into pieces (a mesh): from a point with a push; pieces: how many (else its Destructible setting)
+    fracture(point, impulse, pieces) { const o = { impulse: impulse === undefined ? 200 : +impulse }; if (point) o.point = __gpv(point); if (pieces) o.pieces = +pieces; return __n.gp('fracture', id, JSON.stringify(o)) === '1'; },
+    setClothWind(dir, strength) { const o = {}; if (dir) o.direction = __gpv(dir); if (strength !== undefined) o.strength = +strength; __n.gp('clothWind', id, JSON.stringify(o)); },
+    setClothPin(pin) { __n.gp('clothPin', id, JSON.stringify({ pin: String(pin) })); },   // 'top' 'corners' 'left' 'none' (it falls) 'all'
+    clothPoint(i) { const r = __n.gp('clothPoint', id, String(i | 0)); return r ? JSON.parse(r) : null; },
     setBoneScale(name, s) { return __n.anim(id, 'boneScale', JSON.stringify({ name: String(name), scale: +s })) === '1'; },   // 0 = gone with what hangs on it (gore: a limb shot off)
     bone(name) { const r = __n.anim(id, 'bone', String(name)); if (!r) return null; const b = JSON.parse(r);
       return { position: new Vec3(b.p[0], b.p[1], b.p[2]), rotation: new Vec3(b.r[0], b.r[1], b.r[2]) }; },

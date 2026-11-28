@@ -254,7 +254,31 @@ int main(int argc, char** argv) {
           check(glm::length(glm::vec2(p.x - car0.x, p.z - car0.z)) > 5, "…W drives it (" + std::to_string(glm::length(glm::vec2(p.x - car0.x, p.z - car0.z))) + " m)");
           check(ed.game->decalCount() == 20, "…decals (blood, bullet holes, scorch) drawn"); ed.shotFile = mtest + "/vehicle-play.bmp"; }
         if (carDone && frame == carDone + 4) ed.stopPlay();
-        if (carDone && frame == carDone + 8) { check(glGetError() == GL_NO_ERROR, "no OpenGL errors");
+        // Foliage painted with the mouse, a flag of cloth, a wall that breaks: placed from Place Actors, then played
+        static std::string folId, wallId, flagId; static int worldAt = 0, painted = 0;
+        if (carDone && frame == carDone + 8) { worldAt = frame; ed.sel.clear();
+          glm::vec3 at(0, 0, -6); pge::Actor& fo = ed.addActor("Foliage", "", &at); folId = fo.id; check(fo.fol && fo.fol->types.size() == 1, "Place Actors > Foliage: a Foliage actor with one kind");
+          fo.fol->types[0].mesh = "Cone"; fo.fol->types[0].density = 0.8f; fo.fol->types[0].wind = 0.6f; ed.folType = 0; ed.folTool = 0; ed.folRadius = 4; ed.sel = folId;
+          glm::vec3 wp(-3, 0, -3); pge::Actor& w = ed.addActor("DestructibleWall", "", &wp); wallId = w.id; check(w.destructible.enabled && w.destructible.pieces >= 8, "Place Actors > Destructible Wall: a wall that breaks");
+          glm::vec3 cp(3, 3.5f, -3); pge::Actor& fl = ed.addActor("Cloth", "", &cp); flagId = fl.id; fl.p = cp; fl.cloth.wind = 1; ed.sel = folId; ed.touch();
+          ed.camPos = {0, 9, 8}; ed.camYaw = 0; ed.camPitch = -0.7f; ImGui::SetWindowFocus("Viewport"); }
+        if (worldAt && frame == worldAt + 4) mouse2(ed.vpX + ed.vpW * 0.4f, ed.vpY + ed.vpH * 0.6f);
+        if (worldAt && frame == worldAt + 6) mouse2(ed.vpX + ed.vpW * 0.4f, ed.vpY + ed.vpH * 0.6f, SDL_BUTTON_LEFT, true);
+        if (worldAt && frame > worldAt + 6 && frame < worldAt + 30) mouse2(ed.vpX + ed.vpW * (0.4f + (frame - worldAt - 6) * 0.01f), ed.vpY + ed.vpH * 0.6f);
+        if (worldAt && frame == worldAt + 30) mouse2(ed.vpX + ed.vpW * 0.64f, ed.vpY + ed.vpH * 0.6f, SDL_BUTTON_LEFT, false, true);
+        if (worldAt && frame == worldAt + 33) { pge::Actor* fo = ed.actor(folId); painted = fo && fo->fol ? fo->fol->count() : 0;
+          check(painted > 15, "Foliage: holding the mouse on the ground paints copies along the stroke (" + std::to_string(painted) + ")"); check(ed.canUndo(), "…one undo step");
+          ed.folTool = -1; ed.sel = flagId; }
+        if (worldAt && frame == worldAt + 35) ed.shotFile = mtest + "/world-editor.bmp";
+        if (worldAt && frame == worldAt + 38) { ed.sel.clear(); ed.play(); }
+        if (worldAt && frame == worldAt + 50 && ed.game) { std::string wid = ed.game->find(ed.actor(wallId) ? ed.actor(wallId)->name : "");
+          ed.game->gameplay("damage", nlohmann::json(wid).dump(), nlohmann::json{{"amount", 1000}, {"point", {-3, 1.5f, -2.8f}}}.dump()); }
+        if (worldAt && frame == worldAt + 54 && ed.game) { int pieces = 0; std::string nm = ed.actor(wallId) ? ed.actor(wallId)->name : ""; check(ed.game->find(nm).empty() && !ed.game->find(nm + " piece").empty(), "Play: enough damage breaks the wall into pieces");
+          std::string fid = ed.game->find(ed.actor(flagId) ? ed.actor(flagId)->name : ""); auto b = nlohmann::json::parse(ed.game->gameplay("clothPoint", fid, "-1"), nullptr, false);
+          check(b.is_array() && b[1].get<float>() < 3.5f - 1.0f, "Play: the flag hangs and moves in the wind"); (void)pieces; ed.shotFile = mtest + "/world-play.bmp"; }
+        if (worldAt && frame == worldAt + 58) ed.stopPlay();
+        if (worldAt && frame == worldAt + 62) { pge::Actor* fo = ed.actor(folId); check(fo && fo->fol && fo->fol->count() == painted, "after Play the painted foliage is still there");
+          check(glGetError() == GL_NO_ERROR, "no OpenGL errors");
           std::ofstream o(fs::u8path(mtest + "/model-result.txt")); o << (code == 0 ? "PASS\n" : "FAIL\n") << log; for (auto& l : pge::logLines()) o << "[" << l.time << "] " << l.text << "\n"; break; }
         if (landCheckAt && frame > landCheckAt + 6000) { check(false, "the gameplay part finished in time"); std::ofstream o(fs::u8path(mtest + "/model-result.txt")); o << "FAIL\n" << log; break; }
       }

@@ -67,6 +67,9 @@ self  - the actor the script is on
   cars:  self.vehicle  .speed (km/h) .rpm .gear .grounded .driver .setInput(throttle, steer, brake, handbrake) .enter() .exit()
   self.makeVehicle({ torque: 650, maxSteer: 35, wheelRadius: 0.4, wheelWidth: 0.3, travel: 0.3, stiffness: 1.5, drive: 'all' | 'rear' | 'front', mass: 1300, wheelMesh: 'Cylinder' })
   self.joint                     a Physics Constraint actor's joint (see world.addJoint)
+  self.fracture(point, impulse = 200, pieces)   a mesh breaks into pieces that fly from point and fall (Destructible in Details: breaks by itself after Health damage)
+  a Cloth actor (flag, curtain, cape - attach it to a bone):  self.setClothWind([1, 0, 0.3], 1.5)   self.setClothPin('top' | 'corners' | 'left' | 'none' | 'all')   self.clothPoint(i)
+  Foliage: select a Foliage actor, Paint, hold the left mouse button on the ground (Shift erases); Fill Landscapes scatters a kind over every landscape
 
 world
   world.time                     seconds since the game started

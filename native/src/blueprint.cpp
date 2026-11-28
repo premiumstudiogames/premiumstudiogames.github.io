@@ -331,6 +331,13 @@ static std::vector<BpNodeDef> buildLibrary() {
   add("Animation.SetBoneScale", "Animation", X, "Set Bone Scale", "حجم العظمة", "Makes a bone (and what hangs on it) bigger or smaller; 0 = gone (a limb or head shot off - add blood with Spawn Decal).",
       "يكبّر أو يصغّر عظمة (واللي معلّق فيها)؛ 0 = تختفي (يد أو راس انقطع - حط دم بـ Spawn Decal).", {">exec", T, ">Bone:string=\"Head\"", ">Scale:number=0", "<then"},
       "{ const __t = $in(Target); if (__t && __t.setBoneScale) __t.setBoneScale($in(Bone), +$in(Scale)); }\n$exec(then)");
+  add("Physics.Fracture", "Physics", X, "Break Into Pieces", "كسّره قطع", "Breaks a mesh into pieces that fly from Point and fall (like Unreal's Chaos destruction). Pieces 0 = its Destructible setting.",
+      "يكسّر مجسم لقطع تطير من النقطة وتطيح (زي تدمير Chaos في Unreal). القطع 0 = حسب إعداد Destructible.", {">exec", T, ">Point:vector", ">Impulse:number=300", ">Pieces:number=0", "<then", "<Broke:bool"},
+      "{ const __t = $in(Target); $out(Broke) = !!(__t && __t.fracture && __t.fracture(__bp.pt($in(Point)), +$in(Impulse), +$in(Pieces) || 0)); }\n$exec(then)");
+  add("Physics.ClothWind", "Physics", X, "Set Cloth Wind", "ريح القماش", "How the wind blows a Cloth (a flag, a curtain, a cape).", "كيف الريح تحرك القماش (علم، ستارة، عباية).",
+      {">exec", T, ">Direction:vector=[1,0,0.3]", ">Strength:number=1", "<then"}, "{ const __t = $in(Target); if (__t && __t.setClothWind) __t.setClothWind(__bp.vec($in(Direction)), +$in(Strength)); }\n$exec(then)");
+  add("Physics.ClothPin", "Physics", X, "Set Cloth Held At", "القماش ماسك من", "Where a Cloth is held: top, corners, left, none (it falls), all.", "وين القماش ماسك: top أو corners أو left أو none (يطيح) أو all.",
+      {">exec", T, ">HeldAt:string=\"none\"", "<then"}, "{ const __t = $in(Target); if (__t && __t.setClothPin) __t.setClothPin(__bp.str($in(HeldAt))); }\n$exec(then)");
   add("Audio.PlaySound", "Audio", X, "Play Sound 2D", "شغّل صوت", "Plays a sound file from the project (sounds/coin.ogg ...).", "يشغّل ملف صوت من المشروع (مثل sounds/coin.ogg).", {">exec", ">Sound:string=\"sounds/click.ogg\"", ">Volume:number=1", "<then"},
       "if (typeof sound !== 'undefined') sound.play($in(Sound), { volume: $in(Volume) });\n$exec(then)");
   add("Audio.PlaySoundAt", "Audio", X, "Play Sound at Location", "شغّل صوت في مكان", "Plays a sound at a place (quieter far away).", "يشغّل صوت في مكان معين (يوطى كل ما بعدت).", {">exec", ">Sound:string=\"sounds/click.ogg\"", ">Location:vector", ">Volume:number=1", "<then"},

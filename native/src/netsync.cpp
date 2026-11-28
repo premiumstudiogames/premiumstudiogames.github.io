@@ -104,6 +104,7 @@ void Game::netHandle(const json& m, int from) {
   else if (k == "x") { std::string id = m.value("i", std::string()); if (get(id)) destroyActor(id); }
   else if (k == "dmg") { if (inum(m, "to", -1) == netMe()) { json info = m.value("info", json::object()); damage("@player", num(m.value("amount", json(0))), info); } }
   else if (k == "dec") { json d = m.value("d", json::object()); addDecal(d); }
+  else if (k == "fr") { Obj* o = get(m.value("i", std::string())); if (o) { o->owner = inum(m, "f", from); fracture(*o, (uint32_t)(m.contains("seed") && m["seed"].is_number() ? m["seed"].get<uint64_t>() : 0), g3(m.value("pt", json())), num(m.value("imp", json(0))), m.value("hp", false)); } }   // broken the same way here
   else if (k == "bye") { int id = inum(m, "id", -1); auto it = avatars_.find(id); if (it != avatars_.end()) { std::string a = it->second; avatars_.erase(it); destroyActor(a); } }
   fromNet_ = false;
 }

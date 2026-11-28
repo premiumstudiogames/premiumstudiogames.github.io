@@ -471,6 +471,57 @@ int main(int argc, char** argv) {
     for (auto& a : q.levels[0].second.actors) if (a.name == "Flat") a.script = "SC_AnimApi";
     Game g2(q, "Main"); g2.start(); std::string hv; for (auto& x : g2.hudLines()) if (x.first == "a") hv = x.second; CHECK(hv == "true,true,true,true,false,true", ("the script API: " + hv).c_str());
   }
+  {   // foliage, breaking into pieces, cloth
+    std::printf("foliage, destruction, cloth\n");
+    // the pieces of a cube: closed (their volumes add up to the cube's), the same seed gives the same pieces
+    { std::vector<MeshData> parts, parts2; std::vector<glm::vec3> cs, cs2; fractureMesh(meshShape("Cube"), {2, 2, 2}, 12, 7, parts, cs); fractureMesh(meshShape("Cube"), {2, 2, 2}, 12, 7, parts2, cs2);
+      double vol = 0; bool inside = true; for (size_t k = 0; k < parts.size(); k++) { auto& m = parts[k]; for (size_t i = 0; i + 2 < m.i.size(); i += 3) { glm::vec3 a = m.v[m.i[i]].p, b = m.v[m.i[i + 1]].p, c = m.v[m.i[i + 2]].p; vol += glm::dot(a, glm::cross(b, c)) / 6.0; }
+        glm::vec3 mn = m.bmin + cs[k], mx = m.bmax + cs[k]; if (glm::any(glm::lessThan(mn, glm::vec3(-1.001f))) || glm::any(glm::greaterThan(mx, glm::vec3(1.001f)))) inside = false; }
+      CHECK(parts.size() == 12, ("a cube breaks into 12 pieces (" + std::to_string(parts.size()) + ")").c_str());
+      CHECK(std::abs(vol - 8) < 0.08, ("…closed: their volumes add up to the cube's (" + std::to_string(vol) + " m3 of 8)").c_str());
+      CHECK(inside, "…all inside where the cube was");
+      bool same = cs.size() == cs2.size(); for (size_t k = 0; same && k < cs.size(); k++) same = glm::length(cs[k] - cs2[k]) < 1e-5f; CHECK(same, "…the same seed breaks it the same way (online: the same on every computer)"); }
+    // painting foliage, erasing, saving
+    { Foliage F; FoliageType T; T.mesh = "Cone"; T.density = 1; F.types.push_back(T); uint32_t s = 99; int n = 0;
+      for (int i = 0; i < 40; i++) n += F.paint(0, {0, 0, 0}, 5, 1.f / 30, [](float x, float z, glm::vec3& p, glm::vec3& nr) { p = {x, 0.5f, z}; nr = {0, 1, 0}; return true; }, foliageRand(s));
+      bool inCircle = true; for (auto& i : F.types[0].inst) if (glm::length(glm::vec2(i.p.x, i.p.z)) > 5.01f || std::abs(i.p.y - 0.5f) > 1e-4f) inCircle = false;
+      CHECK(n > 30 && n == F.count() && inCircle, ("painting puts copies in the brush on the ground (" + std::to_string(n) + ")").c_str());
+      int before = F.count(), gone = F.erase(-1, {0, 0, 0}, 2); CHECK(gone > 0 && F.count() == before - gone, "erasing takes the copies in the brush away");
+      Foliage G; CHECK(G.fromJson(json::parse(F.toJson().dump())) && G.count() == F.count() && glm::length(G.types[0].inst[3].p - F.types[0].inst[3].p) < 0.002f, "foliage saved and loaded is the same");
+      auto& cells = foliageCells(F); size_t sum = 0; for (auto& c : cells) sum += c.mats->size(); CHECK(!cells.empty() && (int)sum == F.count(), "…drawn in groups holding every copy"); }
+    Project q = makeTemplate("Blank", "Break"); Level& L = q.levels[0].second; L.actors.clear(); L.world.gameMode = "FirstPerson";
+    Actor fl = newActor("StaticMesh", "Floor"); fl.p = {0, -0.5f, 0}; fl.s = {200, 1, 200}; L.actors.push_back(fl);
+    Actor wall = newActor("StaticMesh", "Wall"); wall.p = {0, 1.5f, -8}; wall.s = {4, 3, 0.3f}; wall.destructible.enabled = true; wall.destructible.pieces = 16; wall.destructible.health = 40; wall.destructible.debrisLife = 3; L.actors.push_back(wall);
+    Actor flag = newActor("Cloth", "Flag"); flag.p = {6, 4, 0}; flag.cloth.width = 2; flag.cloth.height = 1.5f; flag.cloth.res = 12; flag.cloth.wind = 0; L.actors.push_back(flag);
+    Actor sheet = newActor("Cloth", "Sheet"); sheet.p = {-6, 2, 0}; sheet.r = {-90, 0, 0}; sheet.cloth.pin = "none"; sheet.cloth.res = 10; sheet.cloth.wind = 0; L.actors.push_back(sheet);
+    Actor fo = newActor("Foliage", "Trees"); fo.fol = std::make_shared<Foliage>(); { FoliageType T; T.mesh = "Cylinder"; T.collision = true; T.scaleMin = T.scaleMax = 1; T.randomYaw = false; T.inst.push_back({{20, 0.5f, 20}, 0, 1, {0, 1, 0}}); T.inst.push_back({{24, 0.5f, 20}, 0, 1, {0, 1, 0}}); fo.fol->types.push_back(T); } L.actors.push_back(fo);
+    Actor ps = newActor("PlayerStart", "Start"); ps.p = {0, 0.1f, 4}; L.actors.push_back(ps);
+    { Project r; std::string err; std::string file = (std::filesystem::temp_directory_path() / "break-test.pge.json").string(); CHECK(saveProjectFile(q, file, &err) && loadProjectFile(file, r, &err), "a level with foliage, cloth and a destructible wall saves and loads");
+      Level& R = r.levels[0].second; const Actor* rw = nullptr; const Actor* rf = nullptr; const Actor* rc = nullptr; for (auto& a : R.actors) { if (a.name == "Wall") rw = &a; if (a.name == "Trees") rf = &a; if (a.name == "Flag") rc = &a; }
+      CHECK(rw && rw->destructible.enabled && rw->destructible.pieces == 16 && rw->destructible.health == 40, "…the wall still breaks after 40 damage into 16");
+      CHECK(rf && rf->fol && rf->fol->count() == 2 && rf->fol->types[0].collision, "…the trees are there, with collision");
+      CHECK(rc && rc->cloth.width == 2 && rc->cloth.res == 12 && rc->cloth.pin == "top", "…the flag keeps its size and where it's held"); }
+    Game g(q, "Main"); CHECK(g.start(), "a level with foliage, cloth and a wall that breaks starts");
+    int n0 = g.actorCount(); std::string w = g.find("Wall");
+    g.gameplay("damage", json(w).dump(), json{{"amount", 25}}.dump()); run(g, 0.1f); CHECK(!g.find("Wall").empty(), "25 damage: the wall still stands");
+    g.gameplay("damage", json(w).dump(), json{{"amount", 25}, {"point", {0, 1.5f, -7.85f}}}.dump()); run(g, 0.1f);
+    int pieces = 0; for (int k = 0; k < 40; k++) if (!g.find("Wall piece").empty() && g.worldPos(w + "_f" + std::to_string(k)) != glm::vec3(0)) pieces++;
+    CHECK(g.find("Wall").empty() && pieces >= 12, ("40 damage: it breaks into pieces (" + std::to_string(pieces) + ")").c_str());
+    run(g, 2.0f); float low = 1e9f; for (int k = 0; k < 16; k++) { glm::vec3 p = g.worldPos(w + "_f" + std::to_string(k)); if (p != glm::vec3(0)) low = std::min(low, p.y); }
+    CHECK(low < 0.6f, "…the pieces fall to the floor");
+    run(g, 2.5f); CHECK(g.find("Wall piece").empty() && g.actorCount() <= n0, "…and go after Pieces Last");
+    // the JS API breaks a box too
+    std::string box = g.spawn("Cube", "{\"position\":[3,0.5,-3]}"); CHECK(g.gameplay("fracture", box, "{\"pieces\":5,\"impulse\":100}") == "1" && g.find("Cube").empty(), "fracture() breaks any mesh");
+    // cloth: the flag hangs from its top, the loose sheet falls and lies on the floor
+    run(g, 2.0f); json top = json::parse(g.gameplay("clothPoint", g.find("Flag"), "0")), bot = json::parse(g.gameplay("clothPoint", g.find("Flag"), "-1"));
+    CHECK(std::abs(top[1].get<float>() - 4) < 0.01f && bot[1].get<float>() < 4 - 1.3f, ("the flag is held at the top and hangs down (" + std::to_string(bot[1].get<float>()) + ")").c_str());
+    json sp = json::parse(g.gameplay("clothPoint", g.find("Sheet"), "-1")); CHECK(sp[1].get<float>() < 0.2f && sp[1].get<float>() > -0.05f, ("a loose sheet falls and lies on the floor (" + std::to_string(sp[1].get<float>()) + " m)").c_str());
+    g.gameplay("clothWind", g.find("Flag"), "{\"direction\":[0,0,1],\"strength\":2}"); run(g, 2.0f); bot = json::parse(g.gameplay("clothPoint", g.find("Flag"), "-1"));
+    CHECK(bot[2].get<float>() > 0.3f, ("the wind blows the flag (" + std::to_string(bot[2].get<float>()) + " m)").c_str());
+    g.gameplay("clothPin", g.find("Flag"), "{\"pin\":\"none\"}"); run(g, 2.0f); top = json::parse(g.gameplay("clothPoint", g.find("Flag"), "0")); CHECK(top[1].get<float>() < 0.5f, "let go, the flag falls");
+    // foliage with collision stops things
+    { json h = json::parse(g.gameplay("raycast", "{\"from\":[20,5,20],\"to\":[20,-1,20],\"ignorePlayer\":true}", ""), nullptr, false); CHECK(h.is_object() && h["p"][1].get<float>() > 0.9f, "a tree painted with Collision is hit by a trace"); }
+  }
   {   // online: two games on this computer kept the same (physics, cars, ragdolls, spawned actors, players, damage, decals)
     std::printf("online sync\n");
     Project q = makeTemplate("Blank", "Online"); Level& L = q.levels[0].second; L.actors.clear(); L.world.gameMode = "FirstPerson";

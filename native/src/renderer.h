@@ -15,6 +15,7 @@ struct DrawItem { const GpuMesh* mesh = nullptr; glm::mat4 model{1}; glm::vec3 c
   unsigned tex[6] = {0, 0, 0, 0, 0, 0}; glm::vec2 tiling{1}; float normalScale = 1, aoStrength = 1, cutoff = -1;   // cutoff >= 0: cut out where alpha is below it
   bool vcolor = false, worldUV = false, flipGreen = false, blend = false, linear = false, decal = false;   // decal: drawn over the surface under it (no z-fighting)   // linear: color / emissive are linear light (glTF), not screen colours;   // vertex colours (models), textures laid on the world (no stretching), DirectX normal map, see-through
   const glm::mat4* bones = nullptr; int boneCount = 0;
+  const std::vector<glm::mat4>* inst = nullptr; glm::vec3 instMin{0}, instMax{0}; float wind = 0;   // instances (model = their parent), their world bounds; wind: sways (grass, leaves)
   // a landscape: 4 painted layers blended by the vertex colour (their colour, picture laid on the world every `tile` m, roughness)
   bool splat = false; unsigned layerTex[4] = {0, 0, 0, 0}; glm::vec3 layerCol[4] = {glm::vec3(1), glm::vec3(1), glm::vec3(1), glm::vec3(1)}; float layerTile[4] = {4, 4, 4, 4}, layerRough[4] = {0.9f, 0.9f, 0.9f, 0.9f}; };   // a skinned model: its joints (model space), model = the actor
 struct LightItem { int type = 1; glm::vec3 pos{0}, dir{0, -1, 0}, color{1}; float intensity = 1, range = 10, cosOuter = 0.8f; bool shadows = false; };
@@ -26,6 +27,7 @@ struct VoxelDraw { unsigned vao = 0; int count = 0; glm::vec3 offset{0}, mn{0}, 
 struct Frame {
   std::vector<VoxelDraw> voxels, voxelWater; unsigned voxelAtlas = 0; int voxelTiles = 0;   // block world: solid chunks, liquid surfaces
   float time = 0;   // seconds (moving water)
+  glm::vec3 eye{0};  // where the camera is (foliage shows near it)
   std::vector<DrawItem> draws; std::vector<LightItem> lights; std::vector<LineItem> lines; std::vector<TextItem> texts;
   WorldSettings world; bool fog = false; int viewMode = VM_Lit; bool grid = false; glm::vec3 shadowCenter{0};
   std::vector<ProbeItem> probes; size_t probeVersion = 0;   // reflection captures; a new version captures them again (the editor: the level changed)
@@ -62,6 +64,7 @@ private:
   void ensurePost(int w, int h);
   void freePost();
   unsigned boneTex_ = 0; void bindBones(unsigned prog, const DrawItem& it);
+  unsigned instTex_ = 0; void bindInst(unsigned prog, const DrawItem& it, float time);
   // reflection captures: a cube picture of the scene around each one (mip levels = rougher), made once (one a frame)
   struct Probe { unsigned tex = 0; bool ready = false; size_t version = 0; }; std::map<std::string, Probe> probes_; RenderTarget capRT_; unsigned capFbo_ = 0; bool capturing_ = false;
   void captureProbes(const Frame& f);

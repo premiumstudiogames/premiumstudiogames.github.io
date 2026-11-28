@@ -42,6 +42,9 @@ public:
   int viewMode = VM_Lit; bool showGrid = true, showIcons = true, showStats = false, showNav = false;   // showNav (P): where AI can walk
   size_t levelHash_ = 0, probeBump_ = 0; double levelHashAt_ = -1;   // reflection captures are made again when the level changes
   // Landscape mode: sculpt / paint with the mouse on the selected Landscape (Details > Landscape)
+  int folTool = -1, folType = 0; float folRadius = 4; bool folDown = false;   // foliage: -1 off, 0 paint, 1 erase
+  bool foliageBrush(const Camera& C, ImVec2 pos, ImVec2 size, ImDrawList* dl);
+  bool raySurface(const glm::vec3& o, const glm::vec3& d, float maxT, glm::vec3& hit, glm::vec3& nrm) const;   // landscapes and meshes with collision
   int landTool = -1, landLayer = 0; float landRadius = 6, landStrength = 1, landFlat = 0, hillsH = 8, hillsScale = 40; bool landDown = false;
   bool landscapeBrush(const Camera& C, ImVec2 pos, ImVec2 size, ImDrawList* dl);   // true = the mouse is used by the brush
   NavGrid navPreview; GpuMesh navLines; size_t navKey_ = 0; double navAt_ = -1; void navShow(Frame& f);

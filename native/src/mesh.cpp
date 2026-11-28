@@ -73,9 +73,25 @@ GpuMesh upload(const MeshData& d, bool lines) {
 GpuMesh uploadLines(const std::vector<glm::vec3>& pts) { MeshData d; for (auto& p : pts) d.v.push_back({p, glm::vec3(0, 1, 0)}); if (!pts.empty()) { d.bmin = d.bmax = pts[0]; for (auto& p : pts) { d.bmin = glm::min(d.bmin, p); d.bmax = glm::max(d.bmax, p); } } return upload(d, true); }
 void destroy(GpuMesh& m) { if (m.ebo) glDeleteBuffers(1, &m.ebo); if (m.vbo) glDeleteBuffers(1, &m.vbo); if (m.vao) glDeleteVertexArrays(1, &m.vao); m = GpuMesh(); }
 static std::map<std::string, GpuMesh> g_prims;
+static std::map<std::string, MeshData> g_made;
+void registerMesh(const std::string& name, const MeshData& m) { g_made[name] = m; auto it = g_prims.find(name); if (it != g_prims.end()) { destroy(it->second); g_prims.erase(it); } }
+const MeshData* registeredMesh(const std::string& name) { auto it = g_made.find(name); return it == g_made.end() ? nullptr : &it->second; }
+void forgetMeshes(const std::string& prefix) {
+  for (auto it = g_made.begin(); it != g_made.end();) { if (it->first.rfind(prefix, 0) == 0) it = g_made.erase(it); else ++it; }
+  for (auto it = g_prims.begin(); it != g_prims.end();) { if (it->first.rfind(prefix, 0) == 0) { destroy(it->second); it = g_prims.erase(it); } else ++it; }
+}
 const GpuMesh& primitive(const std::string& name) {
   auto it = g_prims.find(name); if (it != g_prims.end()) return it->second;
+  if (auto m = registeredMesh(name)) return g_prims[name] = upload(*m);
   return g_prims[name] = upload(makePrimitive(name));
+}
+GpuMesh& dynamicMesh(const std::string& name, const MeshData& m) {
+  auto it = g_prims.find(name);
+  if (it != g_prims.end() && it->second.vbo && it->second.count == (int)m.i.size()) {   // the same shape: only the points move
+    glBindBuffer(GL_ARRAY_BUFFER, it->second.vbo); glBufferSubData(GL_ARRAY_BUFFER, 0, m.v.size() * sizeof(Vertex), m.v.data()); glBindBuffer(GL_ARRAY_BUFFER, 0);
+    it->second.bmin = m.bmin; it->second.bmax = m.bmax; return it->second; }
+  if (it != g_prims.end()) destroy(it->second);
+  return g_prims[name] = upload(m);
 }
 void releasePrimitives() { for (auto& [n, m] : g_prims) destroy(m); g_prims.clear(); }
 }

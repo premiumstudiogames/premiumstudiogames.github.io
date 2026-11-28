@@ -24,11 +24,15 @@ static const char* SKIN_LIB = R"(#version 330 core
 layout(location=0) in vec3 aPos; layout(location=1) in vec3 aNor; layout(location=2) in vec2 aUv; layout(location=3) in vec4 aCol; layout(location=4) in uvec4 aJoint; layout(location=5) in vec4 aWeight;
 uniform mat4 uModel, uVP; uniform int uSkin; uniform sampler2D uBones;
 mat4 bone(uint i){ int y = int(i); return mat4(texelFetch(uBones, ivec2(0, y), 0), texelFetch(uBones, ivec2(1, y), 0), texelFetch(uBones, ivec2(2, y), 0), texelFetch(uBones, ivec2(3, y), 0)); }
-mat4 skinMatrix(){ if(uSkin == 0) return uModel; return uModel * (bone(aJoint.x) * aWeight.x + bone(aJoint.y) * aWeight.y + bone(aJoint.z) * aWeight.z + bone(aJoint.w) * aWeight.w); }
+uniform int uInstN; uniform sampler2D uInstTex; uniform float uWind, uWTime;   // instances (foliage: many of one mesh in one draw), swaying in the wind
+mat4 inst(int i){ return mat4(texelFetch(uInstTex, ivec2(0, i), 0), texelFetch(uInstTex, ivec2(1, i), 0), texelFetch(uInstTex, ivec2(2, i), 0), texelFetch(uInstTex, ivec2(3, i), 0)); }
+mat4 skinMatrix(){ if(uInstN > 0) return uModel * inst(gl_InstanceID); if(uSkin == 0) return uModel; return uModel * (bone(aJoint.x) * aWeight.x + bone(aJoint.y) * aWeight.y + bone(aJoint.z) * aWeight.z + bone(aJoint.w) * aWeight.w); }
+vec4 sway(vec4 w){ if(uWind <= 0.0) return w; float h = max(aPos.y, 0.0); float ph = uWTime * 1.7 + w.x * 0.37 + w.z * 0.29;
+  w.xz += vec2(sin(ph) + 0.4 * sin(ph * 2.3), cos(ph * 0.8) * 0.6) * uWind * h * 0.05; return w; }
 )";
 static const char* LIT_VS_MAIN = R"(
 uniform mat4 uLightVP; out vec3 vPos; out vec3 vNor; out vec4 vLight; out vec2 vUv; out vec4 vCol;
-void main(){ mat4 M = skinMatrix(); vec4 w = M * vec4(aPos,1.0); vPos = w.xyz; vNor = mat3(transpose(inverse(M))) * aNor; vLight = uLightVP * w; vUv = aUv; vCol = aCol; gl_Position = uVP * w; })";
+void main(){ mat4 M = skinMatrix(); vec4 w = sway(M * vec4(aPos,1.0)); vPos = w.xyz; vNor = mat3(transpose(inverse(M))) * aNor; vLight = uLightVP * w; vUv = aUv; vCol = aCol; gl_Position = uVP * w; })";
 // lighting shared by meshes and the block world (sun with shadow, point / spot lights, sky light, reflections, ACES + sRGB, fog)
 static const char* LIGHT_LIB = R"(
 uniform vec3 uCam, uSky, uGround, uFogColor; uniform float uAmbient, uExposure, uFogDensity; uniform int uFog, uMode, uHasShadow;
@@ -188,7 +192,7 @@ uniform vec4 uColor; uniform float uFade; in float vDist; out vec4 frag;
 void main(){ float a = uColor.a; if(uFade>0.0) a *= clamp(1.0 - vDist/uFade, 0.0, 1.0); frag = vec4(uColor.rgb, a); })";
 // shadows and clicking: skinned too; cut-out materials (leaves, fences) let the light through
 static const char* DEPTH_VS_MAIN = R"(
-out vec2 vUv; void main(){ vUv = aUv; gl_Position = uVP * skinMatrix() * vec4(aPos,1.0); })";
+out vec2 vUv; void main(){ vUv = aUv; gl_Position = uVP * sway(skinMatrix() * vec4(aPos,1.0)); })";
 static const char* DEPTH_FS = R"(#version 330 core
 in vec2 vUv; uniform sampler2D uBaseTex; uniform float uCutoff; uniform vec2 uTiling;
 void main(){ if(uCutoff >= 0.0 && texture(uBaseTex, vUv * uTiling).a < uCutoff) discard; } )";
@@ -356,7 +360,7 @@ bool Renderer::init() {
   { for (int i = -50; i <= 50; i++) { L.push_back({(float)i, 0, -50}); L.push_back({(float)i, 0, 50}); L.push_back({-50, 0, (float)i}); L.push_back({50, 0, (float)i}); } grid_ = uploadLines(L); L.clear(); }
   return true;
 }
-void Renderer::shutdown() { glDeleteProgram(vox_); glDeleteProgram(wat_); glDeleteProgram(text_); glDeleteVertexArrays(1, &textVao_); glDeleteBuffers(1, &textVbo_); glDeleteProgram(lit_); glDeleteProgram(flat_); glDeleteProgram(depth_); glDeleteProgram(vdepth_); glDeleteProgram(idp_); glDeleteTextures(1, &boneTex_); for (auto& [k, pb] : probes_) glDeleteTextures(1, &pb.tex); probes_.clear(); if (capFbo_) glDeleteFramebuffers(1, &capFbo_); freeTarget(capRT_); glDeleteFramebuffers(1, &shadowFbo_); glDeleteTextures(1, &shadowTex_);
+void Renderer::shutdown() { glDeleteProgram(vox_); glDeleteProgram(wat_); glDeleteProgram(text_); glDeleteVertexArrays(1, &textVao_); glDeleteBuffers(1, &textVbo_); glDeleteProgram(lit_); glDeleteProgram(flat_); glDeleteProgram(depth_); glDeleteProgram(vdepth_); glDeleteProgram(idp_); glDeleteTextures(1, &boneTex_); if (instTex_) glDeleteTextures(1, &instTex_); instTex_ = 0; for (auto& [k, pb] : probes_) glDeleteTextures(1, &pb.tex); probes_.clear(); if (capFbo_) glDeleteFramebuffers(1, &capFbo_); freeTarget(capRT_); glDeleteFramebuffers(1, &shadowFbo_); glDeleteTextures(1, &shadowTex_);
   for (unsigned q : {ssao_, aoBlur_, bloomPre_, bloomDown_, bloomUp_, compose_, sky_}) glDeleteProgram(q); glDeleteVertexArrays(1, &postVao_); freePost();
   for (GpuMesh* m : {&wireBox_, &wireCapsule_, &arrow_, &axes_, &wireCam_, &grid_}) destroy(*m); releasePrimitives(); releaseAssets(); releaseLandscapes(); }
 
@@ -453,13 +457,14 @@ void Renderer::shadowPass(const Frame& f, const Camera& cam, bool& has) {
       return !(hi.x < -r || lo.x > r || hi.y < -r || lo.y > r); };
     glUseProgram(depth_); M4(depth_, "uVP", vp); glUniform1i(U(depth_, "uBaseTex"), 1); glUniform1i(U(depth_, "uBones"), 7);
     for (auto& it : f.draws) { if (!it.castShadow || !it.mesh || !it.mesh->vao || it.opacity < 0.5f || it.pickOnly || it.unlit) continue;
-      if (!it.bones) { glm::vec3 lo(1e9f), hi(-1e9f); const glm::vec3 &a = it.mesh->bmin, &b = it.mesh->bmax;   // only what this cascade covers
-        for (int k = 0; k < 8; k++) { glm::vec3 w = glm::vec3(it.model * glm::vec4((k & 1) ? b.x : a.x, (k & 2) ? b.y : a.y, (k & 4) ? b.z : a.z, 1)); lo = glm::min(lo, w); hi = glm::max(hi, w); }
+      if (!it.bones) { glm::vec3 lo(1e9f), hi(-1e9f); const glm::vec3 &a = it.inst ? it.instMin : it.mesh->bmin, &b = it.inst ? it.instMax : it.mesh->bmax; glm::mat4 bm = it.inst ? glm::mat4(1) : it.model;   // only what this cascade covers
+        for (int k = 0; k < 8; k++) { glm::vec3 w = glm::vec3(bm * glm::vec4((k & 1) ? b.x : a.x, (k & 2) ? b.y : a.y, (k & 4) ? b.z : a.z, 1)); lo = glm::min(lo, w); hi = glm::max(hi, w); }
         if (a.x <= b.x && !inBox(lo, hi)) continue; }
-      M4(depth_, "uModel", it.model); bindBones(depth_, it);
+      M4(depth_, "uModel", it.model); bindBones(depth_, it); bindInst(depth_, it, f.time);
       bool cut = it.cutoff >= 0 && it.tex[0]; glUniform1f(U(depth_, "uCutoff"), cut ? it.cutoff : -1.f); glUniform2f(U(depth_, "uTiling"), it.tiling.x, it.tiling.y);
       if (cut) { glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, it.tex[0]); glActiveTexture(GL_TEXTURE0); }
-      glBindVertexArray(it.mesh->vao); glDrawElements(GL_TRIANGLES, it.mesh->count, GL_UNSIGNED_INT, nullptr); }
+      glBindVertexArray(it.mesh->vao); if (it.inst) glDrawElementsInstanced(GL_TRIANGLES, it.mesh->count, GL_UNSIGNED_INT, nullptr, (int)it.inst->size()); else glDrawElements(GL_TRIANGLES, it.mesh->count, GL_UNSIGNED_INT, nullptr); }
+    glUniform1i(U(depth_, "uInstN"), 0); glUniform1f(U(depth_, "uWind"), 0);
     if (!f.voxels.empty()) { glUseProgram(vdepth_); M4(vdepth_, "uVP", vp);
       glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, f.voxelAtlas); glUniform1i(U(vdepth_, "uAtlas"), 1); glUniform1i(U(vdepth_, "uTiles"), f.voxelAtlas ? f.voxelTiles : 0); glActiveTexture(GL_TEXTURE0);
       for (auto& v : f.voxels) { if (!v.castShadow || !inBox(v.mn, v.mx)) continue; M4(vdepth_, "uModel", glm::translate(glm::mat4(1), v.offset) * v.model); glBindVertexArray(v.vao); glDrawElements(GL_TRIANGLES, v.count, GL_UNSIGNED_INT, nullptr); } }
@@ -592,7 +597,7 @@ void Renderer::render(const Frame& f, const Camera& cam, int w, int h, const Ren
       { const char* LN[4] = {"uL0", "uL1", "uL2", "uL3"}; for (int k = 0; k < 4; k++) glUniform1i(U(p, LN[k]), 9 + k); }
       for (auto& it : f.draws) {
         if (!it.mesh || !it.mesh->vao || it.pickOnly || (pass == 0) != (it.opacity >= 0.999f && !it.blend) || !inView(vp, it)) continue;
-        M4(p, "uModel", it.model); V3(p, "uColor", it.linear ? it.color : lin(it.color)); V3(p, "uEmissive", it.linear ? it.emissive : lin(it.emissive)); bindBones(p, it);
+        M4(p, "uModel", it.model); V3(p, "uColor", it.linear ? it.color : lin(it.color)); V3(p, "uEmissive", it.linear ? it.emissive : lin(it.emissive)); bindBones(p, it); bindInst(p, it, f.time);
         glUniform1f(U(p, "uMetal"), it.metal); glUniform1f(U(p, "uRough"), it.rough); glUniform1f(U(p, "uOpacity"), it.opacity); glUniform1i(U(p, "uUnlit"), it.unlit ? 1 : 0);
         int maps = 0; for (int k = 0; k < 6; k++) if (it.tex[k]) { maps |= 1 << k; glActiveTexture(GL_TEXTURE1 + k); glBindTexture(GL_TEXTURE_2D, it.tex[k]); } glActiveTexture(GL_TEXTURE0);
         glUniform1i(U(p, "uSplat"), it.splat ? 1 : 0);
@@ -608,7 +613,8 @@ void Renderer::render(const Frame& f, const Camera& cam, int w, int h, const Ren
             glUniform1f(U(p, "uEnvInt"), best->intensity); glUniform1f(U(p, "uEnvMips"), 7.f); } }
         if (pass == 1) glDepthMask(GL_FALSE);
         if (it.decal) { glEnable(GL_POLYGON_OFFSET_FILL); glPolygonOffset(-2.f, -8.f); }
-        glBindVertexArray(it.mesh->vao); glDrawElements(GL_TRIANGLES, it.mesh->count, GL_UNSIGNED_INT, nullptr); drawCalls++; triangles += it.mesh->count / 3;
+        glBindVertexArray(it.mesh->vao); if (it.inst) glDrawElementsInstanced(GL_TRIANGLES, it.mesh->count, GL_UNSIGNED_INT, nullptr, (int)it.inst->size()); else glDrawElements(GL_TRIANGLES, it.mesh->count, GL_UNSIGNED_INT, nullptr);
+        drawCalls++; triangles += it.mesh->count / 3 * (it.inst ? (int)it.inst->size() : 1);
         if (it.decal) glDisable(GL_POLYGON_OFFSET_FILL);
         glDepthMask(GL_TRUE);
       } };
@@ -681,7 +687,7 @@ void Renderer::render(const Frame& f, const Camera& cam, int w, int h, const Ren
   if (f.grid) { glDepthMask(GL_FALSE); M4(q, "uModel", glm::translate(glm::mat4(1), {0, 0.003f, 0})); glUniform4f(U(q, "uColor"), 0.25f, 0.25f, 0.28f, 0.55f); glUniform1f(U(q, "uFade"), 60.f);
     glBindVertexArray(grid_.vao); glDrawArrays(GL_LINES, 0, grid_.count); glDepthMask(GL_TRUE); }
   glUniform1f(U(q, "uFade"), 0.f);
-  if (f.viewMode == VM_Wire) for (auto& it : f.draws) { if (!it.mesh || !it.mesh->vao || it.pickOnly || it.bones) continue; M4(q, "uModel", it.model); glUniform4f(U(q, "uColor"), 0.6f, 0.82f, 1.f, 1.f);
+  if (f.viewMode == VM_Wire) for (auto& it : f.draws) { if (!it.mesh || !it.mesh->vao || it.pickOnly || it.bones || it.inst) continue; M4(q, "uModel", it.model); glUniform4f(U(q, "uColor"), 0.6f, 0.82f, 1.f, 1.f);
     glBindVertexArray(it.mesh->vao); glPolygonMode(GL_FRONT_AND_BACK, GL_LINE); glDrawElements(GL_TRIANGLES, it.mesh->count, GL_UNSIGNED_INT, nullptr); glPolygonMode(GL_FRONT_AND_BACK, GL_FILL); }
   for (int top = 0; top < 2; top++) { if (top) glDisable(GL_DEPTH_TEST);
     for (auto& l : f.lines) { if (l.onTop != (bool)top || !l.mesh) continue; M4(q, "uModel", l.model); glUniform4f(U(q, "uColor"), l.color.r, l.color.g, l.color.b, l.color.a);
@@ -694,11 +700,19 @@ void Renderer::render(const Frame& f, const Camera& cam, int w, int h, const Ren
 
 // outside the view (all 8 corners of its box beyond one side): not drawn. Skinned models move away from their rest box, so they are kept.
 static bool inView(const glm::mat4& vp, const DrawItem& it) {
-  if (!it.mesh || it.bones) return true; const glm::vec3 &a = it.mesh->bmin, &b = it.mesh->bmax; if (a.x > b.x) return true;
-  glm::mat4 m = vp * it.model; int out[6] = {0, 0, 0, 0, 0, 0};
+  if (!it.mesh || it.bones) return true; const glm::vec3 &a = it.inst ? it.instMin : it.mesh->bmin, &b = it.inst ? it.instMax : it.mesh->bmax; if (a.x > b.x) return true;
+  glm::mat4 m = it.inst ? vp : vp * it.model; int out[6] = {0, 0, 0, 0, 0, 0};
   for (int k = 0; k < 8; k++) { glm::vec4 c = m * glm::vec4((k & 1) ? b.x : a.x, (k & 2) ? b.y : a.y, (k & 4) ? b.z : a.z, 1);
     out[0] += c.x < -c.w; out[1] += c.x > c.w; out[2] += c.y < -c.w; out[3] += c.y > c.w; out[4] += c.z < -c.w; out[5] += c.z > c.w; }
   for (int i = 0; i < 6; i++) if (out[i] == 8) return false; return true;
+}
+// instances' matrices into their texture (unit 13: 4 texels each), or none; wind for foliage
+void Renderer::bindInst(unsigned prog, const DrawItem& it, float time) {
+  bool on = it.inst && !it.inst->empty(); glUniform1i(U(prog, "uInstN"), on ? (int)it.inst->size() : 0); glUniform1f(U(prog, "uWind"), on ? it.wind : 0.f); glUniform1f(U(prog, "uWTime"), time);
+  glUniform1i(U(prog, "uInstTex"), 13); if (!on) return;
+  if (!instTex_) { glGenTextures(1, &instTex_); glBindTexture(GL_TEXTURE_2D, instTex_); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST); }
+  glActiveTexture(GL_TEXTURE13); glBindTexture(GL_TEXTURE_2D, instTex_); glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 4, (int)it.inst->size(), 0, GL_RGBA, GL_FLOAT, it.inst->data()); glActiveTexture(GL_TEXTURE0);
 }
 // a skinned model's joints into the bone texture (unit 7), or none
 void Renderer::bindBones(unsigned prog, const DrawItem& it) {
@@ -713,7 +727,7 @@ unsigned Renderer::pick(const Frame& f, const Camera& cam, RenderTarget& rt, int
   glUseProgram(idp_); M4(idp_, "uVP", cam.proj * cam.view);
   auto idc = [&](unsigned id) { glUniform4f(U(idp_, "uColor"), (id & 255) / 255.f, ((id >> 8) & 255) / 255.f, ((id >> 16) & 255) / 255.f, 1); };
   glUniform1i(U(idp_, "uBones"), 7);
-  for (auto& it : f.draws) { if (!it.mesh || !it.mesh->vao || !it.id) continue; idc(it.id); M4(idp_, "uModel", it.model); bindBones(idp_, it); glBindVertexArray(it.mesh->vao); glDrawElements(GL_TRIANGLES, it.mesh->count, GL_UNSIGNED_INT, nullptr); }
+  for (auto& it : f.draws) { if (!it.mesh || !it.mesh->vao || !it.id || it.inst) continue; idc(it.id); M4(idp_, "uModel", it.model); bindBones(idp_, it); glBindVertexArray(it.mesh->vao); glDrawElements(GL_TRIANGLES, it.mesh->count, GL_UNSIGNED_INT, nullptr); }
   glLineWidth(1); for (auto& l : f.lines) { if (!l.mesh || !l.id) continue; idc(l.id); M4(idp_, "uModel", l.model); glBindVertexArray(l.mesh->vao);
     if (l.mesh->lines) glDrawArrays(GL_LINES, 0, l.mesh->count); else glDrawElements(GL_TRIANGLES, l.mesh->count, GL_UNSIGNED_INT, nullptr); }
   if (!f.texts.empty()) { glUseProgram(text_); M4(text_, "uVP", cam.proj * cam.view); glUniform1i(U(text_, "uId"), 1); glActiveTexture(GL_TEXTURE0);

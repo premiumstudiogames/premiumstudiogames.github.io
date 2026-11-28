@@ -212,6 +212,10 @@ void Game::damage(const std::string& target, float amount, json info) {
       if (hasPoint) phys_->addImpulseAt(best, imp, point); else phys_->addImpulse(best, imp); }
     else if (o->body != NO_BODY && o->motion == Motion::Dynamic) { if (hasPoint) phys_->addImpulseAt(o->body, imp, point); else phys_->addImpulse(o->body, imp); } }
   if (o->beh >= 0) scripts_->call(o->beh, EV_Damage, amount, info.dump());
+  // Destructible: enough damage and it breaks (the push of the hit throws the pieces)
+  if (o->alive && o->a.destructible.enabled && (!netOn() || owns(*o))) { o->dmgTaken += amount; if (o->dmgTaken >= o->a.destructible.health) {
+      float imp = info.contains("impulse") && info["impulse"].is_number() ? info["impulse"].get<float>() : glm::length(imp) > 0 ? glm::length(imp) : 50.f + amount * 4;
+      fracture(*o, (uint32_t)(time_ * 1000) ^ (uint32_t)std::hash<std::string>()(o->a.id), point, imp, hasPoint); } }
 }
 
 /* ------------------------------------------------------------------ ragdolls */
@@ -381,6 +385,9 @@ void Game::gameplayFrame(float dt, bool post) {
     if (glm::vec3(VW[3]).y < level_.world.killZ) { exitVehicle(); respawnPlayer(); } }
   else if (!driving_.empty()) exitVehicle();
   if (dead_ && respawnAt_ >= 0 && time_ >= respawnAt_) { respawnAt_ = -1; dead_ = false; health_ = maxHealth_; respawnPlayer(); }
+  // pieces of broken things go after their time (each computer its own)
+  { std::vector<std::string> gone; for (auto& op : objs_) if (op->alive && op->dieAt >= 0 && time_ >= op->dieAt) gone.push_back(op->a.id); bool was = fromNet_; fromNet_ = true; for (auto& id : gone) destroyActor(id); fromNet_ = was; }
+  clothFrame(dt);
   // decals: gone with their actor, fading at the end of their life
   decals_.erase(std::remove_if(decals_.begin(), decals_.end(), [&](const Decal& d) { return (!d.actor.empty() && !get(d.actor)) || (d.life > 0 && time_ - d.born > d.life); }), decals_.end());
 }
@@ -460,6 +467,13 @@ std::string Game::gameplay(const std::string& op, const std::string& a, const st
     if (!o->rag.empty()) { ragdoll(*o, imp, p, hp); return ""; } if (o->body != NO_BODY && o->motion == Motion::Dynamic) { if (hp) phys_->addImpulseAt(o->body, imp, p); else phys_->addImpulse(o->body, imp); } return ""; }
   if (op == "ragdoll") { json j = J(b); glm::vec3 imp(0), p(0); v3(j.value("impulse", json()), imp); bool hp = v3(j.value("point", json()), p); return ragdoll(*o, imp, p, hp) ? "1" : "0"; }
   if (op == "ragdollState") return o->rag.empty() ? "0" : "1";
+  if (op == "fracture") { json j = J(b); glm::vec3 p(0); bool hp = v3(j.value("point", json()), p); float imp = j.value("impulse", 200.f);
+    if (j.contains("pieces") && j["pieces"].is_number()) { o->a.destructible.pieces = j["pieces"].get<int>(); if (!o->a.destructible.enabled) { o->a.destructible.enabled = true; o->a.destructible.health = 1e9f; } }
+    return fracture(*o, j.value("seed", (uint32_t)(time_ * 1000) ^ (uint32_t)std::hash<std::string>()(o->a.id)), p, imp, hp) ? "1" : "0"; }
+  if (op == "clothWind") { json j = J(b); glm::vec3 d; if (v3(j.value("direction", json()), d)) o->a.cloth.windDir = d; if (j.contains("strength") && j["strength"].is_number()) o->a.cloth.wind = j["strength"].get<float>(); return "1"; }
+  if (op == "clothPin") { json j = J(b); if (j.contains("pin") && j["pin"].is_string()) { o->a.cloth.pin = j["pin"]; auto& s = o->cloth; int n = s.n; for (int k = 0; k < n * n; k++) { int x = k % n, y = k / n; const std::string& pn = o->a.cloth.pin;
+        s.pin[k] = pn == "none" ? 0 : pn == "left" ? x == 0 : pn == "corners" ? (y == 0 && (x == 0 || x == n - 1)) : pn == "all" ? 1 : y == 0; } } return "1"; }
+  if (op == "clothPoint") { auto& s = o->cloth; if (!s.on) return ""; int i = std::atoi(b.c_str()); if (i < 0) i = s.n * s.n + i; if (i < 0 || i >= (int)s.p.size()) return ""; return json::array({s.p[i].x, s.p[i].y, s.p[i].z}).dump(); }
   if (op == "vehicleMake") { json j = J(b); VehicleProps& v = o->a.vehicle; v.enabled = true;
     auto f = [&](const char* k, float& d) { if (j.contains(k) && j[k].is_number()) d = j[k].get<float>(); };
     f("torque", v.torque); f("maxRpm", v.maxRpm); f("maxSteer", v.maxSteer); f("wheelRadius", v.wheelRadius); f("wheelWidth", v.wheelWidth); f("travel", v.travel); f("stiffness", v.stiffness); f("axleInset", v.axleInset); f("camDistance", v.camDistance);

@@ -8,6 +8,7 @@
 #include <nlohmann/json.hpp>
 #include <memory>
 #include "landscape.h"
+#include "foliage.h"
 
 namespace pge {
 
@@ -32,6 +33,12 @@ struct VehicleProps {
   std::string wheelMesh = "Cylinder", wheelMaterial = "M_Tire";   // drawn at each wheel ("" = none: the model has its own)
   bool isDefault() const { return !enabled; }
 };
+// breaks into pieces (Unreal's Geometry Collection / Chaos Destruction): enough damage (or a hard hit, an explosion) and the
+// mesh cracks into pieces that fly and fall; they go after debrisLife seconds (0 = stay)
+struct DestructibleProps { bool enabled = false; int pieces = 10; float health = 50, debrisLife = 10; bool isDefault() const { return !enabled; } };
+// cloth (a flag, a curtain, a cape): a sheet of points held at its top (or corners, left edge) that falls, sways in the wind and
+// rests on what it touches; it moves with its actor (attach it to a character's bone: a cape)
+struct ClothProps { float width = 2, height = 2; int res = 16; std::string pin = "top"; float stiffness = 1, wind = 0.5f, mass = 1; std::string material; glm::vec3 windDir{1, 0, 0.3f}; };
 // Physics Constraint (Unreal's): holds two actors together (or one to the world): a door's hinge, a chain, a drawer, a rope
 struct JointProps {
   std::string kind = "Hinge";                     // Hinge, Fixed, BallSocket, Slider, Distance
@@ -47,8 +54,9 @@ struct Actor {
   std::vector<std::string> tags;
   std::string mesh = "Cube", material = "M_Default", script;   // mesh: a shape (Cube, Sphere, ...) or a model file of the project (Models/Robot.glb); material "" = the model's own
   std::string anim; bool animLoop = true; float animSpeed = 1;   // a model's animation that plays from the start
-  PhysicsProps physics; LightProps light; TextProps text; ProbeProps probe; VehicleProps vehicle; JointProps joint;
+  PhysicsProps physics; LightProps light; TextProps text; ProbeProps probe; VehicleProps vehicle; JointProps joint; DestructibleProps destructible; ClothProps cloth;
   LandscapeRef land;   // a Landscape actor's heights and paint
+  FoliageRef fol;      // a Foliage actor's painted copies
   bool isLight() const { return type == "PointLight" || type == "SpotLight" || type == "DirectionalLight"; }
 };
 
