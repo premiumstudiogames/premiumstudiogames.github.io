@@ -530,6 +530,7 @@ int main(int argc, char** argv) {
     Actor car = newActor("StaticMesh", "Car"); car.p = {-10, 1.2f, 0}; car.s = {1.9f, 0.75f, 4.2f}; car.physics.simulate = true; car.physics.mass = 1300; car.vehicle.enabled = true; L.actors.push_back(car);
     Actor npc = newActor("StaticMesh", "Npc"); npc.mesh = "Characters/Mannequin.glb"; npc.material.clear(); npc.p = {8, 0, 4}; npc.physics.collision = false; npc.anim = "Idle"; L.actors.push_back(npc);
     Actor door = newActor("StaticMesh", "Door"); door.p = {0, 1, -15}; door.s = {2, 2, 0.2f}; door.physics.replicates = true; L.actors.push_back(door);
+    Actor glass = newActor("StaticMesh", "Glass"); glass.p = {-6, 1, -10}; glass.s = {2, 2, 0.1f}; glass.destructible.enabled = true; glass.destructible.health = 10; glass.destructible.pieces = 8; L.actors.push_back(glass);
     Actor ps = newActor("PlayerStart", "Start"); ps.p = {0, 0.1f, 4}; L.actors.push_back(ps);
     Game H(q, "Main"), C(q, "Main"); CHECK(H.start() && C.start(), "two copies of a game start");
     CHECK(H.net("host", "{\"port\":46677,\"name\":\"Sync\"}", "") == "1" && C.net("join", "127.0.0.1", "46677") == "1", "one hosts, the other joins");
@@ -565,6 +566,9 @@ int main(int argc, char** argv) {
     float hp = H.playerHealth(); C.gameplay("damage", json(C.find("Player 1")).dump(), json{{"amount", 30}, {"type", "bullet"}}.dump()); both(0.5f);
     CHECK(std::abs(H.playerHealth() - (hp - 30)) < 0.01f, "the player shoots the host: the host loses health");
     int d0 = H.decalCount(); C.gameplay("decal", json{{"position", {0, 0, 0}}, {"normal", {0, 1, 0}}, {"type", "blood"}}.dump(), ""); both(0.3f); CHECK(H.decalCount() == d0 + 1, "a decal the player makes shows for the host");
+    std::string gl = H.find("Glass"); H.gameplay("damage", json(gl).dump(), json{{"amount", 50}, {"point", {-6, 1, -9.9}}}.dump()); both(0.1f);
+    { int same = 0; for (int k = 0; k < 8; k++) { glm::vec3 hp = H.worldPos(gl + "_f" + std::to_string(k)), cp = C.worldPos(gl + "_f" + std::to_string(k)); if (hp != glm::vec3(0) && glm::length(hp - cp) < 0.5f) same++; }
+      CHECK(H.find("Glass").empty() && C.find("Glass").empty() && same == 8, ("a window the host breaks breaks for the player too, into the same pieces (" + std::to_string(same) + " of 8)").c_str()); }
     // scripts' messages still reach scripts; the engine's never do
     C.net("send", "{\"hello\":1}", ""); both(0.3f); json in = json::parse(H.net("take", "", "")); int msgs = 0; for (auto& e : in) if (e["type"] == "msg") { msgs++; CHECK(e["data"] == "{\"hello\":1}", "a script's message arrives whole"); }
     CHECK(msgs == 1, "only the scripts' messages reach net.receive()");
