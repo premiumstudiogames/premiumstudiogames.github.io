@@ -2,6 +2,11 @@ cmake_minimum_required(VERSION 3.24)
 project(PremiumEngine VERSION 0.17.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
+# the same numbers on every computer (worlds from a seed, online games, broken pieces): no fused multiply-add
+# (clang joins a*b+c into one rounding on Apple Silicon and ARM; MSVC and x86 GCC don't by default)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  add_compile_options(-ffp-contract=off)
+endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_POLICY_DEFAULT_CMP0091 NEW)   # dependencies follow CMAKE_MSVC_RUNTIME_LIBRARY too
